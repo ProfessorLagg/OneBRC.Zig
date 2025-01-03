@@ -117,13 +117,13 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
         }
         /// If k is in the map, updates the value at k using updateFn.
         /// otherwise add the value from addFn to the map
-        pub fn addOrUpdate(self: *Self, k: Tkey, addFn: fn () Tval, updateFn: fn (*Tval) void) void {
+        pub fn addOrUpdate(self: *Self, k: Tkey, addFn: *const fn () Tval, updateFn: *const fn (*Tval) void) void {
             const idx: isize = self.indexOf(k);
             if (idx >= 0 or idx < self.count) {
                 const idxu: usize = @intCast(idx);
                 updateFn(&self.values[idxu]);
             } else {
-                self.update(k, addFn);
+                self.update(k, addFn());
             }
         }
         /// Reduces capacity to exactly fit count
@@ -166,8 +166,9 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
             std.debug.assert(self.count - start_at >= 1);
             var key_slice: []Tkey = self.keys[start_at..];
             var val_slice: []Tval = self.values[start_at..];
-            var i: usize = self.count - 1;
-            while (i >= 1) : (i -= 1) {
+            var i: usize = key_slice.len;
+            while (i > 1){
+                i -= 1;
                 key_slice[i] = key_slice[i - 1];
                 val_slice[i] = val_slice[i - 1];
             }
