@@ -23,7 +23,6 @@ var parser: SetParser = undefined;
 pub fn main() !void {
     try init();
     defer deinit();
-
     // TODO parse console args
     // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\verysmall.txt";
     // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\small.txt";
@@ -41,7 +40,7 @@ pub fn main() !void {
     const uniqueKeys = parseResult.uniqueKeys();
     const keyCount_f64: f64 = @floatFromInt(uniqueKeys);
     const key_percent: f64 = (keyCount_f64 / lineCount_f64) * 100;
-    std.log.warn("read {d:.0} lines in {d:.2} s | {d:.2} ns/line | found {d} unique keys ({d:.2}%)", .{ parseResult.lineCount, s, ns_per_line, uniqueKeys, key_percent});
+    std.log.warn("read {d:.0} lines in {d:.2} s | {d:.2} ns/line | found {d} unique keys ({d:.2}%)", .{ parseResult.lineCount, s, ns_per_line, uniqueKeys, key_percent });
 }
 
 fn init() !void {

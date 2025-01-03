@@ -186,7 +186,7 @@ pub const SetParser = struct {
         var buf_reader = std.io.bufferedReader(file.reader());
         var in_stream = buf_reader.reader();
 
-        const kernelSize = 1000;
+        const kernelSize = 1_000_000;
         var kernel = try ParallelKernel(Line, ParsedLine, Line.parse).init(allocator, kernelSize);
         defer kernel.deinit();
         var line_idx: usize = 0;

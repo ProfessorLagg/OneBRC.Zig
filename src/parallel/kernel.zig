@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 fn get_max_thread_count() !usize {
-    return @min(8, try std.Thread.getCpuCount() * 2 - 1);
+    return @max(2, try std.Thread.getCpuCount());
 }
 
 pub fn ParallelKernel(comptime Tsrc: type, comptime Tdst: type, comptime kernelFunc: fn (in: Tsrc) Tdst) type {
@@ -41,7 +41,6 @@ pub fn ParallelKernel(comptime Tsrc: type, comptime Tdst: type, comptime kernelF
         }
 
         pub fn writeInput(self: *Self, v: Tsrc) bool {
-            self.inputs[self.count] = undefined;
             self.inputs[self.count] = v;
             self.count += 1;
             return self.count == self.inputs.len;
