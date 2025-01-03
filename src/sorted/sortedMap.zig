@@ -34,6 +34,7 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
         values: []Tval,
         const Self = @This();
 
+        // === PUBLIC ===
         pub fn init(allocator: std.mem.Allocator) !Self {
             const result: Self = try initWithCapacity(allocator, default_initial_capacity);
             return result;
@@ -55,18 +56,15 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
             r.values.len = 0;
             return r;
         }
-
         pub fn deinit(self: *Self) void {
             self.allocator.free(self.key_buffer);
             self.allocator.free(self.val_buffer);
         }
-
         /// Returns the number of values that can be contained before the backing arrays will be resized
         pub inline fn capacity(self: *Self) usize {
             std.debug.assert(self.key_buffer.len == self.val_buffer.len);
             return self.key_buffer.len;
         }
-
         /// Finds the index of the key. Returns -1 if not found
         pub fn indexOf(self: *Self, k: Tkey) isize {
             if (self.keys.len == 0) {
@@ -99,46 +97,59 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
             std.log.debug("indexOf({any}) = {d}", .{ k, idx });
             return idx >= 0 and idx < self.keys.len;
         }
-
         /// Adds an item to the set.
         /// Returns true if the key could be added, otherwise false.
         pub fn add(self: *Self, k: Tkey, v: Tval) bool {
             if (self.contains(k)) {
                 return false;
             }
+            self.update(k, v);
+            return true;
+        }
+        /// Overwrites the value at k, regardless of it's already contained
+        pub fn update(self: *Self, k: Tkey, v: Tval) void {
             const insertionIndex = self.getInsertIndex(k);
             if (self.count == self.key_buffer.len) {
                 const new_capacity: usize = self.capacity() * 2;
-                self.resize(new_capacity) catch {
-                    @panic("could not resize");
-                };
+                self.resize(new_capacity);
             }
-
             self.insertAt(insertionIndex, k, v);
-            return true;
         }
-
+        /// If k is in the map, updates the value at k using updateFn.
+        /// otherwise add the value from addFn to the map
+        pub fn addOrUpdate(self: *Self, k: Tkey, addFn: fn () Tval, updateFn: fn (*Tval) void) void {
+            const idx: usize = self.indexOf(k);
+            if (idx >= 0 or idx < self.count) {
+                updateFn(&self.values[idx]);
+            } else {
+                self.update(k, addFn);
+            }
+        }
         /// Reduces capacity to exactly fit count
         pub fn shrinkToFit(self: *Self) !void {
             // TODO shrinkToFit
             _ = &self;
         }
 
+        // === PRIVATE ===
         /// Rezises capacity to newsize
-        fn resize(self: *Self, new_capacity: usize) !void {
+        fn resize(self: *Self, new_capacity: usize) void {
             std.debug.assert(new_capacity > 1);
 
             if (!self.allocator.resize(self.key_buffer, new_capacity)) {
-                self.key_buffer = try self.allocator.realloc(self.key_buffer, new_capacity);
+                self.key_buffer = self.allocator.realloc(self.key_buffer, new_capacity) catch {
+                    @panic("could not resize");
+                };
                 self.keys = self.key_buffer[0..self.count];
             }
 
             if (!self.allocator.resize(self.val_buffer, new_capacity)) {
-                self.val_buffer = try self.allocator.realloc(self.val_buffer, new_capacity);
+                self.val_buffer = self.allocator.realloc(self.val_buffer, new_capacity) catch {
+                    @panic("could not resize");
+                };
                 self.values = self.val_buffer[0..self.count];
             }
         }
-
         fn incrementCount(self: *Self) void {
             std.debug.assert(self.count < self.key_buffer.len);
             std.debug.assert(self.count < self.val_buffer.len);
@@ -148,7 +159,6 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
             std.debug.assert(self.keys.len == self.count);
             std.debug.assert(self.values.len == self.count);
         }
-
         fn shiftRight(self: *Self, start_at: usize) void {
             std.debug.assert(start_at >= 0);
             std.debug.assert(start_at < self.count);
@@ -161,7 +171,6 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
                 val_slice[i] = val_slice[i - 1];
             }
         }
-
         /// The ONLY function that's allowed to update values in the buffers!
         /// Caller asserts that the buffers have space.
         /// Caller asserts that the index is valid.
@@ -182,7 +191,6 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
                 self.values[index] = v;
             }
         }
-
         /// Returns the index this key would have if present in the map.
         fn getInsertIndex(self: *Self, k: Tkey) usize {
             if (self.count == 0) {
