@@ -26,8 +26,6 @@ pub fn ParallelKernel(comptime Tsrc: type, comptime Tdst: type, comptime kernelF
         allocator: Allocator,
 
         pub fn init(allocator: Allocator, len: usize) !Self {
-            std.debug.assert(len >= try get_max_thread_count());
-
             return Self{ // NOWRAP
                 .allocator = allocator,
                 .count = 0,
@@ -52,13 +50,13 @@ pub fn ParallelKernel(comptime Tsrc: type, comptime Tdst: type, comptime kernelF
 
         fn threadFunc(
             src: []const Tsrc,
-            src_count: usize,
             dst: []Tdst,
+            input_count: usize,
             thread_offset: usize,
             thread_count: usize,
         ) void {
             var i: usize = thread_offset;
-            while (i < src_count) : (i += thread_count) {
+            while (i < input_count) : (i += thread_count) {
                 dst[i] = kernelFunc(src[i]);
             }
         }
@@ -67,12 +65,15 @@ pub fn ParallelKernel(comptime Tsrc: type, comptime Tdst: type, comptime kernelF
             if (self.count == 0) {
                 return;
             }
-            const thread_count = try get_max_thread_count();
-            var threads: []std.Thread = try self.allocator.alloc(std.Thread, thread_count);
+
+            const max_thread_count = get_max_thread_count() catch {
+                @panic("Could not get max_thread_count");
+            };
+            var threads: []std.Thread = try self.allocator.alloc(std.Thread, max_thread_count);
             defer self.allocator.free(threads);
 
             for (0..threads.len) |i| {
-                threads[i] = try std.Thread.spawn(.{}, threadFunc, .{ self.inputs, self.count, self.results, i, thread_count });
+                threads[i] = try std.Thread.spawn(.{}, threadFunc, .{ self.inputs, self.results, self.count, i, max_thread_count });
             }
 
             for (0..threads.len) |i| {
