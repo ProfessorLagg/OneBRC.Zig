@@ -25,6 +25,8 @@ pub fn main() !void {
     defer deinit();
 
     // TODO parse console args
+    // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\small.txt";
+    // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
     const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\large.txt";
     var timer = try std.time.Timer.start();
     var parseResult = try parser.parse(path[0..]);

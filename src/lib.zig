@@ -3,10 +3,45 @@ const fs = std.fs;
 const Path = fs.path;
 const File = fs.File;
 const Allocator = std.mem.Allocator;
-const HashMap = std.hash_map.HashMap;
-const AutoHashMap = std.hash_map.AutoHashMap;
-const AutoContext = std.hash_map.AutoContext;
+const xxhash = @import("xxhash.zig").xxhash;
 
+const keylen: usize = 104;
+const veclen: usize = keylen / @sizeOf(u64);
+const MeasurementKey = [keylen]u8;
+const LineBuffer = [105]u8;
+const ParsedLine = struct {
+    key: MeasurementKey = undefined,
+    value: f64 = -1,
+
+    pub fn init(k: []const u8, v: f64) ParsedLine {
+        var r: ParsedLine = .{ .value = v };
+        var a: []u8 = undefined;
+        a.ptr = @constCast(k.ptr);
+        a.len = std.math.clamp(k.len, 1, keylen);
+        std.mem.copyForwards(u8, &r.key, a);
+        return r;
+    }
+};
+const MeasurementContext = struct {
+    pub fn hash(ctx: MeasurementContext, key: MeasurementKey) u64 {
+        @setRuntimeSafety(false);
+        _ = &ctx;
+        return xxhash.checksum(key[0..], 0x2025_01_03);
+    }
+    pub fn eql(ctx: MeasurementContext, a: MeasurementKey, b: MeasurementKey) bool {
+        @setRuntimeSafety(false);
+        _ = &ctx;
+        var i: isize = @intCast(keylen);
+        while (i >= 0) {
+            const ui: usize = @intCast(i);
+            if (a[ui] != b[ui]) {
+                return false;
+            }
+            i -= 1;
+        }
+        return true;
+    }
+};
 const Measurement = struct {
     count: u64 = 0,
     sum: f64 = 0.0,
@@ -25,38 +60,23 @@ const Measurement = struct {
         self.max = @min(self.max, v);
     }
 };
-const keylen: usize = 100;
-const MeasurementKey = [keylen]u8;
-const ParsedLine = struct {
-    key: MeasurementKey = undefined,
-    value: f64 = -1,
-
-    pub fn init(k: []const u8, v: f64) ParsedLine {
-        var r: ParsedLine = .{ .value = v };
-        var a: []u8 = undefined;
-        a.ptr = @constCast(k.ptr);
-        a.len = std.math.clamp(k.len, 1, keylen);
-        std.mem.copyForwards(u8, &r.key, a);
-        return r;
-    }
-};
-
 pub const ParsedSet = struct {
+    const MapType = std.AutoArrayHashMap(MeasurementKey, Measurement);
     allocator: Allocator,
     lineCount: u32 = 0,
-    measurements: HashMap(MeasurementKey, Measurement, AutoContext(MeasurementKey), 80),
+    measurements: MapType,
 
     pub fn init(allocator: Allocator) ParsedSet {
         return .{ //NOFOLD
             .allocator = allocator,
-            .measurements = HashMap(MeasurementKey, Measurement, AutoContext(MeasurementKey), 80).init(allocator),
+            .measurements = MapType.init(allocator),
         };
     }
     pub fn deinit(self: *ParsedSet) void {
         self.measurements.deinit();
     }
 
-    pub fn Add(self: *ParsedSet, parsedLine: *const ParsedLine) !void {
+    pub fn AddSync(self: *ParsedSet, parsedLine: *const ParsedLine) !void {
         var ptr: ?*Measurement = self.measurements.getPtr(parsedLine.key);
         if (ptr == null) {
             try self.measurements.putNoClobber(parsedLine.key, Measurement.init(parsedLine.value));
@@ -68,8 +88,6 @@ pub const ParsedSet = struct {
 
     // TODO Multithreading safe Add function
 };
-
-const LineBuffer = [105]u8;
 pub const SetParser = struct {
     allocator: Allocator,
     pub fn init(allocator: Allocator) SetParser {
@@ -88,7 +106,7 @@ pub const SetParser = struct {
             if (line[0] != '#') {
                 std.log.debug("line {d}: \"{s}\"\n", .{ parsedSet.lineCount, line }); // not compiled in ReleaseFast mode
                 const pline: ParsedLine = parseLine(line);
-                try parsedSet.Add(&pline);
+                try parsedSet.AddSync(&pline);
             }
         }
     }
@@ -119,7 +137,6 @@ fn parseLine(line: []u8) ParsedLine {
 
     return ParsedLine.init(keystr, val);
 }
-
 fn parseLineBuffer(line: *LineBuffer) ParsedLine {
     const l: usize = @min(keylen, line.len);
     // Splitting on ';'
