@@ -192,7 +192,7 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
             }
         }
         /// Returns the index this key would have if present in the map.
-        fn getInsertIndex(self: *Self, k: Tkey) usize {
+        fn getInsertIndex_old(self: *Self, k: Tkey) usize {
             if (self.count == 0) {
                 return 0;
             }
@@ -217,6 +217,40 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
                 }
             }
             return self.count;
+        }
+
+        /// Returns the index this key would have if present in the map.
+        fn getInsertIndex(self: *Self, k: Tkey) usize {
+            if (self.count == 0 or (comparison(k, self.keys[0]) == .LessThan)) {
+                return 0;
+            }
+            if (comparison(k, self.keys[self.count - 1]) == .GreaterThan) {
+                return self.count;
+            }
+            
+            var low: isize = 1;
+            var high: isize = @intCast(self.count - 2);
+            var mid: isize = low + @divTrunc(high - low, 2);
+            var midu: usize = @as(usize, @intCast(mid));
+            while (low <= high and mid >= 0 and mid < self.keys.len) {
+                const comp_left = comparison(k, self.keys[midu - 1]);
+                const comp_right = comparison(k, self.keys[midu + 1]);
+                if (comp_left == .LessThan and comp_right == .GreaterThan) {
+                    return midu;
+                }
+                switch (comparison(self.keys[midu], k)) {
+                    .Equal => {},
+                    .LessThan => {
+                        low = mid + 1;
+                    },
+                    .GreaterThan => {
+                        high = mid - 1;
+                    },
+                }
+                mid = low + @divTrunc(high - low, 2);
+                midu = @as(usize, @intCast(mid));
+            }
+            return midu;
         }
     };
 }
