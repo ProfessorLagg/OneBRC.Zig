@@ -227,7 +227,7 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
             if (comparison(k, self.keys[self.count - 1]) == .GreaterThan) {
                 return self.count;
             }
-            
+
             var low: isize = 1;
             var high: isize = @intCast(self.count - 2);
             var mid: isize = low + @divTrunc(high - low, 2);
@@ -239,7 +239,9 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
                     return midu;
                 }
                 switch (comparison(self.keys[midu], k)) {
-                    .Equal => {},
+                    .Equal => {
+                        return midu;
+                    },
                     .LessThan => {
                         low = mid + 1;
                     },
