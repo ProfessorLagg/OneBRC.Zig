@@ -26,8 +26,8 @@ pub fn main() !void {
 
     // TODO parse console args
     // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\small.txt";
-    // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
-    const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\large.txt";
+    const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
+    // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\large.txt";
     var timer = try std.time.Timer.start();
     var parseResult = try parser.parse(path[0..]);
     defer parseResult.deinit();
@@ -36,7 +36,7 @@ pub fn main() !void {
     const ns_per_line: f64 = ns / @as(f64, @floatFromInt(parseResult.lineCount));
 
     // Turn this into a cli argument
-    std.log.warn("read {d:.0} lines in {d:.2} s {d:.2} ns/line", .{ parseResult.lineCount, s, ns_per_line });
+    std.log.warn("read {d:.0} lines in {d:.2} s | {d:.2} ns/line | found {d} unique keys", .{ parseResult.lineCount, s, ns_per_line, parseResult.uniqueKeys});
 }
 
 fn init() !void {

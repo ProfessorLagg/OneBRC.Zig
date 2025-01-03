@@ -22,24 +22,33 @@ const ParsedLine = struct {
         return r;
     }
 };
-const MeasurementContext = struct {
-    pub fn hash(ctx: MeasurementContext, key: MeasurementKey) u64 {
+const MeasurementContext64 = struct {
+    pub fn hash(ctx: MeasurementContext64, key: MeasurementKey) u64 {
         @setRuntimeSafety(false);
         _ = &ctx;
         return xxhash.checksum(key[0..], 0x2025_01_03);
     }
-    pub fn eql(ctx: MeasurementContext, a: MeasurementKey, b: MeasurementKey) bool {
+    pub fn eql(ctx: MeasurementContext64, a: MeasurementKey, b: MeasurementKey) bool {
         @setRuntimeSafety(false);
         _ = &ctx;
-        var i: isize = @intCast(keylen);
-        while (i >= 0) {
-            const ui: usize = @intCast(i);
-            if (a[ui] != b[ui]) {
-                return false;
-            }
-            i -= 1;
-        }
-        return true;
+        return std.mem.eql(u8, a[0..], b[0..]);
+    }
+};
+const MeasurementContext32 = struct {
+    fn combine(uint64: u64) u32 {
+        const vec: @Vector(2, u32) = @as(*@Vector(2, u32), @ptrFromInt(@intFromPtr(&uint64))).*;
+        return vec[0] ^ vec[1];
+    }
+    pub fn hash(ctx: MeasurementContext32, key: MeasurementKey) u32 {
+        @setRuntimeSafety(false);
+        _ = &ctx;
+        const v: u64 = xxhash.checksum(key[0..], 0x2025_01_03);
+        return combine(v);
+    }
+    pub fn eql(ctx: MeasurementContext32, a: MeasurementKey, b: MeasurementKey) bool {
+        @setRuntimeSafety(false);
+        _ = &ctx;
+        return std.mem.eql(u8, a[0..], b[0..]);
     }
 };
 const Measurement = struct {
@@ -62,9 +71,14 @@ const Measurement = struct {
 };
 pub const ParsedSet = struct {
     const MapType = std.AutoArrayHashMap(MeasurementKey, Measurement);
+    //const MapType = std.AutoHashMap(MeasurementKey, Measurement);
+    //const MapType = std.HashMap(MeasurementKey, Measurement, MeasurementContext64, 80);
+    //const MapType = std.ArrayHashMap(MeasurementKey, Measurement, MeasurementContext32, false);
+    // const MapType = std.ArrayHashMap(MeasurementKey, Measurement, MeasurementContext32, false);
     allocator: Allocator,
     lineCount: u32 = 0,
     measurements: MapType,
+    uniqueKeys: u32 = 0,
 
     pub fn init(allocator: Allocator) ParsedSet {
         return .{ //NOFOLD
@@ -78,10 +92,11 @@ pub const ParsedSet = struct {
 
     pub fn AddSync(self: *ParsedSet, parsedLine: *const ParsedLine) !void {
         var ptr: ?*Measurement = self.measurements.getPtr(parsedLine.key);
-        if (ptr == null) {
-            try self.measurements.putNoClobber(parsedLine.key, Measurement.init(parsedLine.value));
+        if (!self.measurements.contains(parsedLine.key)) {
+            try self.measurements.put(parsedLine.key, Measurement.init(parsedLine.value));
         } else {
             ptr.?.add(parsedLine.value);
+            self.uniqueKeys += 1;
         }
         self.lineCount += 1;
     }
@@ -111,10 +126,7 @@ pub const SetParser = struct {
         }
     }
     pub fn parse(self: *SetParser, path: []const u8) !ParsedSet {
-        var arena = std.heap.ArenaAllocator.init(self.allocator);
-        defer arena.deinit();
-        const allocator = arena.allocator();
-        var file: File = try FileHelper.openFile(allocator, path);
+        var file: File = try FileHelper.openFile(self.allocator, path);
         defer file.close();
 
         var set: ParsedSet = ParsedSet.init(self.allocator);
@@ -166,7 +178,6 @@ fn parseLineBuffer(line: *LineBuffer) ParsedLine {
 fn parseLineCopy(line: LineBuffer) ParsedLine {
     return parseLineBuffer(line);
 }
-
 /// Parses decimal number string
 pub fn fastIntParse(numstr: []u8) isize {
     // @setRuntimeSafety(false);
