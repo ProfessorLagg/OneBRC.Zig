@@ -5,6 +5,6 @@ if exist %ExePath% del %ExePath%
 zig build -Doptimize=ReleaseSafe -freference-trace
 if exist %ExePath% (
     cls
-    %ExePath% > run-debug.log
+    %ExePath%
     pause
 )

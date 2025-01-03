@@ -5,6 +5,8 @@ const File = fs.File;
 const Allocator = std.mem.Allocator;
 
 const sorted = @import("sorted/sorted.zig");
+const parallel = @import("parallel/parallel.zig");
+const ParallelKernel = parallel.ParallelKernel;
 
 const keylen: usize = 100;
 const veclen: usize = keylen / @sizeOf(u64);
@@ -13,7 +15,7 @@ const MeasurementKey = struct {
     len: usize,
 
     pub fn key(self: *MeasurementKey) []u8 {
-        return self.keybuffer[0..self.len];
+        return self.keybuffer[0..@min(self.keybuffer.len, self.len)];
     }
     pub fn create(k: []const u8) MeasurementKey {
         // std.debug.print("MeasurementKey.create(\"{s}\")\n", .{k});
@@ -144,12 +146,80 @@ pub const SetParser = struct {
             }
         }
     }
+    const Line = struct {
+        len: usize,
+        buffer: LineBuffer,
+
+        pub fn create(v: []const u8) Line {
+            var r = Line{ // NOWRAP
+                .buffer = undefined,
+                .len = 0,
+            };
+            std.debug.assert(v.len <= r.buffer.len);
+            std.mem.copyForwards(u8, r.buffer[0..v.len], v);
+            r.len = v.len;
+            // std.log.debug("Line.create: v.len = {d}", .{v.len});
+            return r;
+        }
+
+        pub fn slice(self: *const Line) []const u8 {
+            // std.log.debug("Line.slice: self.len = {d}", .{self.len});
+            return self.buffer[0..@min(self.len, self.buffer.len)];
+        }
+
+        pub fn parse(v: Line) ParsedLine {
+            // std.log.debug("Line.parse(v:\"{s}\")", .{v.buffer});
+            const line: []const u8 = v.slice();
+            // Splitting on ';'
+            var i: usize = 1;
+            while (line[i] != ';' and i < line.len) : (i += 1) {}
+
+            const keystr = line[0..i];
+            const valstr = line[(i + 1)..];
+            const valint: isize = fastIntParse(valstr);
+            const val: f64 = @as(f64, @floatFromInt(valint)) / 10.0;
+            return ParsedLine.init(keystr, val);
+        }
+    };
+    inline fn readKernel(allocator: Allocator, file: *const File, parsedSet: *ParsedSet) !void {
+        var buf: [4096]u8 = undefined;
+        var buf_reader = std.io.bufferedReader(file.reader());
+        var in_stream = buf_reader.reader();
+
+        const kernelSize = 1000;
+        var kernel = try ParallelKernel(Line, ParsedLine, Line.parse).init(allocator, kernelSize);
+        defer kernel.deinit();
+        var line_idx: usize = 0;
+        while (try in_stream.readUntilDelimiterOrEof(&buf, '\n')) |line| {
+            if (line[0] != '#') {
+                const L = Line.create(line);
+                if (!kernel.writeInput(L)) {
+                    try kernel.run();
+                    for (0..kernel.count) |i| {
+                        var pline: ParsedLine = kernel.results[i];
+                        std.log.debug("line {d}: \"{s}\"\n- key: \"{s}\"\n- val: {d}", .{ line_idx, kernel.inputs[i].slice(), pline.key.key(), pline.value });
+                        try parsedSet.AddSync(&pline);
+                        line_idx += 1;
+                    }
+                    kernel.resetCount();
+                }
+            }
+        }
+        // adding any remaining lines
+        try kernel.run();
+        for (0..kernel.count) |i| {
+            const pline: ParsedLine = kernel.results[i];
+            try parsedSet.AddSync(&pline);
+        }
+    }
+
     pub fn parse(self: *SetParser, path: []const u8) !ParsedSet {
         var file: File = try FileHelper.openFile(self.allocator, path);
         defer file.close();
 
         var set: ParsedSet = ParsedSet.init(self.allocator);
-        try readSync(&file, &set);
+        //try readSync(&file, &set);
+        try readKernel(self.allocator, &file, &set);
         return set;
     }
 };
@@ -193,7 +263,7 @@ fn parseLineCopy(line: LineBuffer) ParsedLine {
     return parseLineBuffer(line);
 }
 /// Parses decimal number string
-pub fn fastIntParse(numstr: []u8) isize {
+pub fn fastIntParse(numstr: []const u8) isize {
     // @setRuntimeSafety(false);
     const isNegative: bool = numstr[0] == '-';
     const isNegativeInt: usize = @intFromBool(isNegative);
