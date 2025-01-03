@@ -36,7 +36,10 @@ pub fn main() !void {
     const ns_per_line: f64 = ns / @as(f64, @floatFromInt(parseResult.lineCount));
 
     // Turn this into a cli argument
-    std.log.warn("read {d:.0} lines in {d:.2} s | {d:.2} ns/line | found {d} unique keys", .{ parseResult.lineCount, s, ns_per_line, parseResult.uniqueKeys});
+    const lineCount_f64: f64 = @floatFromInt(parseResult.lineCount);
+    const keyCount_f64: f64 = @floatFromInt(parseResult.uniqueKeys);
+    const key_percent: f64 = (keyCount_f64 / lineCount_f64) * 100;
+    std.log.warn("read {d:.0} lines in {d:.2} s | {d:.2} ns/line | found {d} unique keys ({d:.2}%)", .{ parseResult.lineCount, s, ns_per_line, parseResult.uniqueKeys, key_percent});
 }
 
 fn init() !void {

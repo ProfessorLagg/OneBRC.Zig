@@ -5,33 +5,59 @@ const File = fs.File;
 const Allocator = std.mem.Allocator;
 const xxhash = @import("xxhash.zig").xxhash;
 
+const sorted = @import("sorted/sorted.zig");
+const Comparison = sorted.Comparison;
+
 const keylen: usize = 104;
 const veclen: usize = keylen / @sizeOf(u64);
-const MeasurementKey = [keylen]u8;
+const MeasurementKey = struct {
+    keybuffer: [keylen]u8,
+    key: []u8,
+
+    pub fn create(k: []const u8) MeasurementKey {
+        var r: MeasurementKey = .{ // NOWRAP
+            .keybuffer = undefined,
+            .key = undefined,
+        };
+        const l: usize = @min(keylen, k.len);
+        const tempk = k[0..l];
+        r.key = r.keybuffer[0..l];
+        std.mem.copyForwards(u8, r.key, tempk);
+        return r;
+    }
+};
 const LineBuffer = [105]u8;
 const ParsedLine = struct {
     key: MeasurementKey = undefined,
     value: f64 = -1,
 
     pub fn init(k: []const u8, v: f64) ParsedLine {
-        var r: ParsedLine = .{ .value = v };
-        var a: []u8 = undefined;
-        a.ptr = @constCast(k.ptr);
-        a.len = std.math.clamp(k.len, 1, keylen);
-        std.mem.copyForwards(u8, &r.key, a);
-        return r;
+        return ParsedLine{
+            .key = MeasurementKey.create(k),
+            .value = v,
+        };
     }
 };
 const MeasurementContext64 = struct {
     pub fn hash(ctx: MeasurementContext64, key: MeasurementKey) u64 {
         @setRuntimeSafety(false);
         _ = &ctx;
-        return xxhash.checksum(key[0..], 0x2025_01_03);
+        return xxhash.checksum(key.key, 0x2025_01_03);
     }
     pub fn eql(ctx: MeasurementContext64, a: MeasurementKey, b: MeasurementKey) bool {
         @setRuntimeSafety(false);
         _ = &ctx;
-        return std.mem.eql(u8, a[0..], b[0..]);
+        if (a.key.len != b.key.len) {
+            return false;
+        }
+        const l: usize = a.key.len;
+        for (0..l) |i| {
+            if (a.key[i] != b.key[i]) {
+                return false;
+            }
+        }
+        return true;
+        // return std.mem.eql(u8, a.key, b.key);
     }
 };
 const MeasurementContext32 = struct {
@@ -42,7 +68,7 @@ const MeasurementContext32 = struct {
     pub fn hash(ctx: MeasurementContext32, key: MeasurementKey) u32 {
         @setRuntimeSafety(false);
         _ = &ctx;
-        const v: u64 = xxhash.checksum(key[0..], 0x2025_01_03);
+        const v: u64 = xxhash.checksum(key.key, 0x2025_01_03);
         return combine(v);
     }
     pub fn eql(ctx: MeasurementContext32, a: MeasurementKey, b: MeasurementKey) bool {
@@ -70,9 +96,9 @@ const Measurement = struct {
     }
 };
 pub const ParsedSet = struct {
-    const MapType = std.AutoArrayHashMap(MeasurementKey, Measurement);
+    //const MapType = std.AutoArrayHashMap(MeasurementKey, Measurement);
     //const MapType = std.AutoHashMap(MeasurementKey, Measurement);
-    //const MapType = std.HashMap(MeasurementKey, Measurement, MeasurementContext64, 80);
+    const MapType = std.HashMap(MeasurementKey, Measurement, MeasurementContext64, 80);
     //const MapType = std.ArrayHashMap(MeasurementKey, Measurement, MeasurementContext32, false);
     // const MapType = std.ArrayHashMap(MeasurementKey, Measurement, MeasurementContext32, false);
     allocator: Allocator,
