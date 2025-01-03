@@ -1,9 +1,8 @@
 const std = @import("std");
 const compare = @import("compare.zig");
 const sortedMap = @import("sortedMap.zig");
-
-usingnamespace compare;
-usingnamespace sortedMap;
+pub usingnamespace compare;
+pub usingnamespace sortedMap;
 
 test "SortedArrayMap.add" {
     const add_count: comptime_int = 99;
@@ -59,11 +58,9 @@ test "CompareNumber" {
     const lt_comptime_int = compare.CompareNumber(a_comptime_int, b_comptime_int);
     const eq_comptime_int = compare.CompareNumber(a_comptime_int, a_comptime_int);
     const gt_comptime_int = compare.CompareNumber(b_comptime_int, a_comptime_int);
-
     const lt_comptime_float = compare.CompareNumber(a_comptime_float, b_comptime_float);
     const eq_comptime_float = compare.CompareNumber(a_comptime_float, a_comptime_float);
     const gt_comptime_float = compare.CompareNumber(b_comptime_float, a_comptime_float);
-
     const lti64 = compare.CompareNumber(ai64, bi64);
     const ltu64 = compare.CompareNumber(au64, bu64);
     const ltf64 = compare.CompareNumber(af64, bf64);
@@ -73,7 +70,6 @@ test "CompareNumber" {
     const gti64 = compare.CompareNumber(bi64, ai64);
     const gtu64 = compare.CompareNumber(bu64, au64);
     const gtf64 = compare.CompareNumber(bf64, af64);
-
     const lti32 = compare.CompareNumber(ai32, bi32);
     const ltu32 = compare.CompareNumber(au32, bu32);
     const ltf32 = compare.CompareNumber(af32, bf32);
@@ -83,7 +79,6 @@ test "CompareNumber" {
     const gti32 = compare.CompareNumber(bi32, ai32);
     const gtu32 = compare.CompareNumber(bu32, au32);
     const gtf32 = compare.CompareNumber(bf32, af32);
-
     const lti16 = compare.CompareNumber(ai16, bi16);
     const ltu16 = compare.CompareNumber(au16, bu16);
     const ltf16 = compare.CompareNumber(af16, bf16);

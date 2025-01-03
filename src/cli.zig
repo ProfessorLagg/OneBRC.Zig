@@ -11,7 +11,7 @@ pub const std_options = .{
     .log_level = switch (builtin.mode) {
         .Debug => .debug,
         .ReleaseSafe => .info,
-        .ReleaseSmall => .warn,
+        .ReleaseSmall => .info,
         .ReleaseFast => .warn,
     },
 };
@@ -25,6 +25,7 @@ pub fn main() !void {
     defer deinit();
 
     // TODO parse console args
+    // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\verysmall.txt";
     // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\small.txt";
     const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
     // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\large.txt";
@@ -37,9 +38,10 @@ pub fn main() !void {
 
     // Turn this into a cli argument
     const lineCount_f64: f64 = @floatFromInt(parseResult.lineCount);
-    const keyCount_f64: f64 = @floatFromInt(parseResult.uniqueKeys);
+    const uniqueKeys = parseResult.uniqueKeys();
+    const keyCount_f64: f64 = @floatFromInt(uniqueKeys);
     const key_percent: f64 = (keyCount_f64 / lineCount_f64) * 100;
-    std.log.warn("read {d:.0} lines in {d:.2} s | {d:.2} ns/line | found {d} unique keys ({d:.2}%)", .{ parseResult.lineCount, s, ns_per_line, parseResult.uniqueKeys, key_percent});
+    std.log.warn("read {d:.0} lines in {d:.2} s | {d:.2} ns/line | found {d} unique keys ({d:.2}%)", .{ parseResult.lineCount, s, ns_per_line, uniqueKeys, key_percent});
 }
 
 fn init() !void {
