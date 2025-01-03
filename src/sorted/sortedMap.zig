@@ -118,9 +118,10 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
         /// If k is in the map, updates the value at k using updateFn.
         /// otherwise add the value from addFn to the map
         pub fn addOrUpdate(self: *Self, k: Tkey, addFn: fn () Tval, updateFn: fn (*Tval) void) void {
-            const idx: usize = self.indexOf(k);
+            const idx: isize = self.indexOf(k);
             if (idx >= 0 or idx < self.count) {
-                updateFn(&self.values[idx]);
+                const idxu: usize = @intCast(idx);
+                updateFn(&self.values[idxu]);
             } else {
                 self.update(k, addFn);
             }
