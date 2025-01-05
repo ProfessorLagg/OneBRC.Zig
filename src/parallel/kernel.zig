@@ -1,8 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-fn get_max_thread_count() !usize {
-    return @max(2, try std.Thread.getCpuCount());
-}
+const parallelUtils = @import("parallelUtils.zig");
 
 pub fn ParallelKernel(comptime Tsrc: type, comptime Tdst: type, comptime kernelFunc: fn (in: Tsrc) Tdst) type {
     const align_src: u29 = comptime blk: {
@@ -66,9 +64,7 @@ pub fn ParallelKernel(comptime Tsrc: type, comptime Tdst: type, comptime kernelF
                 return;
             }
 
-            const max_thread_count = get_max_thread_count() catch {
-                @panic("Could not get max_thread_count");
-            };
+            const max_thread_count = parallelUtils.get_max_thread_count();
             var threads: []std.Thread = try self.allocator.alloc(std.Thread, max_thread_count);
             defer self.allocator.free(threads);
 

@@ -7,6 +7,7 @@ const Allocator = std.mem.Allocator;
 const sorted = @import("sorted/sorted.zig");
 const parallel = @import("parallel/parallel.zig");
 const ParallelKernel = parallel.ParallelKernel;
+const ThreadPool = parallel.ThreadPool;
 
 const keylen: usize = 100;
 const veclen: usize = keylen / @sizeOf(u64);
@@ -53,7 +54,6 @@ const MeasurementKey = struct {
         return .Equal;
     }
 };
-const LineBuffer = [106]u8;
 const ParsedLine = struct {
     key: MeasurementKey = undefined,
     value: f64 = -1,
@@ -92,6 +92,7 @@ pub const ParsedSet = struct {
     allocator: Allocator,
     lineCount: u32 = 0,
     measurements: MapType,
+    lock: std.Thread.Mutex = .{},
 
     pub fn uniqueKeys(self: *const ParsedSet) usize {
         return self.measurements.keys.len;
@@ -108,7 +109,7 @@ pub const ParsedSet = struct {
         self.measurements.deinit();
     }
 
-    pub fn AddSync(self: *ParsedSet, parsedLine: *const ParsedLine) !void {
+    pub fn add(self: *ParsedSet, parsedLine: *const ParsedLine) !void {
         self.lineCount += 1;
         const idx: isize = self.measurements.indexOf(parsedLine.key);
         if (idx >= 0) {
@@ -120,6 +121,11 @@ pub const ParsedSet = struct {
         }
     }
 
+    pub fn addThreadSafe(self: *ParsedSet, parsedLine: *const ParsedLine) !void {
+        self.lock.lock();
+        try self.add(parsedLine);
+        self.lock.unlock();
+    }
     // TODO Multithreading safe Add function
 };
 pub const SetParser = struct {
@@ -142,13 +148,13 @@ pub const SetParser = struct {
                 var key: []u8 = pline.key.key();
                 _ = &key;
                 std.log.debug("line {d}: \"{s}\"\n- key: \"{s}\"\n- val: {d}", .{ parsedSet.lineCount, line, key, pline.value }); // not compiled in ReleaseFast mode
-                try parsedSet.AddSync(&pline);
+                try parsedSet.add(&pline);
             }
         }
     }
     const Line = struct {
         len: usize,
-        buffer: LineBuffer,
+        buffer: [106]u8,
 
         pub fn create(v: []const u8) Line {
             var r = Line{ // NOWRAP
@@ -158,22 +164,30 @@ pub const SetParser = struct {
             std.debug.assert(v.len <= r.buffer.len);
             std.mem.copyForwards(u8, r.buffer[0..v.len], v);
             r.len = v.len;
-            // std.log.debug("Line.create: v.len = {d}", .{v.len});
             return r;
         }
 
-        pub fn slice(self: *const Line) []const u8 {
-            // std.log.debug("Line.slice: self.len = {d}", .{self.len});
+        pub fn get(self: *const Line) []const u8 {
             return self.buffer[0..@min(self.len, self.buffer.len)];
         }
 
-        pub fn parse(v: Line) ParsedLine {
-            // std.log.debug("Line.parse(v:\"{s}\")", .{v.buffer});
-            const line: []const u8 = v.slice();
-            // Splitting on ';'
-            var i: usize = 1;
-            while (line[i] != ';' and i < line.len) : (i += 1) {}
+        pub inline fn set(self: *Line, v: []const u8) void {
+            std.debug.assert(v.len <= self.buffer.len);
+            std.mem.copyForwards(u8, self.buffer[0..v.len], v);
+            self.len = v.len;
+        }
 
+        pub fn parse(self: Line) ParsedLine {
+            const line: []const u8 = self.get();
+            //std.log.debug("Line.parse(v:\"{s}\")", .{line});
+            // Splitting on ';'
+            const idx: ?usize = std.mem.indexOf(u8, line, ";");
+            if (idx == null) {
+                std.log.err("Could not find char ';' in line \"{s}\"", .{line});
+                @panic("Could not find char ';' in line");
+            }
+
+            const i: usize = idx.?;
             const keystr = line[0..i];
             const valstr = line[(i + 1)..];
             const valint: isize = fastIntParse(valstr);
@@ -197,8 +211,8 @@ pub const SetParser = struct {
                     try kernel.run();
                     for (0..kernel.count) |i| {
                         var pline: ParsedLine = kernel.results[i];
-                        std.log.debug("line {d}: \"{s}\"\n- key: \"{s}\"\n- val: {d}", .{ line_idx, kernel.inputs[i].slice(), pline.key.key(), pline.value });
-                        try parsedSet.AddSync(&pline);
+                        std.log.debug("line {d}: \"{s}\"\n- key: \"{s}\"\n- val: {d}", .{ line_idx, kernel.inputs[i].get(), pline.key.key(), pline.value });
+                        try parsedSet.add(&pline);
                         line_idx += 1;
                     }
                     kernel.resetCount();
@@ -209,8 +223,68 @@ pub const SetParser = struct {
         try kernel.run();
         for (0..kernel.count) |i| {
             const pline: ParsedLine = kernel.results[i];
-            try parsedSet.AddSync(&pline);
+            try parsedSet.add(&pline);
         }
+    }
+
+    fn readThreadPool(allocator: Allocator, file: *const File, parsedSet: *ParsedSet) !void {
+        var buf: [4096]u8 = undefined;
+        var buf_reader = std.io.bufferedReader(file.reader());
+        var in_stream = buf_reader.reader();
+        // var arena = std.heap.ArenaAllocator.init(allocator);
+        // defer arena.deinit();
+        // const arena_allocator = arena.allocator();
+        var pool = ThreadPool.init(allocator);
+        defer pool.deinit();
+
+        const TaskContext = struct {
+            const Self = @This();
+            var set_lock = std.Thread.Mutex{};
+            var ctx_allocator: *const Allocator = undefined;
+            var ctx_parsedSet: *ParsedSet = undefined;
+            ctx_line: Line = .{},
+
+            pub fn taskFn(ctx: ?*anyopaque) void {
+                if (ctx == null) {
+                    return;
+                }
+                const self: *Self = @alignCast(@ptrCast(ctx.?));
+                const line = self.ctx_line.get();
+                const semi_idx = std.mem.indexOf(u8, line, ";");
+                if (semi_idx != null) {
+                    //std.log.debug("line : \"{s}\"", .{self.ctx_line.get()}); // not compiled in ReleaseFast mode
+                    const i: usize = semi_idx.?;
+                    const pline: ParsedLine = .{
+                        .key = MeasurementKey.create(line[0..i]),
+                        .value = @as(f64, @floatFromInt(fastIntParse(line[(i + 1)..line.len]))) / 10.0,
+                    };
+                    set_lock.lock();
+                    ctx_parsedSet.add(&pline) catch {
+                        @panic("Failed to add line");
+                    };
+                    set_lock.unlock();
+                }
+                ctx_allocator.destroy(self);
+            }
+        };
+
+        TaskContext.ctx_allocator = &allocator;
+        TaskContext.ctx_parsedSet = parsedSet;
+
+        var lineCount: usize = 0;
+        while (try in_stream.readUntilDelimiterOrEof(&buf, '\n')) |line| {
+            // if (line.len >= 5 and line[0] != '#') {
+            if (line.len >= 5 and line[0] != '#') {
+                std.log.debug("line {d}: \"{s}\"", .{ lineCount, line });
+                std.debug.assert(line[line.len - 1] >= 48 and line[line.len - 1] <= 57);
+                lineCount += 1;
+                const ctx: *TaskContext = try allocator.create(TaskContext);
+                ctx.ctx_line.set(line);
+                pool.schedule(ctx, TaskContext.taskFn);
+            }
+        }
+
+        pool.waitAll();
     }
 
     pub fn parse(self: *SetParser, path: []const u8) !ParsedSet {
@@ -219,7 +293,8 @@ pub const SetParser = struct {
 
         var set: ParsedSet = ParsedSet.init(self.allocator);
         //try readSync(&file, &set);
-        try readKernel(self.allocator, &file, &set);
+        //try readKernel(self.allocator, &file, &set);
+        try readThreadPool(self.allocator, &file, &set);
         return set;
     }
 };
@@ -235,7 +310,7 @@ fn parseLine(line: []u8) ParsedLine {
     const val: f64 = @as(f64, @floatFromInt(valint)) / 10.0;
     return ParsedLine.init(keystr, val);
 }
-fn parseLineBuffer(line: *LineBuffer) ParsedLine {
+fn parseLineBuffer(line: *[106]u8) ParsedLine {
     const l: usize = @min(keylen, line.len);
     // Splitting on ';'
     var idx_semicolon: usize = 1;
@@ -259,7 +334,7 @@ fn parseLineBuffer(line: *LineBuffer) ParsedLine {
     return ParsedLine.init(keystr, val);
 }
 /// Parses a copy of the line. Safe to use in multithreaded context
-fn parseLineCopy(line: LineBuffer) ParsedLine {
+fn parseLineCopy(line: [106]u8) ParsedLine {
     return parseLineBuffer(line);
 }
 /// Parses decimal number string

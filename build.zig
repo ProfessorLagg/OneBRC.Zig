@@ -64,34 +64,42 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    // Creates a step for unit testing. This only builds the test executable
-    // but does not run it.
+    // ============ TESTING ============
+    const test_step = b.step("test", "Run unit tests");
+
+    // lib
     const lib_unit_tests = b.addTest(.{
         .root_source_file = b.path("src/lib.zig"),
         .target = target,
         .optimize = optimize,
     });
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
+    test_step.dependOn(&run_lib_unit_tests.step);
 
-    const exe_unit_tests = b.addTest(.{
+    // cli
+    const cli_unit_tests = b.addTest(.{
         .root_source_file = b.path("src/cli.zig"),
         .target = target,
         .optimize = optimize,
     });
-    const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
+    const run_cli_unit_tests = b.addRunArtifact(cli_unit_tests);
+    test_step.dependOn(&run_cli_unit_tests.step);
 
+    // sorted
     const sorted_unit_tests = b.addTest(.{
         .root_source_file = b.path("src/sorted/sorted.zig"),
         .target = target,
         .optimize = optimize,
     });
     const run_sorted_unit_tests = b.addRunArtifact(sorted_unit_tests);
-
-    // Similar to creating the run step earlier, this exposes a `test` step to
-    // the `zig build --help` menu, providing a way for the user to request
-    // running the unit tests.
-    const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_lib_unit_tests.step);
-    test_step.dependOn(&run_exe_unit_tests.step);
     test_step.dependOn(&run_sorted_unit_tests.step);
+
+    // parallel
+    const parallel_unit_tests = b.addTest(.{
+        .root_source_file = b.path("src/parallel/parallel.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_parallel_unit_tests = b.addRunArtifact(parallel_unit_tests);
+    test_step.dependOn(&run_parallel_unit_tests.step);
 }
