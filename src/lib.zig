@@ -29,7 +29,7 @@ const MeasurementKey = struct {
         return r;
     }
 
-    pub fn compare_keys(a: MeasurementKey, b: MeasurementKey) sorted.CompareResult {
+    pub fn compare_keys1(a: MeasurementKey, b: MeasurementKey) sorted.CompareResult {
         const compare_len_fn = comptime sorted.CompareNumberFn(usize);
         const akey: []u8 = @constCast(&a).key();
         const bkey: []u8 = @constCast(&b).key();
@@ -42,6 +42,28 @@ const MeasurementKey = struct {
         while (i > 0) {
             i -= 1;
             switch (sorted.CompareNumber(akey[i], bkey[i])) {
+                .Equal => {},
+                .LessThan => {
+                    return .LessThan;
+                },
+                .GreaterThan => {
+                    return .GreaterThan;
+                },
+            }
+        }
+        return .Equal;
+    }
+
+    pub fn compare_keys(a: MeasurementKey, b: MeasurementKey) sorted.CompareResult {
+        const comp_len = sorted.CompareNumber(a.len, b.len);
+        if (comp_len != .Equal) {
+            return comp_len;
+        }
+
+        var i: usize = a.len;
+        while (i > 0) {
+            i -= 1;
+            switch (sorted.CompareNumber(a.keybuffer[i], b.keybuffer[i])) {
                 .Equal => {},
                 .LessThan => {
                     return .LessThan;
@@ -292,9 +314,9 @@ pub const SetParser = struct {
         defer file.close();
 
         var set: ParsedSet = ParsedSet.init(self.allocator);
-        //try readSync(&file, &set);
+        try readSync(&file, &set);
         //try readKernel(self.allocator, &file, &set);
-        try readThreadPool(self.allocator, &file, &set);
+        //try readThreadPool(self.allocator, &file, &set);
         return set;
     }
 };
