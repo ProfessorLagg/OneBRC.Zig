@@ -63,14 +63,9 @@ const MeasurementKey = struct {
         var i: usize = a.len;
         while (i > 0) {
             i -= 1;
-            switch (sorted.CompareNumber(a.keybuffer[i], b.keybuffer[i])) {
-                .Equal => {},
-                .LessThan => {
-                    return .LessThan;
-                },
-                .GreaterThan => {
-                    return .GreaterThan;
-                },
+            const char_compare = sorted.CompareNumber(a.keybuffer[i], b.keybuffer[i]);
+            if (char_compare != .Equal) {
+                return char_compare;
             }
         }
         return .Equal;
