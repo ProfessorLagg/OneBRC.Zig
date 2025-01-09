@@ -19,7 +19,6 @@ pub inline fn CompareFromBools(lessThan: bool, greaterThan: bool) CompareResult 
 }
 
 // ===== NUMBERS ======
-
 pub fn IsNumberType(T: type) bool {
     switch (@typeInfo(T)) {
         .Int, .Float, .ComptimeInt, .ComptimeFloat => {
@@ -30,33 +29,100 @@ pub fn IsNumberType(T: type) bool {
         },
     }
 }
-/// Function to check if typeof v is a number
+/// true v @typeOf(v) is a number, else false
 pub fn IsNumber(v: anytype) bool {
     return IsNumberType(@TypeOf(v));
 }
-
 /// Returns a numeric value comparison function for the input type
-pub fn CompareNumberFn(comptime T: type) Comparison(T) {
+pub fn CompareFloatFn(comptime T: type) Comparison(T) {
     comptime {
-        if (!IsNumberType(T)) {
-            @compileError(@typeName(T) ++ " is not a number type!");
+        switch (@typeInfo(T)) {
+            .Float, .ComptimeFloat => {},
+            else => {
+                @compileError(@typeName(T) ++ " is not a float type");
+            },
         }
     }
 
-    const Tinfo: std.builtin.Type = comptime @typeInfo(T);
-    if (Tinfo == .Int and Tinfo.Int.signedness == .signed) {
-        return struct {
-            pub fn comp(a: T, b: T) CompareResult {
-                const ri: i8 = @intCast(a - b);
-                return @enumFromInt(ri);
-            }
-        }.comp;
+    return struct {
+        pub fn comp(a: T, b: T) CompareResult {
+            const i = a - b;
+            const r: i8 = @as(i8, @intFromBool(i > 0)) - @as(i8, @intFromBool(i < 0));
+            return @enumFromInt(r);
+        }
+    }.comp;
+}
+/// Returns a numeric value comparison function for the input type
+pub fn CompareSignedFn(comptime T: type) Comparison(T) {
+    comptime {
+        const Tinfo: std.builtin.Type = @typeInfo(T);
+        const err_msg = @typeName(T) ++ " is not a signed integer type";
+        switch (Tinfo) {
+            .ComptimeInt => {},
+            .Int => {
+                if (Tinfo.Int.signedness != .signed) {
+                    @compileError(err_msg);
+                }
+            },
+            else => {
+                @compileError(err_msg);
+            },
+        }
     }
+
+    return struct {
+        pub fn comp(a: T, b: T) CompareResult {
+            const i = a - b;
+            const r: i8 = @as(i8, @intFromBool(i > 0)) - @as(i8, @intFromBool(i < 0));
+            return @enumFromInt(r);
+        }
+    }.comp;
+}
+/// Returns a numeric value comparison function for the input type
+pub fn CompareUnsignedFn(comptime T: type) Comparison(T) {
+    comptime {
+        const Tinfo: std.builtin.Type = @typeInfo(T);
+        const err_msg = @typeName(T) ++ " is not an unsigned integer type";
+        switch (Tinfo) {
+            .ComptimeInt => {},
+            .Int => {
+                if (Tinfo.Int.signedness != .unsigned) {
+                    @compileError(err_msg);
+                }
+            },
+            else => {
+                @compileError(err_msg);
+            },
+        }
+    }
+
     return struct {
         pub fn comp(a: T, b: T) CompareResult {
             return CompareFromBools(a < b, a > b);
         }
     }.comp;
+}
+/// Returns a numeric value comparison function for the input type
+pub fn CompareNumberFn(comptime T: type) Comparison(T) {
+    comptime {
+        if (!IsNumberType(T)) {
+            @compileError(@typeName(T) ++ " is not a number type");
+        }
+    }
+
+    const Tinfo: std.builtin.Type = comptime @typeInfo(T);
+    switch (Tinfo) {
+        .Float, .ComptimeFloat => return CompareFloatFn(T),
+        .Int => {
+            if (Tinfo.Int.signedness == .signed) {
+                return CompareSignedFn(T);
+            } else {
+                return CompareUnsignedFn(T);
+            }
+        },
+        .ComptimeInt => return CompareSignedFn(T),
+        else => unreachable,
+    }
 }
 
 pub fn CompareNumber(a: anytype, b: anytype) CompareResult {
