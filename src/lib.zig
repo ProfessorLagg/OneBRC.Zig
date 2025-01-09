@@ -29,40 +29,13 @@ const MeasurementKey = struct {
         return r;
     }
 
-    pub fn compare_keys1(a: MeasurementKey, b: MeasurementKey) sorted.CompareResult {
-        const compare_len_fn = comptime sorted.CompareNumberFn(usize);
-        const akey: []u8 = @constCast(&a).key();
-        const bkey: []u8 = @constCast(&b).key();
-        const comp_len = compare_len_fn(akey.len, bkey.len);
-        if (comp_len != .Equal) {
-            return comp_len;
-        }
-
-        var i: usize = akey.len;
-        while (i > 0) {
-            i -= 1;
-            switch (sorted.CompareNumber(akey[i], bkey[i])) {
-                .Equal => {},
-                .LessThan => {
-                    return .LessThan;
-                },
-                .GreaterThan => {
-                    return .GreaterThan;
-                },
-            }
-        }
-        return .Equal;
-    }
-
     pub fn compare_keys(a: MeasurementKey, b: MeasurementKey) sorted.CompareResult {
         const comp_len = sorted.CompareNumber(a.len, b.len);
         if (comp_len != .Equal) {
             return comp_len;
         }
 
-        var i: usize = a.len;
-        while (i > 0) {
-            i -= 1;
+        for (0..a.len) |i| {
             const char_compare = sorted.CompareNumber(a.keybuffer[i], b.keybuffer[i]);
             if (char_compare != .Equal) {
                 return char_compare;
