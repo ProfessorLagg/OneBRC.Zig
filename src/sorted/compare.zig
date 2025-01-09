@@ -42,6 +42,16 @@ pub fn CompareNumberFn(comptime T: type) Comparison(T) {
             @compileError(@typeName(T) ++ " is not a number type!");
         }
     }
+
+    const Tinfo: std.builtin.Type = comptime @typeInfo(T);
+    if (Tinfo == .Int and Tinfo.Int.signedness == .signed) {
+        return struct {
+            pub fn comp(a: T, b: T) CompareResult {
+                const ri: i8 = @intCast(a - b);
+                return @enumFromInt(ri);
+            }
+        }.comp;
+    }
     return struct {
         pub fn comp(a: T, b: T) CompareResult {
             return CompareFromBools(a < b, a > b);
