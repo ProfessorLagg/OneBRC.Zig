@@ -90,7 +90,7 @@ pub const ParsedSet = struct {
     pub fn init(allocator: Allocator) ParsedSet {
         return .{ //NOFOLD
             .allocator = allocator,
-            .measurements = MapType.init(allocator) catch {
+            .measurements = MapType.initWithCapacity(allocator, 41343) catch {
                 @panic("failed to init measurements");
             },
         };
