@@ -67,28 +67,18 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
         }
         /// Finds the index of the key. Returns -1 if not found
         pub fn indexOf(self: *Self, k: Tkey) isize {
-            if (self.keys.len == 0) {
-                return -1;
-            }
-
-            var low: isize = 0;
-            var high: isize = @intCast(self.keys.len - 1);
-            var mid: isize = low + @divTrunc(high - low, 2);
-            while (low <= high and mid >= 0 and mid < self.keys.len) {
-                switch (comparison(self.keys[@as(usize, @intCast(mid))], k)) {
-                    .Equal => {
-                        return @as(isize, @intCast(mid));
-                    },
-                    .LessThan => {
-                        low = mid + 1;
-                    },
-                    .GreaterThan => {
-                        high = mid - 1;
-                    },
+            var L: isize = 0;
+            var R: isize = @bitCast(self.count);
+            R -= 1;
+            while (L <= R) {
+                const m = @divFloor(L + R, 2);
+                const cmp = comparison(self.keys[@as(usize, @intCast(m))], k);
+                switch (cmp) {
+                    .LessThan => L = m + 1,
+                    .GreaterThan => R = m - 1,
+                    .Equal => return m,
                 }
-                mid = low + @divTrunc(high - low, 2);
             }
-
             return -1;
         }
         /// Returns true if k is found in self.keys. Otherwise false
@@ -167,7 +157,7 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
             var key_slice: []Tkey = self.keys[start_at..];
             var val_slice: []Tval = self.values[start_at..];
             var i: usize = key_slice.len;
-            while (i > 1){
+            while (i > 1) {
                 i -= 1;
                 key_slice[i] = key_slice[i - 1];
                 val_slice[i] = val_slice[i - 1];
