@@ -28,15 +28,60 @@ const MeasurementKey = struct {
         std.mem.copyForwards(u8, r.keybuffer[0..l], k[0..l]);
         return r;
     }
+    pub fn createRandom(rand: *std.Random) MeasurementKey {
+        var r: MeasurementKey = .{
+            .keybuffer = undefined,
+            .len = rand.intRangeAtMost(usize, 1, keylen),
+        };
+        for (0..r.len) |i| {
+            r.keybuffer[i] = rand.int(u8);
+        }
+        return r;
+    }
 
-    pub fn compare_keys(a: MeasurementKey, b: MeasurementKey) sorted.CompareResult {
-        const comp_len = sorted.CompareNumber(a.len, b.len);
+    pub fn compare_keys1(a: MeasurementKey, b: MeasurementKey) sorted.CompareResult {
+        const comp_len = sorted.compareNumber(a.len, b.len);
         if (comp_len != .Equal) {
             return comp_len;
         }
 
         for (0..a.len) |i| {
-            const char_compare = sorted.CompareNumber(a.keybuffer[i], b.keybuffer[i]);
+            const char_compare = sorted.compareNumber(a.keybuffer[i], b.keybuffer[i]);
+            if (char_compare != .Equal) {
+                return char_compare;
+            }
+        }
+        return .Equal;
+    }
+
+    pub fn compare_keys2(a: MeasurementKey, b: MeasurementKey) sorted.CompareResult {
+        const comp_len = sorted.compareNumber(a.len, b.len);
+        if (comp_len != .Equal) {
+            return comp_len;
+        }
+
+        inline for (0..keylen) |i| {
+            if (i >= a.len) {
+                break;
+            }
+            const char_compare = sorted.compareNumber(a.keybuffer[i], b.keybuffer[i]);
+            if (char_compare != .Equal) {
+                return char_compare;
+            }
+        }
+        return .Equal;
+    }
+
+    pub fn compare_keys(a: *const MeasurementKey, b: *const MeasurementKey) sorted.CompareResult {
+        const comp_len = sorted.compareFromBools(a.len < b.len, a.len > b.len);
+        if (comp_len != .Equal) {
+            return comp_len;
+        }
+
+        for (0..a.len) |i| {
+            const lt: i8 = @intFromBool(a.keybuffer[i] < b.keybuffer[i]) * @as(i8, -1); // -1 if true, 0 if false
+            const gt: i8 = @intFromBool(a.keybuffer[i] > b.keybuffer[i]); // 1 if true, 0 if false
+            const char_compare = @as(sorted.CompareResult, @enumFromInt(lt + gt));
             if (char_compare != .Equal) {
                 return char_compare;
             }
@@ -101,13 +146,13 @@ pub const ParsedSet = struct {
 
     pub fn add(self: *ParsedSet, parsedLine: *const ParsedLine) !void {
         self.lineCount += 1;
-        const idx: isize = self.measurements.indexOf(parsedLine.key);
+        const idx: isize = self.measurements.indexOf(&parsedLine.key);
         if (idx >= 0) {
             // key found, update it
             self.measurements.values[@as(usize, @intCast(idx))].add(parsedLine.value);
         } else {
             // key not found, add it
-            self.measurements.update(parsedLine.key, Measurement.init(parsedLine.value));
+            self.measurements.update(&parsedLine.key, &Measurement.init(parsedLine.value));
         }
     }
 

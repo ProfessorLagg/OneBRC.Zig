@@ -8,6 +8,8 @@ const SetParser = lib.SetParser;
 
 const parallel = @import("parallel/parallel.zig");
 
+const sorted = @import("sorted/sorted.zig");
+
 pub const std_options = .{
     // Set the log level to info to .debug. use the scope levels instead
     .log_level = switch (builtin.mode) {
@@ -29,8 +31,8 @@ pub fn main() !void {
     // TODO parse console args
     // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\verysmall.txt";
     // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\small.txt";
-    // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
-    const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
+    const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
+    // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
     // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\large.txt";
     var timer = try std.time.Timer.start();
     var parseResult = try parser.parse(path[0..]);

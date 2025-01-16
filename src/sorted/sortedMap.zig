@@ -9,7 +9,7 @@ fn calc_default_initial_capacity(comptime Tkey: type, comptime Tval: type) compt
     const size_key: comptime_int = @sizeOf(Tkey);
     const size_val: comptime_int = @sizeOf(Tval);
     const size_max = @max(size_key, size_val);
-    switch (compare.CompareNumber(size_max, size_halfcacheline)) {
+    switch (compare.compareNumber(size_max, size_halfcacheline)) {
         .Equal, .LessThan => {
             return (size_halfcacheline / size_max);
         },
@@ -19,7 +19,7 @@ fn calc_default_initial_capacity(comptime Tkey: type, comptime Tval: type) compt
     }
 }
 
-pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime comparison: compare.Comparison(Tkey)) type {
+pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime comparison: compare.ComparisonR(Tkey)) type {
     const default_initial_capacity: comptime_int = comptime calc_default_initial_capacity(Tkey, Tval);
 
     return struct {
@@ -66,13 +66,14 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
             return self.key_buffer.len;
         }
         /// Finds the index of the key. Returns -1 if not found
-        pub fn indexOf(self: *Self, k: Tkey) isize {
+        pub fn indexOf(self: *Self, k: *const Tkey) isize {
             var L: isize = 0;
             var R: isize = @bitCast(self.count);
             R -= 1;
             while (L <= R) {
                 const m = @divFloor(L + R, 2);
-                const cmp = comparison(self.keys[@as(usize, @intCast(m))], k);
+                const mu = @as(usize, @intCast(m));
+                const cmp = comparison(&self.keys[mu], k);
                 switch (cmp) {
                     .LessThan => L = m + 1,
                     .GreaterThan => R = m - 1,
@@ -89,7 +90,7 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
         }
         /// Adds an item to the set.
         /// Returns true if the key could be added, otherwise false.
-        pub fn add(self: *Self, k: Tkey, v: Tval) bool {
+        pub fn add(self: *Self, k: *const Tkey, v: *const Tval) bool {
             if (self.contains(k)) {
                 return false;
             }
@@ -97,7 +98,7 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
             return true;
         }
         /// Overwrites the value at k, regardless of it's already contained
-        pub fn update(self: *Self, k: Tkey, v: Tval) void {
+        pub fn update(self: *Self, k: *const Tkey, v: *const Tval) void {
             const insertionIndex = self.getInsertIndex(k);
             if (self.count == self.key_buffer.len) {
                 const new_capacity: usize = self.capacity() * 2;
@@ -167,24 +168,24 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
         /// Caller asserts that the buffers have space.
         /// Caller asserts that the index is valid.
         /// Inserts an item and a key at the specified index.
-        fn insertAt(self: *Self, index: usize, k: Tkey, v: Tval) void {
+        fn insertAt(self: *Self, index: usize, k: *const Tkey, v: *const Tval) void {
             std.debug.assert(index <= self.count); // Does not get compiled in ReleaseFast and ReleaseSmall modes
             std.debug.assert(self.keys.len < self.key_buffer.len); // Does not get compiled in ReleaseFast and ReleaseSmall modes
 
             self.incrementCount();
             if (index == self.count - 1) {
                 // No need to shift if inserting at the end
-                self.keys[index] = k;
-                self.values[index] = v;
+                self.keys[index] = k.*;
+                self.values[index] = v.*;
                 return;
             } else {
                 self.shiftRight(index);
-                self.keys[index] = k;
-                self.values[index] = v;
+                self.keys[index] = k.*;
+                self.values[index] = v.*;
             }
         }
         /// Returns the index this key would have if present in the map.
-        fn getInsertIndex_old(self: *Self, k: Tkey) usize {
+        fn getInsertIndex_old(self: *Self, k: *const Tkey) usize {
             if (self.count == 0) {
                 return 0;
             }
@@ -212,11 +213,11 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
         }
 
         /// Returns the index this key would have if present in the map.
-        fn getInsertIndex(self: *Self, k: Tkey) usize {
-            if (self.count == 0 or (comparison(k, self.keys[0]) == .LessThan)) {
+        fn getInsertIndex(self: *Self, k: *const Tkey) usize {
+            if (self.count == 0 or (comparison(k, &self.keys[0]) == .LessThan)) {
                 return 0;
             }
-            if (comparison(k, self.keys[self.count - 1]) == .GreaterThan) {
+            if (comparison(k, &self.keys[self.count - 1]) == .GreaterThan) {
                 return self.count;
             }
 
@@ -225,12 +226,12 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
             var mid: isize = low + @divTrunc(high - low, 2);
             var midu: usize = @as(usize, @intCast(mid));
             while (low <= high and mid >= 0 and mid < self.keys.len) {
-                const comp_left = comparison(k, self.keys[midu - 1]);
-                const comp_right = comparison(k, self.keys[midu + 1]);
+                const comp_left = comparison(k, &self.keys[midu - 1]);
+                const comp_right = comparison(k, &self.keys[midu + 1]);
                 if (comp_left == .LessThan and comp_right == .GreaterThan) {
                     return midu;
                 }
-                switch (comparison(self.keys[midu], k)) {
+                switch (comparison(&self.keys[midu], k)) {
                     .Equal => {
                         return midu;
                     },
@@ -251,5 +252,5 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
 
 /// A SortedArrayMap using numeric keys
 pub fn AutoNumberSortedArrayMap(comptime Tkey: type, comptime Tval: type) type {
-    return SortedArrayMap(Tkey, Tval, comptime compare.CompareNumberFn(Tkey));
+    return SortedArrayMap(Tkey, Tval, comptime compare.compareNumberFn(Tkey));
 }

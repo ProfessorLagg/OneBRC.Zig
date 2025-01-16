@@ -6,7 +6,7 @@ pub usingnamespace sortedMap;
 
 test "SortedArrayMap.add" {
     const add_count: comptime_int = 99;
-    const comparison: compare.Comparison(isize) = comptime compare.CompareNumberFn(isize);
+    const comparison: compare.Comparison(isize) = comptime compare.compareNumberFn(isize);
     const MapType = sortedMap.SortedArrayMap(isize, f32, comparison);
 
     var map = try MapType.init(std.testing.allocator);
@@ -26,6 +26,7 @@ test "SortedArrayMap.add" {
     success = map.add(map.keys[0], 123.456);
     try std.testing.expect(!success);
 }
+
 test "CompareNumber" {
     // Arrange
     const a_comptime_int: comptime_int = 3;
@@ -55,39 +56,39 @@ test "CompareNumber" {
     const bf16: f16 = @floatFromInt(bi16);
 
     // Act
-    const lt_comptime_int = compare.CompareNumber(a_comptime_int, b_comptime_int);
-    const eq_comptime_int = compare.CompareNumber(a_comptime_int, a_comptime_int);
-    const gt_comptime_int = compare.CompareNumber(b_comptime_int, a_comptime_int);
-    const lt_comptime_float = compare.CompareNumber(a_comptime_float, b_comptime_float);
-    const eq_comptime_float = compare.CompareNumber(a_comptime_float, a_comptime_float);
-    const gt_comptime_float = compare.CompareNumber(b_comptime_float, a_comptime_float);
-    const lti64 = compare.CompareNumber(ai64, bi64);
-    const ltu64 = compare.CompareNumber(au64, bu64);
-    const ltf64 = compare.CompareNumber(af64, bf64);
-    const eqi64 = compare.CompareNumber(ai64, ai64);
-    const equ64 = compare.CompareNumber(au64, au64);
-    const eqf64 = compare.CompareNumber(af64, af64);
-    const gti64 = compare.CompareNumber(bi64, ai64);
-    const gtu64 = compare.CompareNumber(bu64, au64);
-    const gtf64 = compare.CompareNumber(bf64, af64);
-    const lti32 = compare.CompareNumber(ai32, bi32);
-    const ltu32 = compare.CompareNumber(au32, bu32);
-    const ltf32 = compare.CompareNumber(af32, bf32);
-    const eqi32 = compare.CompareNumber(ai32, ai32);
-    const equ32 = compare.CompareNumber(au32, au32);
-    const eqf32 = compare.CompareNumber(af32, af32);
-    const gti32 = compare.CompareNumber(bi32, ai32);
-    const gtu32 = compare.CompareNumber(bu32, au32);
-    const gtf32 = compare.CompareNumber(bf32, af32);
-    const lti16 = compare.CompareNumber(ai16, bi16);
-    const ltu16 = compare.CompareNumber(au16, bu16);
-    const ltf16 = compare.CompareNumber(af16, bf16);
-    const eqi16 = compare.CompareNumber(ai16, ai16);
-    const equ16 = compare.CompareNumber(au16, au16);
-    const eqf16 = compare.CompareNumber(af16, af16);
-    const gti16 = compare.CompareNumber(bi16, ai16);
-    const gtu16 = compare.CompareNumber(bu16, au16);
-    const gtf16 = compare.CompareNumber(bf16, af16);
+    const lt_comptime_int = compare.compareNumber(a_comptime_int, b_comptime_int);
+    const eq_comptime_int = compare.compareNumber(a_comptime_int, a_comptime_int);
+    const gt_comptime_int = compare.compareNumber(b_comptime_int, a_comptime_int);
+    const lt_comptime_float = compare.compareNumber(a_comptime_float, b_comptime_float);
+    const eq_comptime_float = compare.compareNumber(a_comptime_float, a_comptime_float);
+    const gt_comptime_float = compare.compareNumber(b_comptime_float, a_comptime_float);
+    const lti64 = compare.compareNumber(ai64, bi64);
+    const ltu64 = compare.compareNumber(au64, bu64);
+    const ltf64 = compare.compareNumber(af64, bf64);
+    const eqi64 = compare.compareNumber(ai64, ai64);
+    const equ64 = compare.compareNumber(au64, au64);
+    const eqf64 = compare.compareNumber(af64, af64);
+    const gti64 = compare.compareNumber(bi64, ai64);
+    const gtu64 = compare.compareNumber(bu64, au64);
+    const gtf64 = compare.compareNumber(bf64, af64);
+    const lti32 = compare.compareNumber(ai32, bi32);
+    const ltu32 = compare.compareNumber(au32, bu32);
+    const ltf32 = compare.compareNumber(af32, bf32);
+    const eqi32 = compare.compareNumber(ai32, ai32);
+    const equ32 = compare.compareNumber(au32, au32);
+    const eqf32 = compare.compareNumber(af32, af32);
+    const gti32 = compare.compareNumber(bi32, ai32);
+    const gtu32 = compare.compareNumber(bu32, au32);
+    const gtf32 = compare.compareNumber(bf32, af32);
+    const lti16 = compare.compareNumber(ai16, bi16);
+    const ltu16 = compare.compareNumber(au16, bu16);
+    const ltf16 = compare.compareNumber(af16, bf16);
+    const eqi16 = compare.compareNumber(ai16, ai16);
+    const equ16 = compare.compareNumber(au16, au16);
+    const eqf16 = compare.compareNumber(af16, af16);
+    const gti16 = compare.compareNumber(bi16, ai16);
+    const gtu16 = compare.compareNumber(bu16, au16);
+    const gtf16 = compare.compareNumber(bf16, af16);
 
     // Assert
     try std.testing.expectEqual(.LessThan, lt_comptime_int);
