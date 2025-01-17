@@ -83,7 +83,7 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
             return -1;
         }
         /// Returns true if k is found in self.keys. Otherwise false
-        pub inline fn contains(self: *Self, k: Tkey) bool {
+        pub inline fn contains(self: *Self, k: *const Tkey) bool {
             const idx: isize = self.indexOf(k);
             std.log.debug("indexOf({any}) = {d}", .{ k, idx });
             return idx >= 0 and idx < self.keys.len;
@@ -91,11 +91,13 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
         /// Adds an item to the set.
         /// Returns true if the key could be added, otherwise false.
         pub fn add(self: *Self, k: *const Tkey, v: *const Tval) bool {
-            if (self.contains(k)) {
+            const idx: usize = self.indexOf(k);
+            if (idx >= 0) {
                 return false;
+            } else {
+                self.update(k, v);
+                return true;
             }
-            self.update(k, v);
-            return true;
         }
         /// Overwrites the value at k, regardless of it's already contained
         pub fn update(self: *Self, k: *const Tkey, v: *const Tval) void {

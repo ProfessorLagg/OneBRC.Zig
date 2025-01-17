@@ -39,39 +39,6 @@ const MeasurementKey = struct {
         return r;
     }
 
-    pub fn compare_keys1(a: MeasurementKey, b: MeasurementKey) sorted.CompareResult {
-        const comp_len = sorted.compareNumber(a.len, b.len);
-        if (comp_len != .Equal) {
-            return comp_len;
-        }
-
-        for (0..a.len) |i| {
-            const char_compare = sorted.compareNumber(a.keybuffer[i], b.keybuffer[i]);
-            if (char_compare != .Equal) {
-                return char_compare;
-            }
-        }
-        return .Equal;
-    }
-
-    pub fn compare_keys2(a: MeasurementKey, b: MeasurementKey) sorted.CompareResult {
-        const comp_len = sorted.compareNumber(a.len, b.len);
-        if (comp_len != .Equal) {
-            return comp_len;
-        }
-
-        inline for (0..keylen) |i| {
-            if (i >= a.len) {
-                break;
-            }
-            const char_compare = sorted.compareNumber(a.keybuffer[i], b.keybuffer[i]);
-            if (char_compare != .Equal) {
-                return char_compare;
-            }
-        }
-        return .Equal;
-    }
-
     pub fn compare_keys(a: *const MeasurementKey, b: *const MeasurementKey) sorted.CompareResult {
         const comp_len = sorted.compareFromBools(a.len < b.len, a.len > b.len);
         if (comp_len != .Equal) {
