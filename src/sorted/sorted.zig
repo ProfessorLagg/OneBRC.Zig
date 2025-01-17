@@ -1,13 +1,13 @@
 const std = @import("std");
 const compare = @import("compare.zig");
-const sortedMap = @import("sortedMap.zig");
+const sortedArrayMap = @import("sortedArrayMap.zig");
 pub usingnamespace compare;
-pub usingnamespace sortedMap;
+pub usingnamespace sortedArrayMap;
 
 test "SortedArrayMap.add" {
     const add_count: comptime_int = 99;
     const comparison: compare.Comparison(isize) = comptime compare.compareNumberFn(isize);
-    const MapType = sortedMap.SortedArrayMap(isize, f32, comparison);
+    const MapType = sortedArrayMap.SortedArrayMap(isize, f32, comparison);
 
     var map = try MapType.init(std.testing.allocator);
     defer map.deinit();

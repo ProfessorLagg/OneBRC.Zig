@@ -91,35 +91,44 @@ const MeasurementKey = struct {
 };
 const ParsedLine = struct {
     key: MeasurementKey = undefined,
-    value: f64 = -1,
+    value: u64 = 0,
 
-    pub fn init(k: []const u8, v: f64) ParsedLine {
-        return ParsedLine{
+    pub fn init(k: []const u8, v: u64) ParsedLine {
+        return .{
             .key = MeasurementKey.create(k),
             .value = v,
         };
     }
 
-    pub fn clone(self: *ParsedLine) ParsedLine {
+    pub fn clone(self: *const ParsedLine) ParsedLine {
         return self.*;
     }
 };
 const Measurement = struct {
     count: u64 = 0,
-    sum: f64 = 0.0,
-    min: f64 = std.math.floatMax(f64),
-    max: f64 = std.math.floatMin(f64),
-    pub inline fn init(v: f64) Measurement {
+    sum: u64 = 0.0,
+    min: u64 = std.math.maxInt(u64),
+    max: u64 = std.math.minInt(u64),
+    pub inline fn init(v: u64) Measurement {
         return Measurement{ .count = 1, .sum = v, .min = v, .max = v };
+    }
+    pub inline fn getSum(self: *const Measurement) f64 {
+        return @as(f64, @floatFromInt(self.sum)) / 10.0;
+    }
+    pub inline fn getMin(self: *const Measurement) f64 {
+        return @as(f64, @floatFromInt(self.min)) / 10.0;
+    }
+    pub inline fn getMax(self: *const Measurement) f64 {
+        return @as(f64, @floatFromInt(self.max)) / 10.0;
     }
     pub inline fn mean(self: *const Measurement) f64 {
         return self.sum / @as(f64, @floatFromInt(self.count));
     }
-    pub inline fn add(self: *Measurement, v: f64) void {
+    pub inline fn add(self: *Measurement, v: u64) void {
         self.count += 1;
         self.sum += v;
         self.min = @min(self.min, v);
-        self.max = @min(self.max, v);
+        self.max = @max(self.max, v);
     }
 };
 pub const ParsedSet = struct {
@@ -334,7 +343,7 @@ pub const SetParser = struct {
     }
 };
 
-fn parseLine(line: []u8) ParsedLine {
+inline fn parseLine(line: []u8) ParsedLine {
     // Splitting on ';'
     var i: usize = 1;
     while (line[i] != ';' and i < line.len) : (i += 1) {}
@@ -342,7 +351,7 @@ fn parseLine(line: []u8) ParsedLine {
     const keystr = line[0..i];
     const valstr = line[(i + 1)..];
     const valint: isize = fastIntParse(valstr);
-    const val: f64 = @as(f64, @floatFromInt(valint)) / 10.0;
+    const val: u64 = @intCast(valint);
     return ParsedLine.init(keystr, val);
 }
 fn parseLineBuffer(line: *[106]u8) ParsedLine {
