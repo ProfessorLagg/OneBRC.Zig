@@ -30,7 +30,7 @@ pub fn main() !void {
     defer deinit();
 
     // TODO parse console args
-    //const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\verysmall.txt";
+    // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\verysmall.txt";
     //const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\small.txt";
     const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
     // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";

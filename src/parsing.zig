@@ -1,4 +1,5 @@
 // Semi-rewrite for simplifications sake
+
 const std = @import("std");
 const fs = std.fs;
 const sorted = @import("sorted/sorted.zig");
@@ -64,7 +65,7 @@ const MapKey = struct {
         self.len = str.len;
     }
 
-    fn cmp_eflags(len: usize, a: *const u8, b: *const u8) sorted.CompareResult {
+    inline fn cmp_eflags(len: usize, a: *const u8, b: *const u8) sorted.CompareResult {
         const eflags = asm volatile ( // NO FOLD
             "repe cmpsb\n" ++ "PUSHFQ\n" ++ "POP %%rax"
             : [ret] "={rax}" (-> u64),
@@ -73,22 +74,24 @@ const MapKey = struct {
               [l] "{rcx}" (len),
         );
 
-        const result: sorted.CompareResult = switch (eflags) {
-            0x202, 0x216, 0x212, 0x206, 0xA16, 0x296, 0x286, 0x292, 0xA12, 0xA02, 0x282, 0xA06 => .LessThan,
-            0x246 => .Equal,
-            0x293, 0x297, 0x287, 0x283, 0xA93, 0xA83, 0x217, 0x207, 0xA87, 0xA97, 0x213, 0x203 => .GreaterThan,
-            else => {
-                var buf: [4096]u8 = undefined;
-                const msg = std.fmt.bufPrint(&buf, "Could not match 0x{X} to a CompareResult", .{eflags}) catch {
-                    @panic("std.fmt.bufPrint failed");
-                };
-                @panic(msg);
-            },
+        if (eflags == 0x246) {
+            return .Equal;
+        }
+        const masked_eflags: u64 = eflags & @as(u64, 0x203);
+        const result: sorted.CompareResult = switch (masked_eflags) {
+            @as(u64, 0x203) => .LessThan,
+            @as(u64, 0x202) => .GreaterThan,
+            else => unreachable,
         };
         return result;
     }
 
-    inline fn cmp_fallback(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
+    pub fn compare(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
+        // const comp_len = sorted.compareFromBools(a.len < b.len, a.len > b.len);
+        // if (comp_len != .Equal) {
+        //     return comp_len;
+        // }
+
         const len: usize = @max(a.len, b.len);
         for (0..len) |i| {
             const lt: i8 = @intFromBool(a.buffer[i] < b.buffer[i]) * @as(i8, -1); // -1 if true, 0 if false
@@ -99,12 +102,6 @@ const MapKey = struct {
             }
         }
         return .Equal;
-    }
-    pub fn compare(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
-        const len: usize = @max(a.len, b.len);
-        const cmp = cmp_eflags(len, &a.buffer[0], &b.buffer[0]);
-
-        return cmp;
     }
 };
 
