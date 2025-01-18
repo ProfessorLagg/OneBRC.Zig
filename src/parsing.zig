@@ -64,32 +64,47 @@ const MapKey = struct {
         self.len = str.len;
     }
 
-    fn cmp_asm(len: usize, a: *const u8, b: *const u8) sorted.CompareResult {
-        return asm volatile(
-            "mov $0xff, %%bx\n" ++ "mov $0, %%cx\n" ++ "mov $0x10, %%dx\n" ++ "repe cmpsb\n" ++ "cmova %%ax, %%bx\n" ++ "cmove %%ax, %%cx\n" ++ "cmovb %%ax, %%dx"
-            : [ret] "={ah}" (-> sorted.CompareResult)
-            :[a] "{rdi}" (a),
-            [b] "{rsi}" (b),
-            [l] "{rcx}" (len),
-            : "ax", "bx", "cx", "dx"
+    fn cmp_eflags(len: usize, a: *const u8, b: *const u8) sorted.CompareResult {
+        const eflags = asm volatile ( // NO FOLD
+            "repe cmpsb\n" ++ "PUSHFQ\n" ++ "POP %%rax"
+            : [ret] "={rax}" (-> u64),
+            : [a] "{rdi}" (a),
+              [b] "{rsi}" (b),
+              [l] "{rcx}" (len),
         );
+
+        const result: sorted.CompareResult = switch (eflags) {
+            0x202, 0x216, 0x212, 0x206, 0xA16, 0x296, 0x286, 0x292, 0xA12, 0xA02, 0x282, 0xA06 => .LessThan,
+            0x246 => .Equal,
+            0x293, 0x297, 0x287, 0x283, 0xA93, 0xA83, 0x217, 0x207, 0xA87, 0xA97, 0x213, 0x203 => .GreaterThan,
+            else => {
+                var buf: [4096]u8 = undefined;
+                const msg = std.fmt.bufPrint(&buf, "Could not match 0x{X} to a CompareResult", .{eflags}) catch {
+                    @panic("std.fmt.bufPrint failed");
+                };
+                @panic(msg);
+            },
+        };
+        return result;
     }
 
-    pub fn compare(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
-        // const cmp_len = sorted.compareFromBools(a.len < b.len, a.len > b.len);
-        // if (cmp_len != .Equal) {
-        //     return cmp_len;
-        // }
+    inline fn cmp_fallback(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
         const len: usize = @max(a.len, b.len);
-        var i: usize = 0;
-        while (i < len) : (i += 1) {
-            if (a.buffer[i] < b.buffer[i]) {
-                return .LessThan;
-            } else if (a.buffer[i] > b.buffer[i]) {
-                return .GreaterThan;
+        for (0..len) |i| {
+            const lt: i8 = @intFromBool(a.buffer[i] < b.buffer[i]) * @as(i8, -1); // -1 if true, 0 if false
+            const gt: i8 = @intFromBool(a.buffer[i] > b.buffer[i]); // 1 if true, 0 if false
+            const char_compare = @as(sorted.CompareResult, @enumFromInt(lt + gt));
+            if (char_compare != .Equal) {
+                return char_compare;
             }
         }
         return .Equal;
+    }
+    pub fn compare(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
+        const len: usize = @max(a.len, b.len);
+        const cmp = cmp_eflags(len, &a.buffer[0], &b.buffer[0]);
+
+        return cmp;
     }
 };
 

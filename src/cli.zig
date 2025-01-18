@@ -29,11 +29,9 @@ pub fn main() !void {
     try init();
     defer deinit();
 
-    std.debug.print("-1 = 0x{x:0<8.0}\n1 = 0x{x:0<8.0}\n", .{ @as(u8, @bitCast(@as(i8, -1))), @as(u8, @bitCast(@as(i8, 1))) });
-
     // TODO parse console args
-    // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\verysmall.txt";
-    // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\small.txt";
+    //const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\verysmall.txt";
+    //const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\small.txt";
     const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
     // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
     // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\large.txt";
