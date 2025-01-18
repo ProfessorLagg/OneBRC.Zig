@@ -19,6 +19,12 @@ pub const std_options = .{
 
 pub fn main() !void {
     // TODO parse console args
+    
+    // run_debug();
+    run_benchmark();
+}
+
+fn run_debug() void {
     // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\verysmall.txt";
     //const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\small.txt";
     const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
@@ -37,4 +43,9 @@ pub fn main() !void {
     const keyCount_f64: f64 = @floatFromInt(uniqueKeys);
     const key_percent: f64 = (keyCount_f64 / lineCount_f64) * 100;
     std.log.warn("read {d:.0} lines in {d:.2} s | {d:.2} ns/line | found {d} unique keys ({d:.2}%)", .{ parseResult.lineCount, s, ns_per_line, uniqueKeys, key_percent });
+}
+
+fn run_benchmark() void {
+    const benchmarking = @import("benchmarking.zig");
+    benchmarking.BenchmarkCompare.run();
 }

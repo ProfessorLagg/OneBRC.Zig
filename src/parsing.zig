@@ -46,10 +46,10 @@ fn openFile(allocator: std.mem.Allocator, path: []const u8) !fs.File {
     });
 }
 
-const MapKey = struct {
+pub const MapKey = struct {
     const bufferlen: usize = 100;
-    buffer: [bufferlen]u8 = undefined,
     len: usize = 0,
+    buffer: [bufferlen]u8 = undefined,
 
     pub fn create(str: []const u8) MapKey {
         std.debug.assert(str.len <= bufferlen);
@@ -65,7 +65,7 @@ const MapKey = struct {
         self.len = str.len;
     }
 
-    inline fn cmp_eflags(len: usize, a: *const u8, b: *const u8) sorted.CompareResult {
+    inline fn cmpsb(len: usize, a: *const u8, b: *const u8) sorted.CompareResult {
         const eflags = asm volatile ( // NO FOLD
             "repe cmpsb\n" ++ "PUSHFQ\n" ++ "POP %%rax"
             : [ret] "={rax}" (-> u64),
@@ -86,12 +86,7 @@ const MapKey = struct {
         return result;
     }
 
-    pub fn compare(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
-        // const comp_len = sorted.compareFromBools(a.len < b.len, a.len > b.len);
-        // if (comp_len != .Equal) {
-        //     return comp_len;
-        // }
-
+    pub fn compare_v1(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
         const len: usize = @max(a.len, b.len);
         for (0..len) |i| {
             const lt: i8 = @intFromBool(a.buffer[i] < b.buffer[i]) * @as(i8, -1); // -1 if true, 0 if false
@@ -102,6 +97,59 @@ const MapKey = struct {
             }
         }
         return .Equal;
+    }
+    pub fn compare_v2(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
+        // v2
+        const len: usize = @max(a.len, b.len);
+        for (0..len) |i| {
+            const char_compare = sorted.compareFromBools(a.buffer[i] < b.buffer[i], a.buffer[i] > b.buffer[i]);
+            if (char_compare != .Equal) {
+                return char_compare;
+            }
+        }
+        return .Equal;
+    }
+
+    inline fn compare_vector(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
+        var av: [32]i8 = undefined;
+        var bv: [32]i8 = undefined;
+        @memcpy(&av, @as([]const i8, @ptrCast(a.buffer[0..32])));
+        @memcpy(&bv, @as([]const i8, @ptrCast(b.buffer[0..32])));
+        const dv: [32]i8 = std.math.sign(@as(@Vector(32, i8), av) - @as(@Vector(32, i8), bv));
+        inline for (0..32) |i| {
+            switch (dv[i]) {
+                -1 => return .LessThan,
+                1 => return .GreaterThan,
+                0 => {},
+                else => unreachable,
+            }
+        }
+        return .Equal;
+    }
+    pub fn compare_v3(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
+        const len: usize = @max(a.len, b.len);
+        if (len <= 32) {
+            return compare_vector(a, b);
+        }
+
+        for (0..len) |i| {
+            const lt: i8 = @intFromBool(a.buffer[i] < b.buffer[i]) * @as(i8, -1); // -1 if true, 0 if false
+            const gt: i8 = @intFromBool(a.buffer[i] > b.buffer[i]); // 1 if true, 0 if false
+            const char_compare = @as(sorted.CompareResult, @enumFromInt(lt + gt));
+            if (char_compare != .Equal) {
+                return char_compare;
+            }
+        }
+        return .Equal;
+    }
+
+    pub fn compare(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
+        return compare_v2(a, b);
+    }
+
+    pub fn compare_asm(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
+        const len: usize = @max(a.len, b.len);
+        return cmpsb(len, &a.buffer[0], &b.buffer[0]);
     }
 };
 
