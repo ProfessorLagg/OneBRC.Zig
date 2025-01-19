@@ -73,55 +73,24 @@ pub const MapKey = struct {
         var bv: @Vector(32, u8) = undefined;
 
         // TODO it should be possible to get rid of these memcpy
-        @memcpy(@as(*[32]u8, @ptrCast(&av)), a.buffer[0..32]);
-        @memcpy(@as(*[32]u8, @ptrCast(&bv)), b.buffer[0..32]);
+        @memcpy(@as(*[vecsize]u8, @ptrCast(&av)), a.buffer[0..vecsize]);
+        @memcpy(@as(*[vecsize]u8, @ptrCast(&bv)), b.buffer[0..vecsize]);
 
-        const lt: @Vector(32, i8) = @intFromBool(av < bv) * (comptime @as(@Vector(32, i8), @splat(-1)));
-        const gt: @Vector(32, i8) = @intFromBool(av > bv);
-        const cmp: [32]i8 = gt + lt;
+        const lt: @Vector(vecsize, i8) = @intFromBool(av < bv) * (comptime @as(@Vector(vecsize, i8), @splat(-1)));
+        const gt: @Vector(vecsize, i8) = @intFromBool(av > bv);
+        const cmp: [vecsize]i8 = gt + lt;
 
-        inline for (0..32) |i| {
+        inline for (0..vecsize) |i| {
             if (cmp[i] != 0) {
                 return @as(sorted.CompareResult, @enumFromInt(cmp[i]));
             }
         }
         return .Equal;
     }
-    pub fn compare_v4(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
+
+    pub fn compare(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
         const len: usize = @max(a.len, b.len);
         const cmp_vec = compare_vector(a, b);
-        if (len <= 32 or cmp_vec != .Equal) {
-            return cmp_vec;
-        }
-
-        inline for (32..a.buffer.len) |i| {
-            const lt: i8 = @intFromBool(a.buffer[i] < b.buffer[i]) * @as(i8, -1); // -1 if true, 0 if false
-            const gt: i8 = @intFromBool(a.buffer[i] > b.buffer[i]); // 1 if true, 0 if false
-            const char_compare = @as(sorted.CompareResult, @enumFromInt(lt + gt));
-            if (char_compare != .Equal) {
-                return char_compare;
-            }
-        }
-        return .Equal;
-    }
-
-    inline fn compare_vector3(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
-        @setRuntimeSafety(false);
-
-        const av: *const @Vector(vecsize, u8) = @ptrFromInt(@intFromPtr(&a.buffer[0]));
-        const bv: *const @Vector(vecsize, u8) = @ptrFromInt(@intFromPtr(&b.buffer[0]));
-
-        const cmp: [vecsize]i8 =
-            ((@intFromBool(av.* < bv.*) * (comptime @as(@Vector(vecsize, i8), @splat(-1)))) // Less Than
-        + (@intFromBool(av.* > bv.*))); // Greater than
-
-        const di = std.simd.firstTrue(@as(@Vector(vecsize, i8), cmp) != (comptime @as(@Vector(vecsize, i8), @splat(0)))) orelse return .Equal;
-
-        return @as(sorted.CompareResult, @enumFromInt(cmp[@as(usize, @intCast(di))]));
-    }
-    pub fn compare_v5(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
-        const len: usize = @max(a.len, b.len);
-        const cmp_vec = compare_vector3(a, b);
         if (len <= vecsize or cmp_vec != .Equal) {
             return cmp_vec;
         }
@@ -135,10 +104,6 @@ pub const MapKey = struct {
             }
         }
         return .Equal;
-    }
-
-    pub fn compare(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
-        return compare_v4(a, b);
     }
 };
 

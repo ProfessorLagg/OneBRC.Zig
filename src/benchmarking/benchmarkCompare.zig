@@ -98,11 +98,8 @@ pub const BenchmarkCompare = struct {
         };
 
         inline for (0..60) |_| {
-            run_benchmark(MapKey.compare_v5, "compare v5");
-            run_benchmark(MapKey.compare_v4, "compare v4");
+            run_benchmark(MapKey.compare, "compare");
             print("\n", .{});
         }
-
-        // run_benchmark(MapKey.compare_asm, "compare asm");
     }
 };
