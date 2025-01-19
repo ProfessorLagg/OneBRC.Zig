@@ -119,6 +119,13 @@ const MapVal = packed struct {
         mv.min = @min(mv.min, v);
         mv.max = @max(mv.max, v);
     }
+
+    pub inline fn unionWith(mv: *MapVal, other: *const MapVal) void {
+        mv.count += other.count;
+        mv.sum += other.sum;
+        mv.min = @min(mv.min, other.min);
+        mv.max = @max(mv.max, other.max);
+    }
 };
 
 pub const ParseResult = struct {
@@ -133,8 +140,16 @@ pub fn parse(path: []const u8) !ParseResult {
     var file: fs.File = try openFile(allocator, path);
     defer file.close();
 
-    var map: sorted.SortedArrayMap(MapKey, MapVal, MapKey.compare) = try sorted.SortedArrayMap(MapKey, MapVal, MapKey.compare).init(allocator);
-    defer map.deinit();
+    const TMap = sorted.SortedArrayMap(MapKey, MapVal, MapKey.compare);
+
+    const mapCount: comptime_int = 32;
+    var maps: [mapCount]TMap = blk: {
+        var r: [mapCount]TMap = undefined;
+        for (0..mapCount) |i| {
+            r[i] = try TMap.init(allocator);
+        }
+        break :blk r;
+    };
 
     var buf: [128]u8 = undefined;
     var buf_reader = std.io.bufferedReader(file.reader());
@@ -155,11 +170,14 @@ pub fn parse(path: []const u8) !ParseResult {
         const key: []u8 = line[0..splitIndex];
         tKey.set(key);
 
+        const mapIndex: usize = @as(usize, @intCast(tKey.buffer[0])) % mapCount;
+        const map: *TMap = &maps[mapIndex];
+
         const valint: u64 = @intCast(fastIntParse(line[splitIndex + 1 ..]));
 
-        const mapIndex = map.indexOf(&tKey);
-        if (mapIndex >= 0) {
-            map.values[@as(usize, @intCast(mapIndex))].add(valint);
+        const keyIndex = map.indexOf(&tKey);
+        if (keyIndex >= 0) {
+            map.values[@as(usize, @intCast(keyIndex))].add(valint);
         } else {
             tVal.max = valint;
             tVal.min = valint;
@@ -168,6 +186,25 @@ pub fn parse(path: []const u8) !ParseResult {
         }
     }
 
-    result.uniqueKeys = map.count;
+    // Adding all the maps to maps[0]
+    for (1..mapCount) |i| {
+        for (0..maps[i].count) |j| {
+            const rKey: *MapKey = &maps[i].keys[j];
+            const rVal: *MapVal = &maps[i].values[j];
+            const keyIndex = maps[0].indexOf(rKey);
+            if (keyIndex >= 0) {
+                maps[0].values[@as(usize, @intCast(keyIndex))].unionWith(rVal);
+            } else {
+                _ = maps[0].update(rKey, rVal);
+            }
+        }
+        maps[i].deinit();
+    }
+
+    result.uniqueKeys = maps[0].count;
+    maps[0].deinit();
+
+    // TODO Print
+
     return result;
 }
