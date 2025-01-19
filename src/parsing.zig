@@ -149,8 +149,8 @@ pub fn parse(path: []const u8) !ParseResult {
         }
 
         result.lineCount += 1;
-        var splitIndex: usize = 1;
-        while (line[splitIndex] != ';' and splitIndex < line.len) : (splitIndex += 1) {}
+        var splitIndex: usize = line.len - 4;
+        while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
 
         const key: []u8 = line[0..splitIndex];
         tKey.set(key);

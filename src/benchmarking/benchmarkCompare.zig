@@ -99,7 +99,6 @@ pub const BenchmarkCompare = struct {
 
         inline for (0..60) |_| {
             run_benchmark(MapKey.compare, "compare");
-            print("\n", .{});
         }
     }
 };
