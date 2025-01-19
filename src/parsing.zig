@@ -132,6 +132,29 @@ pub const ParseResult = struct {
     lineCount: usize = 0,
     uniqueKeys: usize = 0,
 };
+pub fn read(path: []const u8) !ParseResult {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    defer _ = gpa.deinit();
+
+    var file: fs.File = try openFile(allocator, path);
+    defer file.close();
+
+    var buf: [128]u8 = undefined;
+    var buf_reader = std.io.bufferedReader(file.reader());
+    var in_stream = buf_reader.reader();
+
+    var result: ParseResult = .{};
+    while (try in_stream.readUntilDelimiterOrEof(&buf, '\n')) |line| {
+        if (line[0] == '#') {
+            continue;
+        }
+
+        result.lineCount += 1;
+    }
+
+    return result;
+}
 pub fn parse(path: []const u8) !ParseResult {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
@@ -142,7 +165,7 @@ pub fn parse(path: []const u8) !ParseResult {
 
     const TMap = sorted.SortedArrayMap(MapKey, MapVal, MapKey.compare);
 
-    const mapCount: comptime_int = 32;
+    const mapCount: comptime_int = 255;
     var maps: [mapCount]TMap = blk: {
         var r: [mapCount]TMap = undefined;
         for (0..mapCount) |i| {
@@ -170,7 +193,7 @@ pub fn parse(path: []const u8) !ParseResult {
         const key: []u8 = line[0..splitIndex];
         tKey.set(key);
 
-        const mapIndex: usize = @as(usize, @intCast(tKey.buffer[0])) % mapCount;
+        const mapIndex: usize = @as(usize, @intCast(tKey.buffer[0])); //  % mapCount
         const map: *TMap = &maps[mapIndex];
 
         const valint: u64 = @intCast(fastIntParse(line[splitIndex + 1 ..]));
