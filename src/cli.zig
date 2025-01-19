@@ -19,12 +19,12 @@ pub const std_options = .{
 
 pub fn main() !void {
     // TODO parse console args
-    
-    // run_debug();
+
+    // try run_debug();
     run_benchmark();
 }
 
-fn run_debug() void {
+fn run_debug() !void {
     // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\verysmall.txt";
     //const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\small.txt";
     const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
@@ -46,6 +46,6 @@ fn run_debug() void {
 }
 
 fn run_benchmark() void {
-    const benchmarking = @import("benchmarking.zig");
+    const benchmarking = @import("benchmarking/benchmarking.zig");
     benchmarking.BenchmarkCompare.run();
 }

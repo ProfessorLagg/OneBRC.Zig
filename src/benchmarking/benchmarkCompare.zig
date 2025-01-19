@@ -1,27 +1,13 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
-const sorted = @import("sorted/sorted.zig");
+const sorted = @import("../sorted/sorted.zig");
 const compare = sorted.compare;
 
-const cityNames = @embedFile("data/worldcities.txt");
-fn allocReadCityNames(allocator: std.mem.Allocator) !std.ArrayList([]const u8) {
-    var result = std.ArrayList([]const u8).init(allocator);
-
-    var split_iter = std.mem.split(u8, cityNames[0..], "\n");
-    var line: ?[]const u8 = split_iter.first();
-    while (line != null) : (line = split_iter.next()) {
-        if (line == null) {
-            break;
-        }
-        try result.append(line.?);
-    }
-
-    return result;
-}
+const data = @import("data/data.zig");
 
 pub const BenchmarkCompare = struct {
-    const MapKey = @import("parsing.zig").MapKey;
+    const MapKey = @import("../parsing.zig").MapKey;
 
     var keys: []MapKey = undefined;
     var stdout: std.fs.File.Writer = undefined;
@@ -43,7 +29,7 @@ pub const BenchmarkCompare = struct {
     }
 
     fn GSetup(allocator: std.mem.Allocator) !void {
-        var lines = try allocReadCityNames(allocator);
+        var lines = try data.allocReadCityNames(allocator);
         defer lines.deinit();
 
         keys = try allocator.alloc(MapKey, lines.items.len);
@@ -70,26 +56,36 @@ pub const BenchmarkCompare = struct {
             const s: f64 = @floatFromInt(self.sumNs);
             return s / c;
         }
+
+        pub inline fn getOpsPerUnit(self: *const BenchmarkResult, unit: comptime_float) f64 {
+            const ns: f64 = @floatFromInt(self.sumNs);
+            const t: f64 = ns / @as(f64, unit);
+
+            const ops: f64 = @floatFromInt(self.runCount);
+            return ops / t;
+        }
     };
     fn run_benchmark(comptime benchmark: BenchmarkFunction, comptime name: []const u8) void {
-        const iter_count: usize = 60;
+        const iter_count: usize = 1;
 
         var sum: i8 = 0;
         const start_time = std.time.nanoTimestamp();
         for (0..iter_count) |_| {
             for (0..keys.len) |i| {
                 for (0..keys.len) |j| {
-                    sum += @as(i8, @intFromEnum(benchmark(&keys[i], &keys[j])));
+                    sum +%= @as(i8, @intFromEnum(benchmark(&keys[i], &keys[j])));
                 }
             }
         }
+
         const end_time = std.time.nanoTimestamp();
         const ns: u64 = @intCast(end_time - start_time);
+
         const result = BenchmarkResult{ // NO FOLD
             .runCount = keys.len * keys.len * iter_count,
             .sumNs = ns,
         };
-        print(name ++ ": runtime: {d:.2} s, mean: {d:.5} ns, sum: {d}\n", .{ result.getRuntimeSeconds(), result.getMeanNs(), sum });
+        print(name ++ "\truntime: {d:.3} s, mean: {d:.5} ns, {d:.0} op/us | check={d}\n", .{ result.getRuntimeSeconds(), result.getMeanNs(), result.getOpsPerUnit(std.time.ns_per_us), sum });
     }
 
     pub fn run() void {
@@ -101,9 +97,12 @@ pub const BenchmarkCompare = struct {
             @panic("Could not run Global Setup");
         };
 
-        run_benchmark(MapKey.compare_v1, "compare v1");
-        run_benchmark(MapKey.compare_v2, "compare v2");
-        run_benchmark(MapKey.compare_v3, "compare v3");
+        inline for (0..60) |_| {
+            run_benchmark(MapKey.compare_v5, "compare v5");
+            run_benchmark(MapKey.compare_v4, "compare v4");
+            print("\n", .{});
+        }
+
         // run_benchmark(MapKey.compare_asm, "compare asm");
     }
 };
