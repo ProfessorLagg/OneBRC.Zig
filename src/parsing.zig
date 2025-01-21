@@ -156,6 +156,8 @@ pub fn read(path: []const u8) !ParseResult {
     return result;
 }
 pub fn parse(path: []const u8) !ParseResult {
+    @setRuntimeSafety(false);
+
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();
@@ -165,7 +167,7 @@ pub fn parse(path: []const u8) !ParseResult {
 
     const TMap = sorted.SortedArrayMap(MapKey, MapVal, MapKey.compare);
 
-    const mapCount: comptime_int = 255;
+    const mapCount: comptime_int = 64;
     var maps: [mapCount]TMap = blk: {
         var r: [mapCount]TMap = undefined;
         for (0..mapCount) |i| {
@@ -185,15 +187,15 @@ pub fn parse(path: []const u8) !ParseResult {
         if (line[0] == '#') {
             continue;
         }
-
         result.lineCount += 1;
+
         var splitIndex: usize = line.len - 4;
         while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
 
         const key: []u8 = line[0..splitIndex];
         tKey.set(key);
 
-        const mapIndex: usize = @as(usize, @intCast(tKey.buffer[0])); //  % mapCount
+        const mapIndex: usize = (@as(usize, @intCast(tKey.buffer[0])) + tKey.len) % mapCount; // I have tried to beat this but i cant
         const map: *TMap = &maps[mapIndex];
 
         const valint: u64 = @intCast(fastIntParse(line[splitIndex + 1 ..]));
@@ -211,6 +213,7 @@ pub fn parse(path: []const u8) !ParseResult {
 
     // Adding all the maps to maps[0]
     for (1..mapCount) |i| {
+        std.log.debug("map[{d:0>2}] keycount = {d}", .{ i, maps[i].count });
         for (0..maps[i].count) |j| {
             const rKey: *MapKey = &maps[i].keys[j];
             const rVal: *MapVal = &maps[i].values[j];

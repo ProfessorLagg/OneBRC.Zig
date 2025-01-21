@@ -41,7 +41,6 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
         }
         pub fn initWithCapacity(allocator: std.mem.Allocator, initial_capacity: usize) !Self {
             std.debug.assert(initial_capacity > 0);
-            std.log.debug("initWithCapacity:\n\tallocator: {s}, initial_capacity: {d}", .{ @typeName(@TypeOf(allocator)), initial_capacity });
             var r = SortedArrayMap(Tkey, Tval, comparison){
                 .allocator = allocator,
                 .count = 0,

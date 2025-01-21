@@ -17,6 +17,12 @@ pub const std_options = .{
     },
 };
 
+// const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\verysmall.txt";
+// const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\small.txt";
+// const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
+// const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
+const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\large.txt";
+
 pub fn main() !void {
     // TODO parse console args
 
@@ -26,12 +32,6 @@ pub fn main() !void {
 }
 
 fn run_debug() !void {
-    // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\verysmall.txt";
-    // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\small.txt";
-    // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
-    // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
-    const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\large.txt";
-
     var timer = try std.time.Timer.start();
     const parseResult: parsing.ParseResult = try parsing.parse(path[0..]);
 
@@ -48,12 +48,6 @@ fn run_debug() !void {
 }
 
 fn run_read() !void {
-    // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\verysmall.txt";
-    // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\small.txt";
-    // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
-    const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
-    // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\large.txt";
-
     var timer = try std.time.Timer.start();
     const parseResult: parsing.ParseResult = try parsing.read(path[0..]);
 
