@@ -19,22 +19,15 @@ pub const std_options = .{
 
 // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\verysmall.txt";
 // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\small.txt";
-const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
-// const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
+// const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
+const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
 // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\large.txt";
 
 pub fn main() !void {
     // TODO parse console args
 
-    // try run_debug();
-    try run_read();
-    try run_read();
-    try run_read();
-    try run_read();
-    try run_read();
-    try run_read();
-    try run_read();
-    try run_read();
+    try run_debug();
+    // try run_read();
     // run_benchmark();
 }
 
