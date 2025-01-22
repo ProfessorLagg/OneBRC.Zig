@@ -19,21 +19,29 @@ pub const std_options = .{
 
 // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\verysmall.txt";
 // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\small.txt";
-// const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
-const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
+const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
+// const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
 // const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\large.txt";
 
 pub fn main() !void {
     // TODO parse console args
 
-    try run_debug();
-    //try run_read();
+    // try run();
+    // try run_debug();
+    try run_read();
+    try run_read();
+    try run_read();
+    try run_read();
+    try run_read();
     // run_benchmark();
 }
 
+fn run() !void {
+    _ = try parsing.parse(path[0..], true);
+}
 fn run_debug() !void {
     var timer = try std.time.Timer.start();
-    const parseResult: parsing.ParseResult = try parsing.parse(path[0..]);
+    const parseResult: parsing.ParseResult = try parsing.parse(path[0..], false);
 
     const ns: f64 = @floatFromInt(timer.read());
     const s: f64 = ns / std.time.ns_per_s;
