@@ -90,7 +90,7 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
         /// Adds an item to the set.
         /// Returns true if the key could be added, otherwise false.
         pub fn add(self: *Self, k: *const Tkey, v: *const Tval) bool {
-            const idx: usize = self.indexOf(k);
+            const idx: isize = self.indexOf(k);
             if (idx >= 0) {
                 return false;
             } else {

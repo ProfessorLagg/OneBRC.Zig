@@ -6,7 +6,12 @@ pub usingnamespace sortedArrayMap;
 
 test "SortedArrayMap.add" {
     const add_count: comptime_int = 99;
-    const comparison: compare.Comparison(isize) = comptime compare.compareNumberFn(isize);
+    const comparison: compare.ComparisonR(isize) = struct {
+        fn cmp(a: *const isize, b: *const isize) compare.CompareResult {
+            const cmpfn = comptime compare.compareNumberFn(isize);
+            return cmpfn(a.*, b.*);
+        }
+    }.cmp;
     const MapType = sortedArrayMap.SortedArrayMap(isize, f32, comparison);
 
     var map = try MapType.init(std.testing.allocator);
@@ -16,14 +21,15 @@ test "SortedArrayMap.add" {
     for (0..add_count) |i| {
         const k: isize = start * @as(isize, @intCast(i + 1));
         const v: f32 = @as(f32, @floatFromInt(start)) / (@as(f32, @floatFromInt(start)) * @as(f32, @floatFromInt(i + 1)));
-        success = map.add(k, v);
+        success = map.add(&k, &v);
         if (!success) {
             std.log.err("could not add key '{d}' to map", .{k});
         }
         try std.testing.expect(success);
     }
 
-    success = map.add(map.keys[0], 123.456);
+    const fval: f32 = 123.456;
+    success = map.add(&map.keys[0], &fval);
     try std.testing.expect(!success);
 }
 
