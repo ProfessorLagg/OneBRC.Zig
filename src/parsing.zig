@@ -135,7 +135,8 @@ pub const ParseResult = packed struct {
 
 const readBufferSize: comptime_int = 65_536;
 
-fn read_v1(path: []const u8) !ParseResult {
+/// For testing purposes only. Reads all the lines in the file, without parsing them.
+pub fn read(path: []const u8) !ParseResult {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();
@@ -145,44 +146,10 @@ fn read_v1(path: []const u8) !ParseResult {
 
     const fileReader = file.reader();
     const TBufferedReader = std.io.BufferedReader(readBufferSize, @TypeOf(fileReader));
-    var buf: [128]u8 = undefined;
-    var buf_reader = TBufferedReader{ .unbuffered_reader = fileReader };
-    var in_stream = buf_reader.reader();
-
-    var result: ParseResult = .{};
-    while (try in_stream.readUntilDelimiterOrEof(&buf, '\n')) |line| {
-        if (line[0] == '#') {
-            continue;
-        }
-        result.lineCount += 1;
-
-        var splitIndex: usize = line.len - 4;
-        while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
-        const keystr: []u8 = line[0..splitIndex];
-        const valstr: []u8 = line[(splitIndex + 1)..];
-        _ = &keystr;
-        _ = &valstr;
-    }
-
-    return result;
-}
-
-fn read_v2(path: []const u8) !ParseResult {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
-    defer _ = gpa.deinit();
-
-    var file: fs.File = try openFile(allocator, path);
-    defer file.close();
-
-    const fileReader = file.reader();
-    const TBufferedReader = std.io.BufferedReader(readBufferSize, @TypeOf(fileReader));
-
     var bufferedReader = TBufferedReader{ .unbuffered_reader = fileReader };
     var reader = bufferedReader.reader();
 
     var result: ParseResult = .{};
-
     var buf: [128]u8 = undefined;
     var eof: bool = false;
     fileloop: while (!eof) {
@@ -227,10 +194,6 @@ fn read_v2(path: []const u8) !ParseResult {
 
     return result;
 }
-
-pub fn read(path: []const u8) !ParseResult {
-    return read_v2(path);
-}
 pub fn parse(path: []const u8) !ParseResult {
     @setRuntimeSafety(false);
 
@@ -254,29 +217,55 @@ pub fn parse(path: []const u8) !ParseResult {
 
     const fileReader = file.reader();
     const TBufferedReader = std.io.BufferedReader(readBufferSize, @TypeOf(fileReader));
-    var buf: [128]u8 = undefined;
-    var buf_reader = TBufferedReader{ .unbuffered_reader = fileReader };
-    var in_stream = buf_reader.reader();
+    var bufferedReader = TBufferedReader{ .unbuffered_reader = fileReader };
+    var reader = bufferedReader.reader();
 
     var tKey: MapKey = .{};
     var tVal: MapVal = .{ .count = 1 };
     var result: ParseResult = .{};
-    while (try in_stream.readUntilDelimiterOrEof(&buf, '\n')) |line| {
-        if (line[0] == '#') {
-            continue;
+    var buf: [128]u8 = undefined;
+    var eof: bool = false;
+    fileloop: while (!eof) {
+        var splitIndex: usize = 0;
+        var bi: usize = 0;
+        lineloop: while (bi < buf.len) {
+            buf[bi] = reader.readByte() catch |err| {
+                switch (err) {
+                    error.EndOfStream => {
+                        eof = true;
+                        break :lineloop;
+                    },
+                    else => {
+                        return err;
+                    },
+                }
+            };
+
+            switch (buf[bi]) {
+                ';' => {
+                    splitIndex = bi;
+                },
+                '\n' => {
+                    break :lineloop;
+                },
+                else => {},
+            }
+            bi += 1;
+        }
+
+        std.log.debug("line: \"{s}\"", .{buf[0..bi]});
+        if (buf[0] == '#' or splitIndex < 1) {
+            continue :fileloop;
         }
         result.lineCount += 1;
-
-        var splitIndex: usize = line.len - 4;
-        while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
-
-        const keystr: []u8 = line[0..splitIndex];
+        const keystr: []u8 = buf[0..splitIndex];
+        const valstr: []u8 = buf[(splitIndex + 1)..bi];
         tKey.set(keystr);
 
         const mapIndex: usize = (@as(usize, @intCast(tKey.buffer[0])) + tKey.len) % mapCount; // I have tried to beat this but i cant
         const map: *TMap = &maps[mapIndex];
 
-        const valint: u64 = @intCast(fastIntParse(line[splitIndex + 1 ..]));
+        const valint: u64 = @intCast(fastIntParse(valstr));
 
         const keyIndex = map.indexOf(&tKey);
         if (keyIndex >= 0) {
