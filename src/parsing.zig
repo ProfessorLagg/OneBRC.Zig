@@ -132,6 +132,9 @@ pub const ParseResult = struct {
     lineCount: usize = 0,
     uniqueKeys: usize = 0,
 };
+
+const readBufferSize: comptime_int = 65_536;
+
 pub fn read(path: []const u8) !ParseResult {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
@@ -140,8 +143,10 @@ pub fn read(path: []const u8) !ParseResult {
     var file: fs.File = try openFile(allocator, path);
     defer file.close();
 
+    const fileReader = file.reader();
+    const TBufferedReader = std.io.BufferedReader(readBufferSize, @TypeOf(fileReader));
     var buf: [128]u8 = undefined;
-    var buf_reader = std.io.bufferedReader(file.reader());
+    var buf_reader = TBufferedReader{ .unbuffered_reader = fileReader };
     var in_stream = buf_reader.reader();
 
     var result: ParseResult = .{};
@@ -176,8 +181,10 @@ pub fn parse(path: []const u8) !ParseResult {
         break :blk r;
     };
 
+    const fileReader = file.reader();
+    const TBufferedReader = std.io.BufferedReader(readBufferSize, @TypeOf(fileReader));
     var buf: [128]u8 = undefined;
-    var buf_reader = std.io.bufferedReader(file.reader());
+    var buf_reader = TBufferedReader{ .unbuffered_reader = fileReader };
     var in_stream = buf_reader.reader();
 
     var tKey: MapKey = .{};
