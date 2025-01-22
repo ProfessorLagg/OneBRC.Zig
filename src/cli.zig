@@ -26,8 +26,13 @@ const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
 pub fn main() !void {
     // TODO parse console args
 
-    try run_debug();
-    // try run_read();
+    // try run_debug();
+    try run_read();
+    try run_read();
+    try run_read();
+    try run_read();
+    try run_read();
+    try run_read();
     // run_benchmark();
 }
 
