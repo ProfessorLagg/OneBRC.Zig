@@ -105,6 +105,42 @@ pub const MapKey = struct {
         }
         return .Equal;
     }
+
+    pub fn wtf8(self: *const MapKey, buf: []u8) []const u8 {
+        std.debug.assert(buf.len >= self.len);
+        var utf8 = std.unicode.Utf8View.init(self.buffer[0..self.len]) catch |err| {
+            std.log.err("err: {s}", .{@errorName(err)});
+            @panic(@errorName(err));
+        };
+
+        var iterator = utf8.iterator();
+        var i: usize = 0;
+        while (iterator.nextCodepoint()) |codepoint| {
+            const mi = std.unicode.wtf8Encode(codepoint, buf[i..]) catch |err| {
+                std.log.err("err: {s}", .{@errorName(err)});
+                @panic(@errorName(err));
+            };
+            i += @as(usize, @intCast(mi));
+        }
+
+        return buf[0..i];
+    }
+
+    pub fn wtf16le(self: *const MapKey, buf: []u16) []const u8 {
+        var wtf8buffer: [bufferlen]u8 = undefined;
+        const wtf8slice = self.wtf8(wtf8buffer[0..]);
+        const len = std.unicode.wtf8ToWtf16Le(buf, wtf8slice) catch |err| {
+            std.log.err("err: {s}", .{@errorName(err)});
+            @panic(@errorName(err));
+        };
+        const result: []const u8 = blk: {
+            var r: []const u8 = undefined;
+            r.ptr = @ptrCast(&buf[0]);
+            r.len = len * (@sizeOf(u16) / @sizeOf(u8));
+            break :blk r;
+        };
+        return result;
+    }
 };
 
 const MapVal = packed struct {
@@ -125,6 +161,49 @@ const MapVal = packed struct {
         mv.sum += other.sum;
         mv.min = @min(mv.min, other.min);
         mv.max = @max(mv.max, other.max);
+    }
+
+    pub inline fn getMin(self: *MapVal, comptime T: type) T {
+        comptime {
+            const Ti = @typeInfo(T);
+            switch (Ti) {
+                .Float => {},
+                else => {
+                    @compileError("Expected floating point type, but found " ++ @typeName(T));
+                },
+            }
+        }
+        const a: T = @floatFromInt(self.min);
+        return a / @as(T, 10.0);
+    }
+
+    pub inline fn getMax(self: *MapVal, comptime T: type) T {
+        comptime {
+            const Ti = @typeInfo(T);
+            switch (Ti) {
+                .Float => {},
+                else => {
+                    @compileError("Expected floating point type, but found " ++ @typeName(T));
+                },
+            }
+        }
+        const a: T = @floatFromInt(self.max);
+        return a / @as(T, 10.0);
+    }
+
+    pub inline fn getMean(self: *MapVal, comptime T: type) T {
+        comptime {
+            const Ti = @typeInfo(T);
+            switch (Ti) {
+                .Float => {},
+                else => {
+                    @compileError("Expected floating point type, but found " ++ @typeName(T));
+                },
+            }
+        }
+        const s: T = @floatFromInt(self.sum);
+        const c: T = @floatFromInt(self.count);
+        return (s / @as(T, 10.0)) / c;
     }
 };
 
@@ -168,14 +247,10 @@ pub fn read(path: []const u8) !ParseResult {
                 }
             };
 
-            switch (buf[bi]) {
-                ';' => {
-                    splitIndex = bi;
-                },
-                '\n' => {
-                    break :lineloop;
-                },
-                else => {},
+            const isSemi: bool = buf[bi] == ';';
+            splitIndex = (bi * @as(usize, @intFromBool(isSemi))) + (splitIndex * @as(usize, @intFromBool(!isSemi)));
+            if (buf[bi] == '\n') {
+                break :lineloop;
             }
             bi += 1;
         }
@@ -194,7 +269,8 @@ pub fn read(path: []const u8) !ParseResult {
 
     return result;
 }
-pub fn parse(path: []const u8) !ParseResult {
+
+pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
     @setRuntimeSafety(false);
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -241,25 +317,21 @@ pub fn parse(path: []const u8) !ParseResult {
                 }
             };
 
-            switch (buf[bi]) {
-                ';' => {
-                    splitIndex = bi;
-                },
-                '\n' => {
-                    break :lineloop;
-                },
-                else => {},
+            const isSemi: bool = buf[bi] == ';';
+            splitIndex = (bi * @as(usize, @intFromBool(isSemi))) + (splitIndex * @as(usize, @intFromBool(!isSemi)));
+            if (buf[bi] == '\n') {
+                break :lineloop;
             }
             bi += 1;
         }
 
-        std.log.debug("line: \"{s}\"", .{buf[0..bi]});
         if (buf[0] == '#' or splitIndex < 1) {
             continue :fileloop;
         }
         result.lineCount += 1;
         const keystr: []u8 = buf[0..splitIndex];
         const valstr: []u8 = buf[(splitIndex + 1)..bi];
+        std.log.debug("line: \"{s}\", keystr: \"{s}\", valstr: \"{s}\"", .{ buf[0..bi], keystr, valstr });
         tKey.set(keystr);
 
         const mapIndex: usize = (@as(usize, @intCast(tKey.buffer[0])) + tKey.len) % mapCount; // I have tried to beat this but i cant
@@ -294,8 +366,21 @@ pub fn parse(path: []const u8) !ParseResult {
         maps[i].deinit();
     }
 
+    if (print_result) {
+        const stdout = std.io.getStdOut().writer();
+        for (0..maps[0].count) |i| {
+            const k: *MapKey = &maps[0].keys[i];
+            const v: *MapVal = &maps[0].values[i];
+            try stdout.print("{s};{d:.1};{d:.1};{d:.1}\n", .{ // NO WRAP
+                k.buffer[0..k.len],
+                v.getMin(f64),
+                v.getMean(f64),
+                v.getMax(f64),
+            });
+        }
+    }
+
     result.uniqueKeys = maps[0].count;
-    // TODO Print
     maps[0].deinit();
     return result;
 }
