@@ -29,7 +29,7 @@ pub const BenchmarkCompare = struct {
     }
 
     fn GSetup(allocator: std.mem.Allocator) !void {
-        var lines = try data.allocReadCityNames(allocator);
+        var lines = try data.cityNames(allocator);
         defer lines.deinit();
 
         keys = try allocator.alloc(MapKey, lines.items.len);

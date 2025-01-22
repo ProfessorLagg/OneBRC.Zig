@@ -72,12 +72,12 @@ pub fn build(b: *std.Build) void {
     const run_sorted_unit_tests = b.addRunArtifact(sorted_unit_tests);
     test_step.dependOn(&run_sorted_unit_tests.step);
 
-    // parallel
-    const parallel_unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/parallel/parallel.zig"),
+    // benchmarking
+    const benchmarking_unit_tests = b.addTest(.{
+        .root_source_file = b.path("src/benchmarking/benchmarking.zig"),
         .target = target,
         .optimize = optimize,
     });
-    const run_parallel_unit_tests = b.addRunArtifact(parallel_unit_tests);
-    test_step.dependOn(&run_parallel_unit_tests.step);
+    const run_benchmarking_unit_tests = b.addRunArtifact(benchmarking_unit_tests);
+    test_step.dependOn(&run_benchmarking_unit_tests.step);
 }
