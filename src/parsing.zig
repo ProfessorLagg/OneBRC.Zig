@@ -221,10 +221,89 @@ pub const ParseResult = packed struct {
     uniqueKeys: usize = 0,
 };
 
-const readBufferSize: comptime_int = 65_536;
+const readBufferSize: comptime_int = 65_535;
+// const readBufferSize: comptime_int = 1024 * 1024 * 1024; // 1 GiB
 
+fn rotateBuffer(buffer: []u8, pos: usize) usize {
+    // TODO
+    _ = &buffer;
+    _ = &pos;
+
+    const rembytes: []const u8 = buffer[pos..];
+    const remlen: usize = rembytes.len;
+    std.log.debug("\n===== pre rembytes =====\n({s})[{s}]\n", .{ buffer[0..remlen], buffer[remlen..] });
+    std.mem.copyForwards(u8, &buffer, rembytes);
+    std.log.debug("\n===== post rembytes =====\n({s})[{s}]\n", .{ buffer[0..remlen], buffer[remlen..] });
+    return remlen;
+}
+pub fn AdvancedBuffer(comptime size: usize) type {
+    return struct {
+        const TSelf = @This();
+        buffer: [size]u8 = undefined,
+        pos: usize = 0,
+        len: usize = 0,
+
+        pub fn nextIndexOf(self: *TSelf, c: u8) isize {
+            var i: usize = self.pos;
+            while (self.buffer[i] != c) {
+                if (i >= self.len) {
+                    return -1;
+                }
+                i += 1;
+            }
+            return @intCast(i);
+        }
+        pub inline fn skipUntilDelimOrEnd(self: *TSelf, c: u8) void {
+            while (self.buffer[self.pos] != c and self.pos < self.len) {
+                self.pos += 1;
+            }
+            self.pos = @min(self.len, self.pos + 1);
+        }
+        pub fn readUntilDelimOrEnd(self: *TSelf, c: u8) ?[]u8 {
+            const start: usize = self.pos;
+            while (self.buffer[self.pos] != c) {
+                self.pos += 1;
+                if (self.pos >= self.len) {
+                    self.pos = start;
+                    return null;
+                }
+            }
+            const r = self.buffer[start..self.pos];
+            if (r.len == 0) {
+                return null;
+            }
+            self.pos += 1;
+            return r;
+        }
+
+        /// Copies remaining bytes into beginning of buffer, resets position to 0 and sets length to the amount of remaning bytes
+        pub inline fn rotate(self: *TSelf) void {
+            const rembytes: []const u8 = self.buffer[self.pos..self.len];
+            const remlen: usize = rembytes.len;
+            std.log.debug("\n===== pre rembytes =====\n({s})[{s}]\n", .{ self.buffer[0..remlen], self.buffer[remlen..] });
+            std.mem.copyForwards(u8, &self.buffer, rembytes);
+            std.log.debug("\n===== post rembytes =====\n({s})[{s}]\n", .{ self.buffer[0..remlen], self.buffer[remlen..] });
+            self.pos = 0;
+            self.len = remlen;
+        }
+        pub inline fn fill(self: *TSelf, comptime Treader: type, reader: Treader) !usize {
+            std.log.debug("\n===== pre fill =====\n({s})[{s}]\n", .{ self.buffer[0..self.len], self.buffer[self.len..] });
+            const readcount: usize = try reader.read(self.buffer[self.len..]);
+            self.pos = 0;
+            self.len += readcount;
+            std.log.debug("\n===== post fill =====\n({s})[{s}]\n", .{ self.buffer[0..self.len], self.buffer[self.len..] });
+            return readcount;
+        }
+        /// Reads data from a generic reader
+        pub inline fn rotateRead(self: *TSelf, comptime Treader: type, reader: Treader) !usize {
+            self.rotate();
+            return try self.fill(Treader, reader);
+        }
+    };
+}
 /// For testing purposes only. Reads all the lines in the file, without parsing them.
 pub fn read(path: []const u8) !ParseResult {
+    var result: ParseResult = .{};
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();
@@ -233,45 +312,44 @@ pub fn read(path: []const u8) !ParseResult {
     defer file.close();
 
     const fileReader = file.reader();
-    const TBufferedReader = std.io.BufferedReader(readBufferSize, @TypeOf(fileReader));
-    var bufferedReader = TBufferedReader{ .unbuffered_reader = fileReader };
-    var reader = bufferedReader.reader();
-    var result: ParseResult = .{};
-    var buf: [128]u8 = undefined;
-    var eof: bool = false;
-    fileloop: while (!eof) {
-        var splitIndex: usize = 0;
-        var bi: usize = 0;
-        lineloop: while (bi < buf.len) {
-            buf[bi] = reader.readByte() catch |err| {
-                switch (err) {
-                    error.EndOfStream => {
-                        eof = true;
-                        break :lineloop;
-                    },
-                    else => {
-                        return err;
-                    },
-                }
-            };
+    var inbuffer: AdvancedBuffer(readBufferSize) = .{};
+    @memset(inbuffer.buffer[0..], 0);
 
-            const isSemi: bool = buf[bi] == ';';
-            splitIndex = (bi * @as(usize, @intFromBool(isSemi))) + (splitIndex * @as(usize, @intFromBool(!isSemi)));
-            if (buf[bi] == '\n') {
-                break :lineloop;
+    var readCount: usize = comptime std.math.maxInt(usize);
+    var lastReadCount: usize = readCount;
+    fileloop: while (lastReadCount != 0 and readCount != 0) {
+        lastReadCount = readCount;
+        readCount = try inbuffer.rotateRead(@TypeOf(fileReader), fileReader);
+        while (inbuffer.pos < inbuffer.len) {
+            while (inbuffer.buffer[inbuffer.pos] == '#') {
+                inbuffer.skipUntilDelimOrEnd('\n');
             }
-            bi += 1;
-        }
 
-        if (buf[0] == '#' or splitIndex < 1) {
-            continue :fileloop;
+            inbuffer.pos += 1;
+
+            const start: usize = inbuffer.pos;
+            var splitIndex: usize = inbuffer.pos + 1;
+            while (inbuffer.buffer[inbuffer.pos] != '\n') : (inbuffer.pos += 1) {
+                if (inbuffer.pos >= inbuffer.len) {
+                    inbuffer.pos = start;
+                    continue :fileloop;
+                }
+                const isSemi: bool = inbuffer.buffer[inbuffer.pos] == ';';
+                splitIndex =
+                    (splitIndex * @as(usize, @intFromBool(!isSemi))) +
+                    (inbuffer.pos * @as(usize, @intFromBool(isSemi)));
+            }
+
+            result.lineCount += 1;
+            const keystr: []u8 = inbuffer.buffer[start..splitIndex];
+            const valstr: []u8 = inbuffer.buffer[(splitIndex + 1)..inbuffer.pos];
+            const line: []const u8 = inbuffer.buffer[start..inbuffer.pos];
+
+            std.log.info("line {s};{s}: \"{s}\", keystr: \"{s}\", valstr: \"{s}\"", .{ result.lineCount, line, keystr, valstr });
         }
-        result.lineCount += 1;
-        const keystr: []u8 = buf[0..splitIndex];
-        const valstr: []u8 = buf[(splitIndex + 1)..bi];
-        std.log.debug("line: \"{s}\", keystr: \"{s}\", valstr: \"{s}\"", .{ buf[0..bi], keystr, valstr });
     }
 
+    std.log.debug("size of AdvancedBuffer({d}) = {d}, alignment of AdvancedBuffer({d}) = {d}", .{ readBufferSize, @sizeOf(AdvancedBuffer(readBufferSize)), readBufferSize, @alignOf(AdvancedBuffer(readBufferSize)) });
     return result;
 }
 
