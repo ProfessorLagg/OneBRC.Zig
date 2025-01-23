@@ -17,12 +17,12 @@ pub const std_options = .{
     },
 };
 
-// const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\simple.txt";
-// const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\verysmall.txt";
-// const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\small.txt";
-// const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
-const debugpath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
-// const path = "C:\\CodeProjects\\1BillionRowChallenge\\data\\large.txt";
+// const debugpath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\simple.txt";
+// const debugpath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\verysmall.txt";
+// const debugpath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\small.txt";
+// const debugpath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
+// const debugpath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
+const debugpath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\large.txt";
 
 pub fn main() !void {
     // TODO parse console args
@@ -65,7 +65,7 @@ fn run_debug() !void {
     };
 
     const bytes_per_second: u64 = @intFromFloat(@as(f64, @floatFromInt(stat.size)) / s);
-    try std.fmt.format(stdout, "\tparsed {d:.0} lines in {any} | {d:.2} ns/line | found {d} unique keys ({d:.2}%) | read speed: {d:.2}/s\n", .{ parseResult.lineCount, std.fmt.fmtDuration(ns), ns_per_line, uniqueKeys, key_percent, std.fmt.fmtIntSizeBin(bytes_per_second) });
+    try std.fmt.format(stdout, "\tparsed {d:.0} lines in {s} | {d:.2} ns/line | found {d} unique keys ({d:.2}%) | read speed: {d:.2}/s\n", .{ parseResult.lineCount, std.fmt.fmtDuration(ns), ns_per_line, uniqueKeys, key_percent, std.fmt.fmtIntSizeBin(bytes_per_second) });
 }
 
 fn run_read() !void {
