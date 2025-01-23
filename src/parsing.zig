@@ -47,73 +47,118 @@ fn openFile(allocator: std.mem.Allocator, path: []const u8) !fs.File {
 }
 
 pub const MapKey = struct {
-    const bufferlen: usize = 100;
-    const vecsize = 32;
-    len: usize = 0,
-    buffer: [bufferlen]u8 align(vecsize) = undefined,
+    const bufferlen: usize = 64;
+    const vecsize: usize = 32;
+    const veccount: usize = blk: {
+        std.debug.assert(@inComptime());
+        var r: usize = 0;
+        while ((r * vecsize) < bufferlen) {
+            r += 1;
+        }
+        break :blk r;
+    };
 
-    pub fn create(str: []const u8) MapKey {
-        std.debug.assert(str.len <= bufferlen);
-        var r = MapKey{ .buffer = undefined, .len = str.len };
-        @memcpy(r.buffer[0..str.len], str);
+    const TVec = @Vector(vecsize, u8);
+
+    const TLen = blk: {
+        std.debug.assert(@inComptime());
+        const max_u8: usize = @intCast(std.math.maxInt(u8));
+        const max_u16: usize = @intCast(std.math.maxInt(u16));
+        const max_u32: usize = @intCast(std.math.maxInt(u32));
+        const max_u64: usize = @intCast(std.math.maxInt(u64));
+
+        if (bufferlen <= max_u8) {
+            break :blk u8;
+        } else if (bufferlen <= max_u16) {
+            break :blk u16;
+        } else if (bufferlen <= max_u32) {
+            break :blk u32;
+        } else if (bufferlen <= max_u64) {
+            break :blk u64;
+        }
+
+        break :blk u128;
+    };
+
+    vectors: [veccount]TVec = undefined,
+    len: TLen = 0,
+
+    pub inline fn create(str: []const u8) MapKey {
+        var r: MapKey = .{};
+        r.set(str);
         return r;
     }
 
     pub inline fn set(self: *MapKey, str: []const u8) void {
         std.debug.assert(str.len <= bufferlen);
-        @memset(self.buffer[0..], 0);
-        @memcpy(self.buffer[0..str.len], str);
-        self.len = str.len;
+        self.len = @as(TLen, @intCast(str.len));
+        var temp: [vecsize]u8 = undefined;
+        inline for (0..veccount) |vi| {
+            const l: usize = vi * vecsize;
+            const h: usize = @min(str.len, l + vecsize);
+            if (l > str.len) {
+                break;
+            }
+            const slice = str[l..h];
+            @memset(temp[0..], 0);
+            @memcpy(temp[0..slice.len], slice);
+            self.vectors[vi] = temp;
+        }
     }
 
-    inline fn compare_vector(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
-        @setRuntimeSafety(false);
-
-        var av: @Vector(32, u8) = undefined;
-        var bv: @Vector(32, u8) = undefined;
-
-        // TODO it should be possible to get rid of these memcpy
-        @memcpy(@as(*[vecsize]u8, @ptrCast(&av)), a.buffer[0..vecsize]);
-        @memcpy(@as(*[vecsize]u8, @ptrCast(&bv)), b.buffer[0..vecsize]);
-
-        const lt: @Vector(vecsize, i8) = @intFromBool(av < bv) * (comptime @as(@Vector(vecsize, i8), @splat(-1)));
-        const gt: @Vector(vecsize, i8) = @intFromBool(av > bv);
-        const cmp: [vecsize]i8 = gt + lt;
-
-        inline for (0..vecsize) |i| {
-            if (cmp[i] != 0) {
-                return @as(sorted.CompareResult, @enumFromInt(cmp[i]));
-            }
+    /// Returns the key as a string
+    pub inline fn get(self: *MapKey) []const u8 {
+        var r: [veccount * vecsize]u8 = undefined;
+        inline for (0..veccount) |vi| {
+            const l: usize = vi * vecsize;
+            const h: usize = l + vecsize + 1;
+            @memcpy(r[l..h], @as([vecsize]u8, self.vectors[vi])[0..]);
         }
-        return .Equal;
+        return r;
+    }
+
+    /// Returns the number of vectors needed to contain all the bytes in this MapKey
+    inline fn num_vectors(self: *const MapKey) usize {
+        const lu: usize = @intCast(self.len);
+        var r: usize = @divFloor(lu, vecsize);
+        while ((r * vecsize) < lu) {
+            r += 1;
+        }
+        return r;
     }
 
     pub fn compare(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
-        const len: usize = @max(a.len, b.len);
-        const cmp_vec = compare_vector(a, b);
-        if (len <= vecsize or cmp_vec != .Equal) {
-            return cmp_vec;
+        const cmp_len = sorted.compareNumber(a.len, b.len);
+        if (cmp_len != .Equal) {
+            return cmp_len;
         }
 
-        inline for (vecsize..a.buffer.len) |i| {
-            const lt: i8 = @intFromBool(a.buffer[i] < b.buffer[i]) * @as(i8, -1); // -1 if true, 0 if false
-            const gt: i8 = @intFromBool(a.buffer[i] > b.buffer[i]); // 1 if true, 0 if false
-            const char_compare = @as(sorted.CompareResult, @enumFromInt(lt + gt));
-            if (char_compare != .Equal) {
-                return char_compare;
+        const vc: usize = a.num_vectors();
+        var vi: usize = 0;
+        while (vi < vc) {
+            const lt: @Vector(vecsize, i8) = @intFromBool(a.vectors[vi] < b.vectors[vi]) * (comptime @as(@Vector(vecsize, i8), @splat(-1)));
+            const gt: @Vector(vecsize, i8) = @intFromBool(a.vectors[vi] > b.vectors[vi]);
+            const cmp: [vecsize]i8 = gt + lt;
+            inline for (0..vecsize) |i| {
+                if (cmp[i] != 0) {
+                    return @as(sorted.CompareResult, @enumFromInt(cmp[i] * -1));
+                }
             }
+            vi += 1;
         }
         return .Equal;
     }
 };
 
-const MapVal = packed struct {
-    count: u64 = 0,
-    sum: u64 = 0,
-    min: u64 = std.math.maxInt(u64),
-    max: u64 = std.math.minInt(u64),
+/// Type of int used in the MapVal struct
+const Tuv = u32;
+const MapVal = struct {
+    count: Tuv = 0,
+    sum: Tuv = 0,
+    min: Tuv = std.math.maxInt(Tuv),
+    max: Tuv = std.math.minInt(Tuv),
 
-    pub inline fn add(mv: *MapVal, v: u64) void {
+    pub inline fn add(mv: *MapVal, v: Tuv) void {
         mv.count += 1;
         mv.sum += v;
         mv.min = @min(mv.min, v);
@@ -191,7 +236,6 @@ pub fn read(path: []const u8) !ParseResult {
     const TBufferedReader = std.io.BufferedReader(readBufferSize, @TypeOf(fileReader));
     var bufferedReader = TBufferedReader{ .unbuffered_reader = fileReader };
     var reader = bufferedReader.reader();
-
     var result: ParseResult = .{};
     var buf: [128]u8 = undefined;
     var eof: bool = false;
@@ -219,16 +263,13 @@ pub fn read(path: []const u8) !ParseResult {
             bi += 1;
         }
 
-        std.log.debug("line: \"{s}\"", .{buf[0..bi]});
         if (buf[0] == '#' or splitIndex < 1) {
             continue :fileloop;
         }
         result.lineCount += 1;
         const keystr: []u8 = buf[0..splitIndex];
         const valstr: []u8 = buf[(splitIndex + 1)..bi];
-
-        _ = &keystr;
-        _ = &valstr;
+        std.log.debug("line: \"{s}\", keystr: \"{s}\", valstr: \"{s}\"", .{ buf[0..bi], keystr, valstr });
     }
 
     return result;
@@ -298,10 +339,10 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
         std.log.debug("line: \"{s}\", keystr: \"{s}\", valstr: \"{s}\"", .{ buf[0..bi], keystr, valstr });
         tKey.set(keystr);
 
-        const mapIndex: usize = (@as(usize, @intCast(tKey.buffer[0])) + tKey.len) % mapCount; // I have tried to beat this but i cant
+        const mapIndex: usize = (@as(usize, @intCast(buf[0])) + tKey.len) % mapCount; // I have tried to beat this but i cant
         const map: *TMap = &maps[mapIndex];
 
-        const valint: u64 = @intCast(fastIntParse(valstr));
+        const valint: Tuv = @intCast(fastIntParse(valstr));
 
         const keyIndex = map.indexOf(&tKey);
         if (keyIndex >= 0) {
@@ -349,7 +390,8 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
     return result;
 }
 
+// ========== TESTING ==========
 test "Size and Alignment" {
-    std.log.warn("MapKey size: {d}, alignment: {d}", .{ @sizeOf(MapKey), @alignOf(MapKey) });
+    std.log.warn("MapKey size: {d}, alignment: {d}, vecsize: {d}, veccount: {d}", .{ @sizeOf(MapKey), @alignOf(MapKey), MapKey.vecsize, MapKey.veccount });
     std.log.warn("MapVal size: {d}, alignment: {d}", .{ @sizeOf(MapVal), @alignOf(MapVal) });
 }
