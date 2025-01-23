@@ -46,6 +46,15 @@ fn openFile(allocator: std.mem.Allocator, path: []const u8) !fs.File {
     });
 }
 
+fn rotateBuffer(buffer: []u8, pos: usize) usize {
+    const rembytes: []const u8 = buffer[pos..];
+    const remlen: usize = rembytes.len;
+    std.log.debug("\n===== pre rembytes =====\n({s})[{s}]\n", .{ buffer[0..remlen], buffer[remlen..] });
+    std.mem.copyForwards(u8, buffer, rembytes);
+    std.log.debug("\n===== post rembytes =====\n({s})[{s}]\n", .{ buffer[0..remlen], buffer[remlen..] });
+    return remlen;
+}
+
 pub const MapKey = struct {
     const bufferlen: usize = 64;
     const vecsize: usize = 32;
@@ -221,17 +230,7 @@ pub const ParseResult = packed struct {
     uniqueKeys: usize = 0,
 };
 
-const readBufferSize: comptime_int = 65_535 * 2;
-
-fn rotateBuffer(buffer: []u8, pos: usize) usize {
-    const rembytes: []const u8 = buffer[pos..];
-    const remlen: usize = rembytes.len;
-    std.log.debug("\n===== pre rembytes =====\n({s})[{s}]\n", .{ buffer[0..remlen], buffer[remlen..] });
-    std.mem.copyForwards(u8, buffer, rembytes);
-    std.log.debug("\n===== post rembytes =====\n({s})[{s}]\n", .{ buffer[0..remlen], buffer[remlen..] });
-    return remlen;
-}
-
+const readBufferSize: comptime_int = (1024 * 1024) - (@sizeOf(usize) * 2);
 pub fn AdvancedBuffer(comptime size: usize) type {
     return struct {
         const TSelf = @This();
