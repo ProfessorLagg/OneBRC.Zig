@@ -6,12 +6,17 @@ pub fn readCityNames(allocator: std.mem.Allocator) !std.ArrayList([]const u8) {
     var result = std.ArrayList([]const u8).init(allocator);
 
     var split_iter = std.mem.split(u8, cityNames[0..], "\n");
-    var line: ?[]const u8 = split_iter.first();
-    while (line != null) : (line = split_iter.next()) {
-        if (line == null) {
-            break;
+    var line: []const u8 = split_iter.first();
+
+    // The bounded for loop is just here to guarantee the loop has an upper iteration bound
+    for (0..cityNames.len) |_| {
+        if (line.len > 1) {
+            try result.append(line);
         }
-        try result.append(line.?);
+
+        line = split_iter.next() orelse {
+            break;
+        };
     }
 
     return result;
