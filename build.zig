@@ -72,6 +72,15 @@ pub fn build(b: *std.Build) void {
     const run_sorted_unit_tests = b.addRunArtifact(sorted_unit_tests);
     test_step.dependOn(&run_sorted_unit_tests.step);
 
+    // parsing
+    const parsing_unit_tests = b.addTest(.{
+        .root_source_file = b.path("src/parsing.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_parsing_unit_tests = b.addRunArtifact(parsing_unit_tests);
+    test_step.dependOn(&run_parsing_unit_tests.step);
+
     // benchmarking
     const benchmarking_unit_tests = b.addTest(.{
         .root_source_file = b.path("src/benchmarking/benchmarking.zig"),

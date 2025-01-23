@@ -384,3 +384,9 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
     maps[0].deinit();
     return result;
 }
+
+
+test "Size and Alignment"{
+    std.log.warn("MapKey size: {d}, alignment: {d}",.{ @sizeOf(MapKey), @alignOf(MapKey)});
+    std.log.warn("MapVal size: {d}, alignment: {d}",.{ @sizeOf(MapVal), @alignOf(MapVal)});
+}
