@@ -454,7 +454,7 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
     result.uniqueKeys = maps[0].count;
     maps[0].deinit();
     if (gpa.deinit() == .leak) {
-        std.log.warn("gpa leaked memory");
+        std.log.warn("gpa leaked memory", .{});
     }
     return result;
 }

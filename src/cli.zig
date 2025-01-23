@@ -21,8 +21,8 @@ pub const std_options = .{
 // const debugpath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\verysmall.txt";
 // const debugpath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\small.txt";
 // const debugpath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
-// const debugpath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
-const debugpath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\large.txt";
+const debugpath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
+// const debugpath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\large.txt";
 
 pub fn main() !void {
     // TODO parse console args
