@@ -343,28 +343,29 @@ pub fn read(path: []const u8) !ParseResult {
             result.lineCount += 1;
             const keystr: []u8 = inbuffer.buffer[start..splitIndex];
             const valstr: []u8 = inbuffer.buffer[(splitIndex + 1)..inbuffer.pos];
-            const line: []const u8 = inbuffer.buffer[start..inbuffer.pos];
-
-            std.log.info("line {s};{s}: \"{s}\", keystr: \"{s}\", valstr: \"{s}\"", .{ result.lineCount, line, keystr, valstr });
+            std.log.info("line {s}: keystr: \"{s}\", valstr: \"{s}\"", .{ result.lineCount, keystr, valstr });
         }
     }
-
-    std.log.debug("size of AdvancedBuffer({d}) = {d}, alignment of AdvancedBuffer({d}) = {d}", .{ readBufferSize, @sizeOf(AdvancedBuffer(readBufferSize)), readBufferSize, @alignOf(AdvancedBuffer(readBufferSize)) });
     return result;
 }
 
 pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
-    @setRuntimeSafety(false);
-
+    var result: ParseResult = .{};
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();
 
+    // variables used for reading
     var file: fs.File = try openFile(allocator, path);
     defer file.close();
+    const fileReader = file.reader();
+    var inbuffer: AdvancedBuffer(readBufferSize) = .{};
+    @memset(inbuffer.buffer[0..], 0);
+    var readCount: usize = comptime std.math.maxInt(usize);
+    var lastReadCount: usize = readCount;
 
+    // variables used for parsing
     const TMap = sorted.SortedArrayMap(MapKey, MapVal, MapKey.compare);
-
     const mapCount: comptime_int = 64;
     var maps: [mapCount]TMap = blk: {
         var r: [mapCount]TMap = undefined;
@@ -373,63 +374,51 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
         }
         break :blk r;
     };
-
-    const fileReader = file.reader();
-    const TBufferedReader = std.io.BufferedReader(readBufferSize, @TypeOf(fileReader));
-    var bufferedReader = TBufferedReader{ .unbuffered_reader = fileReader };
-    var reader = bufferedReader.reader();
-
     var tKey: MapKey = .{};
     var tVal: MapVal = .{ .count = 1 };
-    var result: ParseResult = .{};
-    var buf: [128]u8 = undefined;
-    var eof: bool = false;
-    fileloop: while (!eof) {
-        var splitIndex: usize = 0;
-        var bi: usize = 0;
-        lineloop: while (bi < buf.len) {
-            buf[bi] = reader.readByte() catch |err| {
-                switch (err) {
-                    error.EndOfStream => {
-                        eof = true;
-                        break :lineloop;
-                    },
-                    else => {
-                        return err;
-                    },
-                }
-            };
 
-            const isSemi: bool = buf[bi] == ';';
-            splitIndex = (bi * @as(usize, @intFromBool(isSemi))) + (splitIndex * @as(usize, @intFromBool(!isSemi)));
-            if (buf[bi] == '\n') {
-                break :lineloop;
+    // main loop
+    fileloop: while (lastReadCount != 0 and readCount != 0) {
+        lastReadCount = readCount;
+        readCount = try inbuffer.rotateRead(@TypeOf(fileReader), fileReader);
+        while (inbuffer.pos < inbuffer.len) {
+            // reading key and value string
+            while (inbuffer.buffer[inbuffer.pos] == '#') {
+                inbuffer.skipUntilDelimOrEnd('\n');
             }
-            bi += 1;
-        }
+            inbuffer.pos += 1;
+            const start: usize = inbuffer.pos;
+            var splitIndex: usize = inbuffer.pos + 1;
+            while (inbuffer.buffer[inbuffer.pos] != '\n') : (inbuffer.pos += 1) {
+                if (inbuffer.pos >= inbuffer.len) {
+                    inbuffer.pos = start;
+                    continue :fileloop;
+                }
+                const isSemi: bool = inbuffer.buffer[inbuffer.pos] == ';';
+                splitIndex =
+                    (splitIndex * @as(usize, @intFromBool(!isSemi))) +
+                    (inbuffer.pos * @as(usize, @intFromBool(isSemi)));
+            }
 
-        if (buf[0] == '#' or splitIndex < 1) {
-            continue :fileloop;
-        }
-        result.lineCount += 1;
-        const keystr: []u8 = buf[0..splitIndex];
-        const valstr: []u8 = buf[(splitIndex + 1)..bi];
-        std.log.debug("line: \"{s}\", keystr: \"{s}\", valstr: \"{s}\"", .{ buf[0..bi], keystr, valstr });
-        tKey.set(keystr);
+            result.lineCount += 1;
+            const keystr: []u8 = inbuffer.buffer[start..splitIndex];
+            const valstr: []u8 = inbuffer.buffer[(splitIndex + 1)..inbuffer.pos];
+            std.log.info("line {s}: keystr: \"{s}\", valstr: \"{s}\"", .{ result.lineCount, keystr, valstr });
 
-        const mapIndex: usize = (@as(usize, @intCast(buf[0])) + tKey.len) % mapCount; // I have tried to beat this but i cant
-        const map: *TMap = &maps[mapIndex];
-
-        const valint: Tuv = @intCast(fastIntParse(valstr));
-
-        const keyIndex = map.indexOf(&tKey);
-        if (keyIndex >= 0) {
-            map.values[@as(usize, @intCast(keyIndex))].add(valint);
-        } else {
-            tVal.max = valint;
-            tVal.min = valint;
-            tVal.sum = valint;
-            _ = map.update(&tKey, &tVal);
+            // parsing key and value string
+            tKey.set(keystr);
+            const mapIndex: usize = (@as(usize, @intCast(keystr[0])) + keystr.len) % mapCount; // I have tried to beat this but i cant
+            const map: *TMap = &maps[mapIndex];
+            const valint: Tuv = @intCast(fastIntParse(valstr));
+            const keyIndex = map.indexOf(&tKey);
+            if (keyIndex >= 0) {
+                map.values[@as(usize, @intCast(keyIndex))].add(valint);
+            } else {
+                tVal.max = valint;
+                tVal.min = valint;
+                tVal.sum = valint;
+                _ = map.update(&tKey, &tVal);
+            }
         }
     }
 
