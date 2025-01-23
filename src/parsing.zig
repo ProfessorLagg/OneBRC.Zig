@@ -221,21 +221,17 @@ pub const ParseResult = packed struct {
     uniqueKeys: usize = 0,
 };
 
-const readBufferSize: comptime_int = 65_535;
-// const readBufferSize: comptime_int = 1024 * 1024 * 1024; // 1 GiB
+const readBufferSize: comptime_int = 65_535 * 2;
 
 fn rotateBuffer(buffer: []u8, pos: usize) usize {
-    // TODO
-    _ = &buffer;
-    _ = &pos;
-
     const rembytes: []const u8 = buffer[pos..];
     const remlen: usize = rembytes.len;
     std.log.debug("\n===== pre rembytes =====\n({s})[{s}]\n", .{ buffer[0..remlen], buffer[remlen..] });
-    std.mem.copyForwards(u8, &buffer, rembytes);
+    std.mem.copyForwards(u8, buffer, rembytes);
     std.log.debug("\n===== post rembytes =====\n({s})[{s}]\n", .{ buffer[0..remlen], buffer[remlen..] });
     return remlen;
 }
+
 pub fn AdvancedBuffer(comptime size: usize) type {
     return struct {
         const TSelf = @This();
@@ -278,13 +274,8 @@ pub fn AdvancedBuffer(comptime size: usize) type {
 
         /// Copies remaining bytes into beginning of buffer, resets position to 0 and sets length to the amount of remaning bytes
         pub inline fn rotate(self: *TSelf) void {
-            const rembytes: []const u8 = self.buffer[self.pos..self.len];
-            const remlen: usize = rembytes.len;
-            std.log.debug("\n===== pre rembytes =====\n({s})[{s}]\n", .{ self.buffer[0..remlen], self.buffer[remlen..] });
-            std.mem.copyForwards(u8, &self.buffer, rembytes);
-            std.log.debug("\n===== post rembytes =====\n({s})[{s}]\n", .{ self.buffer[0..remlen], self.buffer[remlen..] });
+            self.len = rotateBuffer(self.buffer[0..self.len], self.pos);
             self.pos = 0;
-            self.len = remlen;
         }
         pub inline fn fill(self: *TSelf, comptime Treader: type, reader: Treader) !usize {
             std.log.debug("\n===== pre fill =====\n({s})[{s}]\n", .{ self.buffer[0..self.len], self.buffer[self.len..] });
@@ -303,10 +294,12 @@ pub fn AdvancedBuffer(comptime size: usize) type {
 }
 /// For testing purposes only. Reads all the lines in the file, without parsing them.
 pub fn read(path: []const u8) !ParseResult {
-    var result: ParseResult = .{};
+    std.log.debug("read()", .{});
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();
+
+    var result: ParseResult = .{};
 
     var file: fs.File = try openFile(allocator, path);
     defer file.close();
@@ -317,10 +310,17 @@ pub fn read(path: []const u8) !ParseResult {
 
     var readCount: usize = comptime std.math.maxInt(usize);
     var lastReadCount: usize = readCount;
+    var fileloop_iters: u128 = 0;
     fileloop: while (lastReadCount != 0 and readCount != 0) {
+        fileloop_iters += 1;
+        std.log.debug("fileloop iteration: {d}", .{fileloop_iters});
         lastReadCount = readCount;
         readCount = try inbuffer.rotateRead(@TypeOf(fileReader), fileReader);
+
+        var lineloop_iters: u128 = 0;
         while (inbuffer.pos < inbuffer.len) {
+            lineloop_iters += 1;
+            std.log.debug("fileloop iteration: {d}", .{lineloop_iters});
             while (inbuffer.buffer[inbuffer.pos] == '#') {
                 inbuffer.skipUntilDelimOrEnd('\n');
             }
@@ -353,13 +353,13 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
     var result: ParseResult = .{};
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
+    defer _ = gpa.deinit();
 
     // variables used for reading
     var file: fs.File = try openFile(allocator, path);
     defer file.close();
     const fileReader = file.reader();
     var inbuffer: AdvancedBuffer(readBufferSize) = .{};
-    @memset(inbuffer.buffer[0..], 0);
     var readCount: usize = comptime std.math.maxInt(usize);
     var lastReadCount: usize = readCount;
 
@@ -402,7 +402,7 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
             result.lineCount += 1;
             const keystr: []u8 = inbuffer.buffer[start..splitIndex];
             const valstr: []u8 = inbuffer.buffer[(splitIndex + 1)..inbuffer.pos];
-            std.log.info("line {s}: keystr: \"{s}\", valstr: \"{s}\"", .{ result.lineCount, keystr, valstr });
+            std.log.info("line {d}: keystr: \"{s}\", valstr: \"{s}\"", .{ result.lineCount, keystr, valstr });
 
             // parsing key and value string
             tKey.set(keystr);
@@ -453,9 +453,6 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
 
     result.uniqueKeys = maps[0].count;
     maps[0].deinit();
-    if (gpa.deinit() == .leak) {
-        std.log.warn("gpa leaked memory", .{});
-    }
     return result;
 }
 
