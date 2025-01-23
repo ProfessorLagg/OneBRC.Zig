@@ -105,42 +105,6 @@ pub const MapKey = struct {
         }
         return .Equal;
     }
-
-    pub fn wtf8(self: *const MapKey, buf: []u8) []const u8 {
-        std.debug.assert(buf.len >= self.len);
-        var utf8 = std.unicode.Utf8View.init(self.buffer[0..self.len]) catch |err| {
-            std.log.err("err: {s}", .{@errorName(err)});
-            @panic(@errorName(err));
-        };
-
-        var iterator = utf8.iterator();
-        var i: usize = 0;
-        while (iterator.nextCodepoint()) |codepoint| {
-            const mi = std.unicode.wtf8Encode(codepoint, buf[i..]) catch |err| {
-                std.log.err("err: {s}", .{@errorName(err)});
-                @panic(@errorName(err));
-            };
-            i += @as(usize, @intCast(mi));
-        }
-
-        return buf[0..i];
-    }
-
-    pub fn wtf16le(self: *const MapKey, buf: []u16) []const u8 {
-        var wtf8buffer: [bufferlen]u8 = undefined;
-        const wtf8slice = self.wtf8(wtf8buffer[0..]);
-        const len = std.unicode.wtf8ToWtf16Le(buf, wtf8slice) catch |err| {
-            std.log.err("err: {s}", .{@errorName(err)});
-            @panic(@errorName(err));
-        };
-        const result: []const u8 = blk: {
-            var r: []const u8 = undefined;
-            r.ptr = @ptrCast(&buf[0]);
-            r.len = len * (@sizeOf(u16) / @sizeOf(u8));
-            break :blk r;
-        };
-        return result;
-    }
 };
 
 const MapVal = packed struct {
@@ -385,8 +349,7 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
     return result;
 }
 
-
-test "Size and Alignment"{
-    std.log.warn("MapKey size: {d}, alignment: {d}",.{ @sizeOf(MapKey), @alignOf(MapKey)});
-    std.log.warn("MapVal size: {d}, alignment: {d}",.{ @sizeOf(MapVal), @alignOf(MapVal)});
+test "Size and Alignment" {
+    std.log.warn("MapKey size: {d}, alignment: {d}", .{ @sizeOf(MapKey), @alignOf(MapKey) });
+    std.log.warn("MapVal size: {d}, alignment: {d}", .{ @sizeOf(MapVal), @alignOf(MapVal) });
 }
