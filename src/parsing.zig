@@ -5,6 +5,11 @@ const fs = std.fs;
 const sorted = @import("sorted/sorted.zig");
 const compare = sorted.compare;
 
+/// Type of int used in the MapVal struct
+const Tuv = u32;
+/// Type of map used in parse function
+const TMap = sorted.SortedArrayMap(MapKey, MapVal, MapKey.compare);
+
 inline fn fastIntParse(numstr: []const u8) isize {
     // @setRuntimeSafety(false);
     const isNegative: bool = numstr[0] == '-';
@@ -159,8 +164,6 @@ pub const MapKey = struct {
     }
 };
 
-/// Type of int used in the MapVal struct
-const Tuv = u32;
 const MapVal = struct {
     count: Tuv = 0,
     sum: Tuv = 0,
@@ -235,8 +238,11 @@ const readBufferSize: comptime_int = 1024 * 1024; // 1mb
 /// Iterator to read a file line by line
 fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersize: usize) type {
     comptime {
-        std.debug.assert(std.meta.hasMethod(Treader, "read"));
+        if(!std.meta.hasMethod(Treader, "read")){
+            @compileError("Treader type " ++ @typeName(Treader) ++ " does not have a \"read\" method");
+        }
     }
+
     return struct {
         const TSelf = @This();
         allocator: std.mem.Allocator,
@@ -386,7 +392,6 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
     defer lineReader.deinit();
 
     // variables used for parsing
-    const TMap = sorted.SortedArrayMap(MapKey, MapVal, MapKey.compare);
     const mapCount: comptime_int = 64;
     var maps: [mapCount]TMap = blk: {
         var r: [mapCount]TMap = undefined;
@@ -472,6 +477,7 @@ test "Size and Alignment" {
     metainfo.logMemInfo(MapVal);
     metainfo.logMemInfo(ParseResult);
     metainfo.logMemInfo(DelimReader(fs.File.Reader, '\n', readBufferSize));
+    metainfo.logMemInfo(TMap);
 }
 
 test "while capture not null" {
