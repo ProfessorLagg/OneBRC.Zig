@@ -21,8 +21,8 @@ pub const std_options = .{
 // const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\verysmall.txt";
 // const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\small.txt";
 // const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
-// const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
-const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\large.txt";
+const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
+// const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\large.txt";
 
 pub fn main() !void {
     // TODO parse console args
@@ -102,4 +102,31 @@ fn run_read() !void {
 fn run_benchmark() void {
     const benchmarking = @import("benchmarking/benchmarking.zig");
     benchmarking.BenchmarkCompare.run();
+}
+
+const ContainsIterator = struct {
+    strings: []const []const u8,
+    needle: []const u8,
+    index: usize = 0,
+    fn next(self: *ContainsIterator) ?[]const u8 {
+        const index = self.index;
+        for (self.strings[index..]) |string| {
+            self.index += 1;
+            if (std.mem.indexOf(u8, string, self.needle)) |_| {
+                return string;
+            }
+        }
+        return null;
+    }
+};
+
+test "custom iterator" {
+    var iter = ContainsIterator{
+        .strings = &[_][]const u8{ "one", "two", "three" },
+        .needle = "e",
+    };
+
+    try std.testing.expectEqual("one", iter.next().?);
+    try std.testing.expectEqual("three", iter.next().?);
+    try std.testing.expectEqual(null, iter.next());
 }

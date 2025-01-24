@@ -1,5 +1,5 @@
 // Semi-rewrite for simplifications sake
-
+const builtin = @import("builtin");
 const std = @import("std");
 const fs = std.fs;
 const sorted = @import("sorted/sorted.zig");
@@ -225,7 +225,7 @@ const MapVal = struct {
     }
 };
 
-pub const ParseResult = packed struct {
+pub const ParseResult = struct {
     lineCount: usize = 0,
     uniqueKeys: usize = 0,
 };
@@ -281,7 +281,7 @@ pub fn AdvancedBuffer(comptime size: usize) type {
             const readcount: usize = try reader.read(self.buffer[self.len..]);
             self.pos = 0;
             self.len += readcount;
-            std.log.debug("\n===== post fill =====\n({s})[{s}]\n", .{ self.buffer[0..self.len], self.buffer[self.len..] });
+            std.log.debug("\n===== post fill =====\n{s}\n", .{ self.buffer[0..self.len], self.buffer[self.len..] });
             return readcount;
         }
         /// Reads data from a generic reader
@@ -291,59 +291,142 @@ pub fn AdvancedBuffer(comptime size: usize) type {
         }
     };
 }
+
+/// Iterator to read a file line by line
+fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersize: usize) type {
+    comptime {
+        std.debug.assert(std.meta.hasMethod(Treader, "read"));
+    }
+    return struct {
+        const TSelf = @This();
+        allocator: std.mem.Allocator,
+        reader: Treader,
+        buffer: []u8,
+        slice: []u8,
+        EoF: bool,
+
+        pub fn init(allocator: std.mem.Allocator, reader: Treader) !TSelf {
+            std.log.debug("DelimReader" ++
+                "\n\t" ++ "Treader: " ++ "{s}" ++
+                "\n\t" ++ "delim: {d} | 0x{X:0>2}" ++
+                "\n\t" ++ "buffer size: {d}" ++ "\n", .{ @typeName(Treader), delim, delim, buffersize });
+            var r = TSelf{ // NO FOLD
+                .allocator = allocator,
+                .buffer = try allocator.alloc(u8, buffersize),
+                .reader = reader,
+                .slice = undefined,
+                .EoF = false,
+            };
+            r.slice = r.buffer[0..];
+            r.slice.len = r.reader.read(r.buffer) catch |err| {
+                allocator.free(r.buffer);
+                return err;
+            };
+            if (r.slice.len < buffersize) {
+                r.EoF = true;
+            }
+            return r;
+        }
+
+        pub fn deinit(self: *TSelf) void {
+            self.allocator.free(self.buffer);
+        }
+
+        /// Finds index of self.slice[0] in self.buffer
+        inline fn getpos(self: *TSelf) usize {
+            return @intFromPtr(self.slice.ptr) - @intFromPtr(&self.buffer[0]);
+        }
+
+        /// returns the index in self.slice of the next delimiter, otherwise null
+        inline fn nextDelimIndex(self: *TSelf) ?usize {
+            for (0..self.slice.len) |i| {
+                if (self.slice[i] == delim) {
+                    return i;
+                }
+            }
+            return null;
+        }
+
+        pub fn next(self: *TSelf) !?[]const u8 {
+            if (self.slice.len == 0) {
+                // contains no line
+                std.log.debug("DelimReader: NONE", .{});
+                self.slice = self.buffer[0..];
+                self.slice.len = try self.reader.read(self.buffer[0..]);
+                if (self.slice.len > 0) {
+                    // retry
+                    return self.next();
+                }
+                return null;
+            }
+
+            const delim_index: usize = self.nextDelimIndex() orelse 0;
+
+            if (delim_index == 0) {
+                // Contains partial line
+                std.log.debug("DelimReader: PART", .{});
+                // rotate buffer
+                const rotateSize = self.slice.len;
+                std.mem.copyForwards(u8, self.buffer[0..], self.slice);
+                self.slice = self.buffer[0..];
+                self.slice.len = rotateSize;
+                @memset(self.buffer[rotateSize..], 0);
+
+                const readcount = try self.reader.read(self.buffer[self.slice.len..]);
+                if (readcount > 0) {
+                    self.slice.len += readcount;
+                    return self.next();
+                }
+
+                // return partial line
+                const result: []const u8 = self.buffer[0..rotateSize];
+                self.slice.len = 0;
+                return result;
+            }
+
+            // Found full line
+            std.log.debug("DelimReader: FULL", .{});
+            const result: []const u8 = self.slice[0..delim_index];
+            self.slice = self.slice[delim_index + 1 ..];
+            return result;
+        }
+    };
+}
+
 /// For testing purposes only. Reads all the lines in the file, without parsing them.
 pub fn read(path: []const u8) !ParseResult {
-    std.log.debug("read()", .{});
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();
-
     var result: ParseResult = .{};
 
+    // Setup reading
     var file: fs.File = try openFile(allocator, path);
     defer file.close();
-
     const fileReader = file.reader();
-    var inbuffer: AdvancedBuffer(readBufferSize) = .{};
-    @memset(inbuffer.buffer[0..], 0);
+    const TlineReader = DelimReader(@TypeOf(fileReader), '\n', readBufferSize);
+    var lineReader: TlineReader = try TlineReader.init(allocator, fileReader);
+    defer lineReader.deinit();
 
-    var readCount: usize = comptime std.math.maxInt(usize);
-    var lastReadCount: usize = readCount;
-    var fileloop_iters: u128 = 0;
-    fileloop: while (lastReadCount != 0 and readCount != 0) {
-        fileloop_iters += 1;
-        std.log.debug("fileloop iteration: {d}", .{fileloop_iters});
-        lastReadCount = readCount;
-        readCount = try inbuffer.rotateRead(@TypeOf(fileReader), fileReader);
-
-        var lineloop_iters: u128 = 0;
-        while (inbuffer.pos < inbuffer.len) {
-            lineloop_iters += 1;
-            std.log.debug("fileloop iteration: {d}", .{lineloop_iters});
-            while (inbuffer.buffer[inbuffer.pos] == '#') {
-                inbuffer.skipUntilDelimOrEnd('\n');
-            }
-
-            inbuffer.pos += 1;
-
-            const start: usize = inbuffer.pos;
-            var splitIndex: usize = inbuffer.pos + 1;
-            while (inbuffer.buffer[inbuffer.pos] != '\n') : (inbuffer.pos += 1) {
-                if (inbuffer.pos >= inbuffer.len) {
-                    inbuffer.pos = start;
-                    continue :fileloop;
-                }
-                const isSemi: bool = inbuffer.buffer[inbuffer.pos] == ';';
-                splitIndex =
-                    (splitIndex * @as(usize, @intFromBool(!isSemi))) +
-                    (inbuffer.pos * @as(usize, @intFromBool(isSemi)));
-            }
-
-            result.lineCount += 1;
-            const keystr: []u8 = inbuffer.buffer[start..splitIndex];
-            const valstr: []u8 = inbuffer.buffer[(splitIndex + 1)..inbuffer.pos];
-            std.log.info("line {s}: keystr: \"{s}\", valstr: \"{s}\"", .{ result.lineCount, keystr, valstr });
+    lineloop: while (try lineReader.next()) |line| {
+        if (line[0] == '#') {
+            std.log.debug("skipped line: '{s}'", .{line});
+            continue :lineloop;
         }
+
+        result.lineCount += 1;
+        var splitIndex: usize = line.len - 4;
+        while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
+
+        const keystr: []const u8 = line[0..splitIndex];
+        const valstr: []const u8 = line[(splitIndex + 1)..];
+        std.log.info("line{d}: {s}, k: {s}, v: {s}", .{ line, keystr, valstr });
+        std.debug.assert(keystr.len >= 1);
+        std.debug.assert(keystr.len <= 100);
+        std.debug.assert(valstr.len >= 3);
+        std.debug.assert(valstr[valstr.len - 3] == '.');
+        std.debug.assert(line.len >= 5);
+        std.debug.assert(line[splitIndex] == ';');
     }
     return result;
 }
@@ -354,13 +437,13 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();
 
-    // variables used for reading
+    // Setup reading
     var file: fs.File = try openFile(allocator, path);
     defer file.close();
     const fileReader = file.reader();
-    var inbuffer: AdvancedBuffer(readBufferSize) = .{};
-    var readCount: usize = comptime std.math.maxInt(usize);
-    var lastReadCount: usize = readCount;
+    const TlineReader = DelimReader(@TypeOf(fileReader), '\n', readBufferSize);
+    var lineReader: TlineReader = try TlineReader.init(allocator, fileReader);
+    defer lineReader.deinit();
 
     // variables used for parsing
     const TMap = sorted.SortedArrayMap(MapKey, MapVal, MapKey.compare);
@@ -376,47 +459,32 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
     var tVal: MapVal = .{ .count = 1 };
 
     // main loop
-    fileloop: while (lastReadCount != 0 and readCount != 0) {
-        lastReadCount = readCount;
-        readCount = try inbuffer.rotateRead(@TypeOf(fileReader), fileReader);
-        while (inbuffer.pos < inbuffer.len) {
-            // reading key and value string
-            while (inbuffer.buffer[inbuffer.pos] == '#') {
-                inbuffer.skipUntilDelimOrEnd('\n');
-            }
-            inbuffer.pos += 1;
-            const start: usize = inbuffer.pos;
-            var splitIndex: usize = inbuffer.pos + 1;
-            while (inbuffer.buffer[inbuffer.pos] != '\n') : (inbuffer.pos += 1) {
-                if (inbuffer.pos >= inbuffer.len) {
-                    inbuffer.pos = start;
-                    continue :fileloop;
-                }
-                const isSemi: bool = inbuffer.buffer[inbuffer.pos] == ';';
-                splitIndex =
-                    (splitIndex * @as(usize, @intFromBool(!isSemi))) +
-                    (inbuffer.pos * @as(usize, @intFromBool(isSemi)));
-            }
+    lineloop: while (try lineReader.next()) |line| {
+        if (line[0] == '#') {
+            std.log.debug("skipped line: '{s}'", .{line});
+            continue :lineloop;
+        }
 
-            result.lineCount += 1;
-            const keystr: []u8 = inbuffer.buffer[start..splitIndex];
-            const valstr: []u8 = inbuffer.buffer[(splitIndex + 1)..inbuffer.pos];
-            std.log.info("line {d}: keystr: \"{s}\", valstr: \"{s}\"", .{ result.lineCount, keystr, valstr });
+        result.lineCount += 1;
+        var splitIndex: usize = line.len - 4;
+        while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
 
-            // parsing key and value string
-            tKey.set(keystr);
-            const mapIndex: usize = (@as(usize, @intCast(keystr[0])) + keystr.len) % mapCount; // I have tried to beat this but i cant
-            const map: *TMap = &maps[mapIndex];
-            const valint: Tuv = @intCast(fastIntParse(valstr));
-            const keyIndex = map.indexOf(&tKey);
-            if (keyIndex >= 0) {
-                map.values[@as(usize, @intCast(keyIndex))].add(valint);
-            } else {
-                tVal.max = valint;
-                tVal.min = valint;
-                tVal.sum = valint;
-                _ = map.update(&tKey, &tVal);
-            }
+        const keystr: []const u8 = line[0..splitIndex];
+        const valstr: []const u8 = line[(splitIndex + 1)..];
+        std.log.info("line {d}: keystr: \"{s}\", valstr: \"{s}\"", .{ result.lineCount, keystr, valstr });
+        // parsing key and value string
+        tKey.set(keystr);
+        const mapIndex: usize = (@as(usize, @intCast(keystr[0])) + keystr.len) % mapCount; // I have tried to beat this but i cant
+        const map: *TMap = &maps[mapIndex];
+        const valint: Tuv = @intCast(fastIntParse(valstr));
+        const keyIndex = map.indexOf(&tKey);
+        if (keyIndex >= 0) {
+            map.values[@as(usize, @intCast(keyIndex))].add(valint);
+        } else {
+            tVal.max = valint;
+            tVal.min = valint;
+            tVal.sum = valint;
+            _ = map.update(&tKey, &tVal);
         }
     }
 
@@ -457,6 +525,31 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
 
 // ========== TESTING ==========
 test "Size and Alignment" {
-    std.log.warn("MapKey size: {d}, alignment: {d}, vecsize: {d}, veccount: {d}", .{ @sizeOf(MapKey), @alignOf(MapKey), MapKey.vecsize, MapKey.veccount });
-    std.log.warn("MapVal size: {d}, alignment: {d}", .{ @sizeOf(MapVal), @alignOf(MapVal) });
+    @setRuntimeSafety(false);
+    const metainfo = @import("metainfo/metainfo.zig");
+
+    metainfo.logMemInfo(MapKey);
+    metainfo.logMemInfo(MapVal);
+    metainfo.logMemInfo(ParseResult);
+    metainfo.logMemInfo(AdvancedBuffer(readBufferSize));
+    metainfo.logMemInfo(DelimReader(fs.File.Reader, '\n', readBufferSize));
+}
+
+test "while capture not null" {
+    const TestIterator = struct {
+        const TSelf = @This();
+        i: usize = 0,
+        pub fn next(self: *TSelf) ?[]const u8 {
+            self.i += 1;
+            if (self.i >= 4) {
+                return null;
+            }
+            return "val";
+        }
+    };
+
+    var iter: TestIterator = .{};
+    while (iter.next()) |str| {
+        try std.testing.expectEqualStrings("val", str);
+    }
 }

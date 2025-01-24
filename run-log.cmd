@@ -1,4 +1,9 @@
 @ECHO OFF
 cd %~dp0
-cls
-zig build run -Doptimize=Debug -freference-trace > run.log 2>&1
+SET ExePath=.\zig-out\bin\1brc.cli.exe
+if exist %ExePath% del %ExePath%
+zig build -Doptimize=Debug -freference-trace
+if exist %ExePath% (
+    cls
+    %ExePath% > run.log 2>&1
+)
