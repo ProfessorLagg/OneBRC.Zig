@@ -230,67 +230,7 @@ pub const ParseResult = struct {
     uniqueKeys: usize = 0,
 };
 
-const readBufferSize: comptime_int = (1024 * 1024) - (@sizeOf(usize) * 2);
-pub fn AdvancedBuffer(comptime size: usize) type {
-    return struct {
-        const TSelf = @This();
-        buffer: [size]u8 = undefined,
-        pos: usize = 0,
-        len: usize = 0,
-
-        pub fn nextIndexOf(self: *TSelf, c: u8) isize {
-            var i: usize = self.pos;
-            while (self.buffer[i] != c) {
-                if (i >= self.len) {
-                    return -1;
-                }
-                i += 1;
-            }
-            return @intCast(i);
-        }
-        pub inline fn skipUntilDelimOrEnd(self: *TSelf, c: u8) void {
-            while (self.buffer[self.pos] != c and self.pos < self.len) {
-                self.pos += 1;
-            }
-            self.pos = @min(self.len, self.pos + 1);
-        }
-        pub fn readUntilDelimOrEnd(self: *TSelf, c: u8) ?[]u8 {
-            const start: usize = self.pos;
-            while (self.buffer[self.pos] != c) {
-                self.pos += 1;
-                if (self.pos >= self.len) {
-                    self.pos = start;
-                    return null;
-                }
-            }
-            const r = self.buffer[start..self.pos];
-            if (r.len == 0) {
-                return null;
-            }
-            self.pos += 1;
-            return r;
-        }
-
-        /// Copies remaining bytes into beginning of buffer, resets position to 0 and sets length to the amount of remaning bytes
-        pub inline fn rotate(self: *TSelf) void {
-            self.len = rotateBuffer(self.buffer[0..self.len], self.pos);
-            self.pos = 0;
-        }
-        pub inline fn fill(self: *TSelf, comptime Treader: type, reader: Treader) !usize {
-            std.log.debug("\n===== pre fill =====\n({s})[{s}]\n", .{ self.buffer[0..self.len], self.buffer[self.len..] });
-            const readcount: usize = try reader.read(self.buffer[self.len..]);
-            self.pos = 0;
-            self.len += readcount;
-            std.log.debug("\n===== post fill =====\n{s}\n", .{ self.buffer[0..self.len], self.buffer[self.len..] });
-            return readcount;
-        }
-        /// Reads data from a generic reader
-        pub inline fn rotateRead(self: *TSelf, comptime Treader: type, reader: Treader) !usize {
-            self.rotate();
-            return try self.fill(Treader, reader);
-        }
-    };
-}
+const readBufferSize: comptime_int = 1024 * 1024; // 1mb
 
 /// Iterator to read a file line by line
 fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersize: usize) type {
@@ -531,7 +471,6 @@ test "Size and Alignment" {
     metainfo.logMemInfo(MapKey);
     metainfo.logMemInfo(MapVal);
     metainfo.logMemInfo(ParseResult);
-    metainfo.logMemInfo(AdvancedBuffer(readBufferSize));
     metainfo.logMemInfo(DelimReader(fs.File.Reader, '\n', readBufferSize));
 }
 
