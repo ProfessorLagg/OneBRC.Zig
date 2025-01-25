@@ -120,7 +120,7 @@ pub const BenchmarkCompare = struct {
             bFull.add(b.ns, a.count);
 
             std.debug.assert(aFull.count == bFull.count);
-            const dba: f64 = @as(f64, @floatFromInt(a.ns)) / @as(f64, @floatFromInt(b.ns));
+            const dba: f64 = @as(f64, @floatFromInt(b.ns)) / @as(f64, @floatFromInt(a.ns));
             print("{s} = {d:.3} * {s}\n\n", .{ bName, dba, aName });
         }
     }

@@ -99,16 +99,14 @@ pub const MapKey = struct {
     }
 
     pub fn compare2(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
-        var lt: i8 = @intFromBool(a.len < b.len) * @as(i8, -1); // -1 if true, 0 if false
-        var gt: i8 = @intFromBool(a.len > b.len); // 1 if true, 0 if false
-        var cmp: i8 = lt + gt;
+        var cmp: i8 = @intFromBool(a.len < b.len) * @as(i8, -1);
+        cmp += @intFromBool(a.len > b.len);
 
-        const max_i: u8 = @max(a.len, b.len) - 1;
-        var i: u8 = 0;
+        const max_i: @TypeOf(a.len) = @max(a.len, b.len) - 1;
+        var i: @TypeOf(a.len) = 0;
         while (cmp == 0 and i < max_i) : (i += 1) {
-            lt = @intFromBool(a.buffer[i] < b.buffer[i]) * @as(i8, -1);
-            gt = @intFromBool(a.buffer[i] > b.buffer[i]);
-            cmp = (lt + gt);
+            cmp = @intFromBool(a.buffer[i] < b.buffer[i]) * @as(i8, -1);
+            cmp += @intFromBool(a.buffer[i] > b.buffer[i]);
         }
         return @enumFromInt(cmp);
     }
