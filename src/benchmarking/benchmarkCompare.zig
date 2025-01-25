@@ -109,19 +109,17 @@ pub const BenchmarkCompare = struct {
             @panic("Could not run Global Setup");
         };
 
-        var aFull: BenchmarkResult = .{};
-        var bFull: BenchmarkResult = .{};
         const aName = comptime "base";
         const bName = comptime "impr";
         inline for (0..64) |_| {
             const a = run_benchmark(MapKey.compare, aName);
             const b = run_benchmark(MapKey.compare2, bName);
-            aFull.add(a.ns, a.count);
-            bFull.add(b.ns, a.count);
 
-            std.debug.assert(aFull.count == bFull.count);
-            const dba: f64 = @as(f64, @floatFromInt(b.ns)) / @as(f64, @floatFromInt(a.ns));
-            print("{s} = {d:.3} * {s}\n\n", .{ bName, dba, aName });
+            const nameOfFastest = switch (a.ns < b.ns) {
+                true => aName,
+                false => bName
+            };
+            print("best: {s} \n\n", .{ nameOfFastest });
         }
     }
 };
