@@ -27,9 +27,9 @@ const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\large.txt";
 pub fn main() !void {
     // TODO parse console args
     // try run();
-    try run_debug();
+    // try run_debug();
     // try run_read();
-    // run_benchmark();
+    run_benchmark();
 }
 
 fn run() !void {

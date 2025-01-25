@@ -61,7 +61,7 @@ fn rotateBuffer(buffer: []u8, pos: usize) usize {
 }
 
 pub const MapKey = struct {
-    const bufferlen: usize = 64;
+    const bufferlen: usize = 100;
 
     buffer: [bufferlen]u8 = undefined,
     len: u8 = 0,
@@ -79,23 +79,38 @@ pub const MapKey = struct {
     }
 
     /// Returns the key as a string
-    pub inline fn get(self: *MapKey) []const u8 {
+    pub inline fn get(self: *const MapKey) []const u8 {
         return self.buffer[0..self.len];
     }
 
     pub fn compare(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
-        const cmp_len = sorted.compareNumber(a.len, b.len);
-        if (cmp_len != .Equal) {
-            return cmp_len;
-        }
+        var lt: i8 = @intFromBool(a.len < b.len) * @as(i8, -1); // -1 if true, 0 if false
+        var gt: i8 = @intFromBool(a.len > b.len); // 1 if true, 0 if false
+        var cmp: i8 = lt + gt;
 
-        for (0..a.len) |i| {
-            const cmp_char = sorted.compareNumber(a.buffer[i], b.buffer[i]);
-            if (cmp_char != .Equal) {
-                return cmp_char;
-            }
+        const max_i: u8 = @max(a.len, b.len) - 1;
+        var i: u8 = 0;
+        while (cmp == 0 and i < max_i) : (i += 1) {
+            lt = @intFromBool(a.buffer[i] < b.buffer[i]) * @as(i8, -1);
+            gt = @intFromBool(a.buffer[i] > b.buffer[i]);
+            cmp = (lt + gt);
         }
-        return .Equal;
+        return @enumFromInt(cmp);
+    }
+
+    pub fn compare2(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
+        var lt: i8 = @intFromBool(a.len < b.len) * @as(i8, -1); // -1 if true, 0 if false
+        var gt: i8 = @intFromBool(a.len > b.len); // 1 if true, 0 if false
+        var cmp: i8 = lt + gt;
+
+        const max_i: u8 = @max(a.len, b.len) - 1;
+        var i: u8 = 0;
+        while (cmp == 0 and i < max_i) : (i += 1) {
+            lt = @intFromBool(a.buffer[i] < b.buffer[i]) * @as(i8, -1);
+            gt = @intFromBool(a.buffer[i] > b.buffer[i]);
+            cmp = (lt + gt);
+        }
+        return @enumFromInt(cmp);
     }
 };
 
@@ -405,6 +420,35 @@ test "Size and Alignment" {
     metainfo.logMemInfo(ParseResult);
     metainfo.logMemInfo(DelimReader(fs.File.Reader, '\n', readBufferSize));
     metainfo.logMemInfo(TMap);
+}
+
+test "compare2" {
+    const data = @import("benchmarking/data/data.zig");
+    var keyList: std.ArrayList([]const u8) = try data.readCityNames(std.testing.allocator);
+    defer keyList.deinit();
+
+    const names = keyList.items;
+
+    for (1..names.len) |i| {
+        const ki: MapKey = MapKey.create(names[i]);
+        for (0..i) |j| {
+            const kj: MapKey = MapKey.create(names[j]);
+
+            const cmp1_ij = MapKey.compare(&ki, &kj);
+            const cmp1_ji = MapKey.compare(&kj, &ki);
+            const cmp2_ij = MapKey.compare2(&ki, &kj);
+            const cmp2_ji = MapKey.compare2(&kj, &ki);
+
+            std.testing.expectEqual(cmp1_ij, cmp2_ij) catch |err| {
+                std.log.warn("ki: \"{s}\", kj: \"{s}\"", .{ ki.get(), kj.get() });
+                return err;
+            };
+            std.testing.expectEqual(cmp1_ji, cmp2_ji) catch |err| {
+                std.log.warn("ki: \"{s}\", kj: \"{s}\"", .{ ki.get(), kj.get() });
+                return err;
+            };
+        }
+    }
 }
 
 test "while capture not null" {
