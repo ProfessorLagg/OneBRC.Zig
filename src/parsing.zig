@@ -62,7 +62,6 @@ fn rotateBuffer(buffer: []u8, pos: usize) usize {
 
 pub const MapKey = struct {
     const bufferlen: usize = 64;
-
     const TLen = u8;
 
     buffer: [bufferlen]u8 = undefined,
