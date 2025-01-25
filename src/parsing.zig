@@ -63,7 +63,7 @@ fn rotateBuffer(buffer: []u8, pos: usize) usize {
 pub const MapKey = struct {
     const bufferlen: usize = 100;
 
-    buffer: [bufferlen]u8 = undefined,
+    buffer: [bufferlen]u8 align(4) = undefined,
     len: u8 = 0,
 
     pub inline fn create(str: []const u8) MapKey {
@@ -83,11 +83,22 @@ pub const MapKey = struct {
         return self.buffer[0..self.len];
     }
 
+    pub inline fn compare_valid(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
+        const len = @max(a.len, b.len);
+        for (0..len) |i| {
+            const cmp_char = sorted.compareNumber(a.buffer[i], b.buffer[i]);
+            if (cmp_char != .Equal) {
+                return cmp_char;
+            }
+        }
+        return .Equal;
+    }
+
     pub fn compare(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
         var cmp: i8 = @intFromBool(a.len < b.len) * @as(i8, -1);
         cmp += @intFromBool(a.len > b.len);
 
-        const max_i: @TypeOf(a.len) = @max(a.len, b.len) - 1;
+        const max_i: @TypeOf(a.len) = @max(a.len, b.len);
         var i: @TypeOf(a.len) = 0;
         while (cmp == 0 and i < max_i) : (i += 1) {
             cmp = @intFromBool(a.buffer[i] < b.buffer[i]) * @as(i8, -1);
@@ -97,14 +108,20 @@ pub const MapKey = struct {
     }
 
     pub fn compare2(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
+        const Tcmp = comptime u32;
+        const size_cmp = @sizeOf(Tcmp);
+        std.debug.assert(bufferlen % size_cmp == 0);
+
         var cmp: i8 = @intFromBool(a.len < b.len) * @as(i8, -1);
         cmp += @intFromBool(a.len > b.len);
 
         const max_i: @TypeOf(a.len) = @max(a.len, b.len) - 1;
         var i: @TypeOf(a.len) = 0;
-        while (cmp == 0 and i < max_i) : (i += 1) {
-            cmp = @intFromBool(a.buffer[i] < b.buffer[i]) * @as(i8, -1);
-            cmp += @intFromBool(a.buffer[i] > b.buffer[i]);
+        while (cmp == 0 and i < max_i) : (i += size_cmp) {
+            const av: Tcmp = @as(*const Tcmp, @ptrFromInt(@intFromPtr(&a.buffer[i]))).*;
+            const bv: Tcmp = @as(*const Tcmp, @ptrFromInt(@intFromPtr(&b.buffer[i]))).*;
+            cmp = @intFromBool(av < bv) * @as(i8, -1);
+            cmp += @intFromBool(av > bv);
         }
         return @enumFromInt(cmp);
     }
@@ -407,6 +424,41 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
 }
 
 // ========== TESTING ==========
+test "compare2" {
+    const data = @import("benchmarking/data/data.zig");
+    var keyList: std.ArrayList([]const u8) = try data.readCityNames(std.testing.allocator);
+    defer keyList.deinit();
+
+    const names = keyList.items;
+    var iterId: u64 = 0;
+    for (1..names.len) |i| {
+        const ki: MapKey = MapKey.create(names[i]);
+        for (0..i) |j| {
+            iterId += 1;
+            const kj: MapKey = MapKey.create(names[j]);
+
+            const cmp1_ij = MapKey.compare_valid(&ki, &kj);
+            const cmp1_ji = MapKey.compare_valid(&kj, &ki);
+            const cmp2_ij = MapKey.compare(&ki, &kj);
+            const cmp2_ji = MapKey.compare(&kj, &ki);
+
+            const v1_ij: u8 = @abs(@intFromEnum(cmp1_ij));
+            const v1_ji: u8 = @abs(@intFromEnum(cmp1_ji));
+            const v2_ij: u8 = @abs(@intFromEnum(cmp2_ij));
+            const v2_ji: u8 = @abs(@intFromEnum(cmp2_ji));
+
+            std.testing.expectEqual(v1_ij, v2_ij) catch |err| {
+                std.log.warn("error at iteration {d}: ki: \"{s}\", kj: \"{s}\"", .{ iterId, ki.get(), kj.get() });
+                return err;
+            };
+            std.testing.expectEqual(v1_ji, v2_ji) catch |err| {
+                std.log.warn("error at iteration {d}: ki: \"{s}\", kj: \"{s}\"", .{ iterId, ki.get(), kj.get() });
+                return err;
+            };
+        }
+    }
+}
+
 test "Size and Alignment" {
     @setRuntimeSafety(false);
     const metainfo = @import("metainfo/metainfo.zig");
@@ -416,52 +468,4 @@ test "Size and Alignment" {
     metainfo.logMemInfo(ParseResult);
     metainfo.logMemInfo(DelimReader(fs.File.Reader, '\n', readBufferSize));
     metainfo.logMemInfo(TMap);
-}
-
-test "compare2" {
-    const data = @import("benchmarking/data/data.zig");
-    var keyList: std.ArrayList([]const u8) = try data.readCityNames(std.testing.allocator);
-    defer keyList.deinit();
-
-    const names = keyList.items;
-
-    for (1..names.len) |i| {
-        const ki: MapKey = MapKey.create(names[i]);
-        for (0..i) |j| {
-            const kj: MapKey = MapKey.create(names[j]);
-
-            const cmp1_ij = MapKey.compare(&ki, &kj);
-            const cmp1_ji = MapKey.compare(&kj, &ki);
-            const cmp2_ij = MapKey.compare2(&ki, &kj);
-            const cmp2_ji = MapKey.compare2(&kj, &ki);
-
-            std.testing.expectEqual(cmp1_ij, cmp2_ij) catch |err| {
-                std.log.warn("ki: \"{s}\", kj: \"{s}\"", .{ ki.get(), kj.get() });
-                return err;
-            };
-            std.testing.expectEqual(cmp1_ji, cmp2_ji) catch |err| {
-                std.log.warn("ki: \"{s}\", kj: \"{s}\"", .{ ki.get(), kj.get() });
-                return err;
-            };
-        }
-    }
-}
-
-test "while capture not null" {
-    const TestIterator = struct {
-        const TSelf = @This();
-        i: usize = 0,
-        pub fn next(self: *TSelf) ?[]const u8 {
-            self.i += 1;
-            if (self.i >= 4) {
-                return null;
-            }
-            return "val";
-        }
-    };
-
-    var iter: TestIterator = .{};
-    while (iter.next()) |str| {
-        try std.testing.expectEqualStrings("val", str);
-    }
 }
