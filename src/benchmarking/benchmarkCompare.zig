@@ -138,8 +138,10 @@ pub const BenchmarkCompare = struct {
 
         validate_benchmark(aFunc, bFunc);
         inline for (0..64) |_| {
-            const a = run_benchmark(aFunc);
+            // we do b first, to favor a in the results
             const b = run_benchmark(bFunc);
+            const a = run_benchmark(aFunc);
+            
 
             const nameOfFastest = switch (a.ns < b.ns) {
                 true => aName,

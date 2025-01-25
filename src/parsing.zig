@@ -70,6 +70,17 @@ fn rotateBuffer(buffer: []u8, pos: usize) usize {
 
 pub const MapKey = struct {
     const bufferlen: usize = 100;
+    /// contains the (index + 1) * -1 for every position in the vector. ie: {-1, -2, -3}
+    const invidx: @Vector(bufferlen, i8) = blk: {
+        if (!@inComptime()) {
+            std.log.err("NOT IN COMPTIME!");
+            unreachable;
+        }
+        var r: @Vector(bufferlen, i8) = std.simd.iota(i8, bufferlen);
+        r += @as(@Vector(bufferlen, i8), @splat(1));
+        r *= @as(@Vector(bufferlen, i8), @splat(-1));
+        break :blk r;
+    };
 
     buffer: [bufferlen]u8 = undefined,
     len: u8 = 0,
@@ -126,26 +137,57 @@ pub const MapKey = struct {
         return @enumFromInt(cmp);
     }
 
+    /// simd optimized equality check between MapKey data
+    pub inline fn equal(a: *const MapKey, b: *const MapKey) bool {
+        // TODO only compare the part that has actual data.
+        // TODO chunk into 16 byte, 32 byte, 64 byte or 100 byte vectors based on the longest input key
+        const aVecptr: *align(1) const @Vector(bufferlen, u8) = @ptrCast(&a.buffer[0]);
+        const bVecptr: *align(1) const @Vector(bufferlen, u8) = @ptrCast(&b.buffer[0]);
+        return @reduce(.And, aVecptr.* == bVecptr.*);
+    }
+
+    /// finds the index of the last difference between the keys. if no difference found, returns 0
+    pub inline fn maxDifferenceIndex(a: *const MapKey, b: *const MapKey) u8 {
+        const vlen: comptime_int = bufferlen;
+        const aVecptr: *align(1) const @Vector(vlen, u8) = @ptrCast(&a.buffer[0]);
+        const bVecptr: *align(1) const @Vector(vlen, u8) = @ptrCast(&b.buffer[0]);
+        const vec: @Vector(vlen, u8) = @as(@Vector(vlen, u8), @intFromBool(aVecptr.* != bVecptr.*)) * (comptime std.simd.iota(u8, vlen));
+        return @reduce(.Max, vec);
+    }
+
     pub fn compare2(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
-        const size_cmp: comptime_int = @sizeOf(u32);
-        std.debug.assert(bufferlen % size_cmp == 0);
+        const idxu: u8 = maxDifferenceIndex(a, b);
+        return sorted.compareNumber(a.buffer[idxu], b.buffer[idxu]);
+    }
+
+    pub fn compare2_failed(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
+        const veclen: comptime_int = comptime 25;
+        comptime {
+            if (bufferlen % veclen != 0) {
+                @compileError("veclen does not evenly divide bufferlen");
+            }
+        }
+        const Tvec = @Vector(veclen, u8);
+        const size_cmp: comptime_int = comptime @sizeOf(Tvec);
+
+        const len: usize = divCiel(u8, @max(a.len, b.len), size_cmp);
+        var A: []align(1) const Tvec = undefined;
+        A.ptr = @ptrCast(&a.buffer[0]);
+        A.len = len;
+        var B: []align(1) const Tvec = undefined;
+        B.ptr = @ptrCast(&b.buffer[0]);
+        B.len = len;
 
         var cmp: i8 = @intFromBool(a.len < b.len) * @as(i8, -1);
         cmp += @intFromBool(a.len > b.len);
 
-        const len32: usize = divCiel(u8, @max(a.len, b.len), size_cmp);
-        var a32: []align(1) const u32 = undefined;
-        a32.ptr = @ptrCast(&a.buffer[0]);
-        a32.len = len32;
-        var b32: []align(1) const u32 = undefined;
-        b32.ptr = @ptrCast(&b.buffer[0]);
-        b32.len = len32;
-
         var i: usize = 0;
-        while (cmp == 0 and i < len32) : (i += 1) {
-            cmp = @intFromBool(a32[i] < b32[i]);
-            cmp *= -1;
-            cmp += @intFromBool(a32[i] > b32[i]);
+        while (cmp == 0 and i < len) : (i += 1) {
+            const lt_vec: @Vector(veclen, i8) = @intFromBool(A[i] < B[i]);
+            const gt_vec: @Vector(veclen, i8) = @intFromBool(A[i] > B[i]);
+            const lt: i8 = @reduce(.Min, lt_vec * invidx);
+            const gt: i8 = @reduce(.Min, gt_vec * invidx) * @as(i8, -1);
+            cmp = std.math.sign(gt + lt);
         }
         return @enumFromInt(cmp);
     }
