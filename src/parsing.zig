@@ -62,39 +62,10 @@ fn rotateBuffer(buffer: []u8, pos: usize) usize {
 
 pub const MapKey = struct {
     const bufferlen: usize = 64;
-    const vecsize: usize = 32;
-    const veccount: usize = blk: {
-        std.debug.assert(@inComptime());
-        var r: usize = 0;
-        while ((r * vecsize) < bufferlen) {
-            r += 1;
-        }
-        break :blk r;
-    };
 
-    const TVec = @Vector(vecsize, u8);
+    const TLen = u8;
 
-    const TLen = blk: {
-        std.debug.assert(@inComptime());
-        const max_u8: usize = @intCast(std.math.maxInt(u8));
-        const max_u16: usize = @intCast(std.math.maxInt(u16));
-        const max_u32: usize = @intCast(std.math.maxInt(u32));
-        const max_u64: usize = @intCast(std.math.maxInt(u64));
-
-        if (bufferlen <= max_u8) {
-            break :blk u8;
-        } else if (bufferlen <= max_u16) {
-            break :blk u16;
-        } else if (bufferlen <= max_u32) {
-            break :blk u32;
-        } else if (bufferlen <= max_u64) {
-            break :blk u64;
-        }
-
-        break :blk u128;
-    };
-
-    vectors: [veccount]TVec = undefined,
+    buffer: [bufferlen]u8 = undefined,
     len: TLen = 0,
 
     pub inline fn create(str: []const u8) MapKey {
@@ -106,39 +77,12 @@ pub const MapKey = struct {
     pub inline fn set(self: *MapKey, str: []const u8) void {
         std.debug.assert(str.len <= bufferlen);
         self.len = @as(TLen, @intCast(str.len));
-        var temp: [vecsize]u8 = undefined;
-        inline for (0..veccount) |vi| {
-            const l: usize = vi * vecsize;
-            const h: usize = @min(str.len, l + vecsize);
-            if (l > str.len) {
-                break;
-            }
-            const slice = str[l..h];
-            @memset(temp[0..], 0);
-            @memcpy(temp[0..slice.len], slice);
-            self.vectors[vi] = temp;
-        }
+        std.mem.copyForwards(u8, &self.buffer, str);
     }
 
     /// Returns the key as a string
     pub inline fn get(self: *MapKey) []const u8 {
-        var r: [veccount * vecsize]u8 = undefined;
-        inline for (0..veccount) |vi| {
-            const l: usize = vi * vecsize;
-            const h: usize = l + vecsize + 1;
-            @memcpy(r[l..h], @as([vecsize]u8, self.vectors[vi])[0..]);
-        }
-        return r;
-    }
-
-    /// Returns the number of vectors needed to contain all the bytes in this MapKey
-    inline fn num_vectors(self: *const MapKey) usize {
-        const lu: usize = @intCast(self.len);
-        var r: usize = @divFloor(lu, vecsize);
-        while ((r * vecsize) < lu) {
-            r += 1;
-        }
-        return r;
+        return self.buffer[0..self.len];
     }
 
     pub fn compare(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
@@ -147,18 +91,11 @@ pub const MapKey = struct {
             return cmp_len;
         }
 
-        const vc: usize = a.num_vectors();
-        var vi: usize = 0;
-        while (vi < vc) {
-            const lt: @Vector(vecsize, i8) = @intFromBool(a.vectors[vi] < b.vectors[vi]) * (comptime @as(@Vector(vecsize, i8), @splat(-1)));
-            const gt: @Vector(vecsize, i8) = @intFromBool(a.vectors[vi] > b.vectors[vi]);
-            const cmp: [vecsize]i8 = gt + lt;
-            inline for (0..vecsize) |i| {
-                if (cmp[i] != 0) {
-                    return @as(sorted.CompareResult, @enumFromInt(cmp[i] * -1));
-                }
+        for (0..a.len) |i| {
+            const cmp_char = sorted.compareNumber(a.buffer[i], b.buffer[i]);
+            if (cmp_char != .Equal) {
+                return cmp_char;
             }
-            vi += 1;
         }
         return .Equal;
     }
@@ -235,11 +172,12 @@ pub const ParseResult = struct {
 
 const readBufferSize: comptime_int = 1024 * 1024; // 1mb
 
+const DelimReaderLog = std.log.scoped(.DelimReader);
 /// Iterator to read a file line by line
 fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersize: usize) type {
     comptime {
-        if(!std.meta.hasMethod(Treader, "read")){
-            @compileError("Treader type " ++ @typeName(Treader) ++ " does not have a \"read\" method");
+        if (!std.meta.hasMethod(Treader, "read")) {
+            @compileError("Treader type " ++ @typeName(Treader) ++ " does not have a .read method");
         }
     }
 
@@ -296,21 +234,19 @@ fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersize: 
         pub fn next(self: *TSelf) !?[]const u8 {
             if (self.slice.len == 0) {
                 // contains no line
-                std.log.debug("DelimReader: NONE", .{});
+                DelimReaderLog.debug("DelimReader: NONE", .{});
                 self.slice = self.buffer[0..];
                 self.slice.len = try self.reader.read(self.buffer[0..]);
-                if (self.slice.len > 0) {
-                    // retry
-                    return self.next();
+                if (self.slice.len == 0) {
+                    return null;
                 }
-                return null;
             }
 
             const delim_index: usize = self.nextDelimIndex() orelse 0;
 
             if (delim_index == 0) {
                 // Contains partial line
-                std.log.debug("DelimReader: PART", .{});
+                DelimReaderLog.debug("DelimReader: PART", .{});
                 // rotate buffer
                 const rotateSize = self.slice.len;
                 std.mem.copyForwards(u8, self.buffer[0..], self.slice);
@@ -331,7 +267,7 @@ fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersize: 
             }
 
             // Found full line
-            std.log.debug("DelimReader: FULL", .{});
+            DelimReaderLog.debug("DelimReader: FULL", .{});
             const result: []const u8 = self.slice[0..delim_index];
             self.slice = self.slice[delim_index + 1 ..];
             return result;
@@ -453,9 +389,10 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
         const stdout = std.io.getStdOut().writer();
         for (0..maps[0].count) |i| {
             const k: *MapKey = &maps[0].keys[i];
+            const keystr = k.get();
             const v: *MapVal = &maps[0].values[i];
             try stdout.print("{s};{d:.1};{d:.1};{d:.1}\n", .{ // NO WRAP
-                k.buffer[0..k.len],
+                keystr,
                 v.getMin(f64),
                 v.getMean(f64),
                 v.getMax(f64),
