@@ -345,7 +345,7 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
         const valstr: []const u8 = line[(splitIndex + 1)..];
         // parsing key and value string
         tKey.set(line[0..splitIndex]);
-        const mapIndex: usize = (@as(usize, @intCast(tKey.buffer[0])) + @as(usize, @intCast(tKey.len))) % mapCount; // I have tried to beat this but i cant
+        const mapIndex: usize = @as(usize, @intCast(tKey.buffer[0] +% tKey.len)) % mapCount; // I have tried to beat this but i cant
         const map: *TMap = &maps[mapIndex];
         const valint: Tuv = @intCast(fastIntParse(valstr));
         const keyIndex = map.indexOf(&tKey);
