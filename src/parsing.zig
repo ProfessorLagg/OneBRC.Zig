@@ -62,10 +62,9 @@ fn rotateBuffer(buffer: []u8, pos: usize) usize {
 
 pub const MapKey = struct {
     const bufferlen: usize = 64;
-    const TLen = u8;
 
     buffer: [bufferlen]u8 = undefined,
-    len: TLen = 0,
+    len: u8 = 0,
 
     pub inline fn create(str: []const u8) MapKey {
         var r: MapKey = .{};
@@ -75,7 +74,7 @@ pub const MapKey = struct {
 
     pub inline fn set(self: *MapKey, str: []const u8) void {
         std.debug.assert(str.len <= bufferlen);
-        self.len = @as(TLen, @intCast(str.len));
+        self.len = @as(u8, @intCast(str.len));
         std.mem.copyForwards(u8, &self.buffer, str);
     }
 
