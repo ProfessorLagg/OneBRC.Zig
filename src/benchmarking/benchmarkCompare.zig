@@ -76,6 +76,25 @@ pub const BenchmarkCompare = struct {
             self.add(other.ns, other.count);
         }
     };
+
+    const validateLog = std.log.scoped(.ValidateBenchmark);
+
+    fn validate_benchmark(comptime benchmarkA: BenchmarkFunction, comptime benchmarkB: BenchmarkFunction) void {
+        for (0..keys.len) |i| {
+            for (0..keys.len) |j| {
+                const resultA = benchmarkA(&keys[i], &keys[j]);
+                const resultB = benchmarkB(&keys[i], &keys[j]);
+                const vA: u8 = @abs(@intFromEnum(resultA));
+                const vB: u8 = @abs(@intFromEnum(resultB));
+                if (vA != vB) {
+                    validateLog.err("Different benchmark return values! A: {s}, B: {s}", .{ @tagName(resultA), @tagName(resultB) });
+                    @panic("Different benchmark return values!");
+                } else if (resultA != resultB) {
+                    validateLog.info("Different benchmark return values! A: {s}, B: {s}", .{ @tagName(resultA), @tagName(resultB) });
+                }
+            }
+        }
+    }
     fn run_benchmark(comptime benchmark: BenchmarkFunction, comptime name: []const u8) BenchmarkResult {
         const iter_count: usize = 1;
 
@@ -111,15 +130,19 @@ pub const BenchmarkCompare = struct {
 
         const aName = comptime "base";
         const bName = comptime "impr";
+        const aFunc = comptime MapKey.compare;
+        const bFunc = comptime MapKey.compare2;
+
+        validate_benchmark(aFunc, bFunc);
         inline for (0..64) |_| {
-            const a = run_benchmark(MapKey.compare, aName);
-            const b = run_benchmark(MapKey.compare2, bName);
+            const a = run_benchmark(aFunc, aName);
+            const b = run_benchmark(bFunc, bName);
 
             const nameOfFastest = switch (a.ns < b.ns) {
                 true => aName,
-                false => bName
+                false => bName,
             };
-            print("best: {s} \n\n", .{ nameOfFastest });
+            print("best: {s} \n\n", .{nameOfFastest});
         }
     }
 };

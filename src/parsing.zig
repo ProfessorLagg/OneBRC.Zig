@@ -51,6 +51,14 @@ fn openFile(allocator: std.mem.Allocator, path: []const u8) !fs.File {
     });
 }
 
+// inline fn divCiel(comptime T: type, numerator: T, denominator: T) T {
+//     return @divFloor(numerator + denominator - 1, denominator);
+// }
+
+inline fn divCiel(comptime T: type, numerator: T, denominator: T) T {
+    return 1 + ((numerator - 1) / denominator);
+}
+
 fn rotateBuffer(buffer: []u8, pos: usize) usize {
     const rembytes: []const u8 = buffer[pos..];
     const remlen: usize = rembytes.len;
@@ -63,7 +71,7 @@ fn rotateBuffer(buffer: []u8, pos: usize) usize {
 pub const MapKey = struct {
     const bufferlen: usize = 100;
 
-    buffer: [bufferlen]u8 align(4) = undefined,
+    buffer: [bufferlen]u8 = undefined,
     len: u8 = 0,
 
     pub inline fn create(str: []const u8) MapKey {
@@ -95,33 +103,61 @@ pub const MapKey = struct {
     }
 
     pub fn compare(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
-        var cmp: i8 = @intFromBool(a.len < b.len) * @as(i8, -1);
-        cmp += @intFromBool(a.len > b.len);
-
-        const max_i: @TypeOf(a.len) = @max(a.len, b.len);
-        var i: @TypeOf(a.len) = 0;
-        while (cmp == 0 and i < max_i) : (i += 1) {
-            cmp = @intFromBool(a.buffer[i] < b.buffer[i]) * @as(i8, -1);
-            cmp += @intFromBool(a.buffer[i] > b.buffer[i]);
-        }
-        return @enumFromInt(cmp);
-    }
-
-    pub fn compare2(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
-        const Tcmp = comptime u32;
-        const size_cmp = @sizeOf(Tcmp);
+        const size_cmp: comptime_int = @sizeOf(u32);
         std.debug.assert(bufferlen % size_cmp == 0);
 
         var cmp: i8 = @intFromBool(a.len < b.len) * @as(i8, -1);
         cmp += @intFromBool(a.len > b.len);
 
-        const max_i: @TypeOf(a.len) = @max(a.len, b.len) - 1;
-        var i: @TypeOf(a.len) = 0;
-        while (cmp == 0 and i < max_i) : (i += size_cmp) {
-            const av: Tcmp = @as(*const Tcmp, @ptrFromInt(@intFromPtr(&a.buffer[i]))).*;
-            const bv: Tcmp = @as(*const Tcmp, @ptrFromInt(@intFromPtr(&b.buffer[i]))).*;
-            cmp = @intFromBool(av < bv) * @as(i8, -1);
-            cmp += @intFromBool(av > bv);
+        const len32: usize = divCiel(u8, @max(a.len, b.len), size_cmp);
+        const a32: []align(1) const u32 = blk: {
+            var r: []align(1) const u32 = undefined;
+            r.ptr = @ptrCast(a.buffer[0..].ptr);
+            r.len = len32;
+            break :blk r;
+        };
+        const b32: []align(1) const u32 = blk: {
+            var r: []align(1) const u32 = undefined;
+            r.ptr = @ptrCast(b.buffer[0..].ptr);
+            r.len = len32;
+            break :blk r;
+        };
+
+        var i: usize = 0;
+        while (cmp == 0 and i < len32) : (i += 1) {
+            cmp = @intFromBool(a32[i] < b32[i]);
+            cmp *= -1;
+            cmp += @intFromBool(a32[i] > b32[i]);
+        }
+        return @enumFromInt(cmp);
+    }
+
+    pub fn compare2(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
+        const size_cmp: comptime_int = @sizeOf(u32);
+        std.debug.assert(bufferlen % size_cmp == 0);
+
+        var cmp: i8 = @intFromBool(a.len < b.len) * @as(i8, -1);
+        cmp += @intFromBool(a.len > b.len);
+
+        const len32: usize = divCiel(u8, @max(a.len, b.len), size_cmp);
+        const a32: []align(1) const u32 = blk: {
+            var r: []align(1) const u32 = undefined;
+            r.ptr = @ptrCast(a.buffer[0..].ptr);
+            r.len = len32;
+            break :blk r;
+        };
+        const b32: []align(1) const u32 = blk: {
+            var r: []align(1) const u32 = undefined;
+            r.ptr = @ptrCast(b.buffer[0..].ptr);
+            r.len = len32;
+            break :blk r;
+        };
+
+        var i: usize = 0;
+        while (cmp == 0 and i < len32) : (i += 1) {
+            cmp = @intFromBool(a32[i] < b32[i]);
+            cmp *= -1;
+            cmp += @intFromBool(a32[i] > b32[i]);
         }
         return @enumFromInt(cmp);
     }
@@ -439,8 +475,8 @@ test "compare2" {
 
             const cmp1_ij = MapKey.compare_valid(&ki, &kj);
             const cmp1_ji = MapKey.compare_valid(&kj, &ki);
-            const cmp2_ij = MapKey.compare(&ki, &kj);
-            const cmp2_ji = MapKey.compare(&kj, &ki);
+            const cmp2_ij = MapKey.compare2(&ki, &kj);
+            const cmp2_ji = MapKey.compare2(&kj, &ki);
 
             const v1_ij: u8 = @abs(@intFromEnum(cmp1_ij));
             const v1_ji: u8 = @abs(@intFromEnum(cmp1_ji));
