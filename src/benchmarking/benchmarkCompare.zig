@@ -47,6 +47,7 @@ pub const BenchmarkCompare = struct {
     const BenchmarkResult = struct {
         ns: u64 = 0,
         count: u64 = 0,
+        sum: i8 = 0,
 
         pub inline fn getMeanNs(self: *const BenchmarkResult) f64 {
             const c: f64 = @floatFromInt(self.count);
@@ -95,14 +96,15 @@ pub const BenchmarkCompare = struct {
             }
         }
     }
-    fn run_benchmark(comptime benchmark: BenchmarkFunction, comptime name: []const u8) BenchmarkResult {
+    fn run_benchmark(comptime benchmark: BenchmarkFunction) BenchmarkResult {
         const iter_count: usize = 1;
 
         var sum: i8 = 0;
+        @prefetch(keys, .{});
         const start_time = std.time.nanoTimestamp();
         for (0..iter_count) |_| {
-            for (0..keys.len) |i| {
-                for (0..keys.len) |j| {
+            for (1..keys.len) |i| {
+                for (0..i) |j| {
                     sum +%= @as(i8, @intFromEnum(benchmark(&keys[i], &keys[j])));
                 }
             }
@@ -114,8 +116,9 @@ pub const BenchmarkCompare = struct {
         const result = BenchmarkResult{ // NO FOLD
             .count = keys.len * keys.len * iter_count,
             .ns = ns,
+            .sum = sum,
         };
-        print(name ++ "\truntime: {d:.3} s, mean: {d:.5} ns, {d:.0} op/us | check={d}\n", .{ result.getRuntimeSeconds(), result.getMeanNs(), result.getOpsPerUnit(std.time.ns_per_us), sum });
+
         return result;
     }
 
@@ -135,14 +138,19 @@ pub const BenchmarkCompare = struct {
 
         validate_benchmark(aFunc, bFunc);
         inline for (0..64) |_| {
-            const a = run_benchmark(aFunc, aName);
-            const b = run_benchmark(bFunc, bName);
+            const a = run_benchmark(aFunc);
+            const b = run_benchmark(bFunc);
 
             const nameOfFastest = switch (a.ns < b.ns) {
                 true => aName,
                 false => bName,
             };
-            print("best: {s} \n\n", .{nameOfFastest});
+            const max_ns: f64 = @floatFromInt(@max(a.ns, b.ns));
+            const min_ns: f64 = @floatFromInt(@min(a.ns, b.ns));
+            const relativeDiff: f64 = (max_ns / min_ns) - 1.0;
+            print("{s}\truntime: {d:.3} s, mean: {d:.5} ns, {d:.0} op/us | check={d}\n", .{ aName, a.getRuntimeSeconds(), a.getMeanNs(), a.getOpsPerUnit(std.time.ns_per_us), a.sum });
+            print("{s}\truntime: {d:.3} s, mean: {d:.5} ns, {d:.0} op/us | check={d}\n", .{ bName, b.getRuntimeSeconds(), b.getMeanNs(), b.getOpsPerUnit(std.time.ns_per_us), b.sum });
+            print("BEST:\t| {s} | faster by {d:.2}%\n\n", .{ nameOfFastest, relativeDiff * 100.0 });
         }
     }
 };

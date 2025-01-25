@@ -110,18 +110,12 @@ pub const MapKey = struct {
         cmp += @intFromBool(a.len > b.len);
 
         const len32: usize = divCiel(u8, @max(a.len, b.len), size_cmp);
-        const a32: []align(1) const u32 = blk: {
-            var r: []align(1) const u32 = undefined;
-            r.ptr = @ptrCast(a.buffer[0..].ptr);
-            r.len = len32;
-            break :blk r;
-        };
-        const b32: []align(1) const u32 = blk: {
-            var r: []align(1) const u32 = undefined;
-            r.ptr = @ptrCast(b.buffer[0..].ptr);
-            r.len = len32;
-            break :blk r;
-        };
+        var a32: []align(1) const u32 = undefined;
+        a32.ptr = @ptrCast(&a.buffer[0]);
+        a32.len = len32;
+        var b32: []align(1) const u32 = undefined;
+        b32.ptr = @ptrCast(&b.buffer[0]);
+        b32.len = len32;
 
         var i: usize = 0;
         while (cmp == 0 and i < len32) : (i += 1) {
@@ -140,18 +134,12 @@ pub const MapKey = struct {
         cmp += @intFromBool(a.len > b.len);
 
         const len32: usize = divCiel(u8, @max(a.len, b.len), size_cmp);
-        const a32: []align(1) const u32 = blk: {
-            var r: []align(1) const u32 = undefined;
-            r.ptr = @ptrCast(a.buffer[0..].ptr);
-            r.len = len32;
-            break :blk r;
-        };
-        const b32: []align(1) const u32 = blk: {
-            var r: []align(1) const u32 = undefined;
-            r.ptr = @ptrCast(b.buffer[0..].ptr);
-            r.len = len32;
-            break :blk r;
-        };
+        var a32: []align(1) const u32 = undefined;
+        a32.ptr = @ptrCast(&a.buffer[0]);
+        a32.len = len32;
+        var b32: []align(1) const u32 = undefined;
+        b32.ptr = @ptrCast(&b.buffer[0]);
+        b32.len = len32;
 
         var i: usize = 0;
         while (cmp == 0 and i < len32) : (i += 1) {
