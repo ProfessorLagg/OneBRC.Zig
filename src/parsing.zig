@@ -186,7 +186,6 @@ fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersize: 
         reader: Treader,
         buffer: []u8,
         slice: []u8,
-        EoF: bool,
 
         pub fn init(allocator: std.mem.Allocator, reader: Treader) !TSelf {
             std.log.debug("DelimReader" ++
@@ -198,16 +197,12 @@ fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersize: 
                 .buffer = try allocator.alloc(u8, buffersize),
                 .reader = reader,
                 .slice = undefined,
-                .EoF = false,
             };
             r.slice = r.buffer[0..];
             r.slice.len = r.reader.read(r.buffer) catch |err| {
                 allocator.free(r.buffer);
                 return err;
             };
-            if (r.slice.len < buffersize) {
-                r.EoF = true;
-            }
             return r;
         }
 
@@ -230,46 +225,45 @@ fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersize: 
             return null;
         }
 
-        pub fn next(self: *TSelf) !?[]const u8 {
-            if (self.slice.len == 0) {
-                // contains no line
-                DelimReaderLog.debug("DelimReader: NONE", .{});
-                self.slice = self.buffer[0..];
-                self.slice.len = try self.reader.read(self.buffer[0..]);
+        pub inline fn next(self: *TSelf) !?[]const u8 {
+            goto: while (true) {
                 if (self.slice.len == 0) {
-                    return null;
+                    // contains no line
+                    DelimReaderLog.debug("DelimReader: NONE", .{});
+                    self.slice = self.buffer[0..];
+                    self.slice.len = try self.reader.read(self.buffer[0..]);
+                    if (self.slice.len == 0) {
+                        return null;
+                    }
                 }
-            }
+                const delim_index: usize = self.nextDelimIndex() orelse 0;
+                if (delim_index == 0) {
+                    // Contains partial line
+                    DelimReaderLog.debug("DelimReader: PART", .{});
+                    // rotate buffer
+                    const rotateSize = self.slice.len;
+                    std.mem.copyForwards(u8, self.buffer[0..], self.slice);
+                    self.slice = self.buffer[0..];
+                    self.slice.len = rotateSize;
 
-            const delim_index: usize = self.nextDelimIndex() orelse 0;
+                    const readcount = try self.reader.read(self.buffer[self.slice.len..]);
+                    if (readcount > 0) {
+                        self.slice.len += readcount;
+                        continue :goto;
+                    }
 
-            if (delim_index == 0) {
-                // Contains partial line
-                DelimReaderLog.debug("DelimReader: PART", .{});
-                // rotate buffer
-                const rotateSize = self.slice.len;
-                std.mem.copyForwards(u8, self.buffer[0..], self.slice);
-                self.slice = self.buffer[0..];
-                self.slice.len = rotateSize;
-                @memset(self.buffer[rotateSize..], 0);
-
-                const readcount = try self.reader.read(self.buffer[self.slice.len..]);
-                if (readcount > 0) {
-                    self.slice.len += readcount;
-                    return self.next();
+                    // return partial line
+                    const result: []const u8 = self.buffer[0..rotateSize];
+                    self.slice.len = 0;
+                    return result;
                 }
 
-                // return partial line
-                const result: []const u8 = self.buffer[0..rotateSize];
-                self.slice.len = 0;
+                // Found full line
+                DelimReaderLog.debug("DelimReader: FULL", .{});
+                const result: []const u8 = self.slice[0..delim_index];
+                self.slice = self.slice[delim_index + 1 ..];
                 return result;
             }
-
-            // Found full line
-            DelimReaderLog.debug("DelimReader: FULL", .{});
-            const result: []const u8 = self.slice[0..delim_index];
-            self.slice = self.slice[delim_index + 1 ..];
-            return result;
         }
     };
 }
@@ -349,12 +343,10 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
         var splitIndex: usize = line.len - 4;
         while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
 
-        const keystr: []const u8 = line[0..splitIndex];
         const valstr: []const u8 = line[(splitIndex + 1)..];
-        std.log.info("line {d}: keystr: \"{s}\", valstr: \"{s}\"", .{ result.lineCount, keystr, valstr });
         // parsing key and value string
-        tKey.set(keystr);
-        const mapIndex: usize = (@as(usize, @intCast(keystr[0])) + keystr.len) % mapCount; // I have tried to beat this but i cant
+        tKey.set(line[0..splitIndex]);
+        const mapIndex: usize = (@as(usize, @intCast(tKey.buffer[0])) + @as(usize, @intCast(tKey.len))) % mapCount; // I have tried to beat this but i cant
         const map: *TMap = &maps[mapIndex];
         const valint: Tuv = @intCast(fastIntParse(valstr));
         const keyIndex = map.indexOf(&tKey);
