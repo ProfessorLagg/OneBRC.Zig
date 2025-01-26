@@ -37,49 +37,9 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
         const TSelf = @This();
 
         // === ITERATOR ===
-        const BinarySearchResult: type = struct { // NO FOLD
+        const BinarySearchResult: type = struct {
             index: usize,
             compare: compare.CompareResult,
-        };
-        const BinarySearchIterator: type = struct {
-            slice: []const Tkey,
-            target: *const Tkey,
-            pub fn init(slice: []const Tkey, target: *const Tkey) BinarySearchIterator {
-                return .{ // NO FOLD
-                    .slice = slice,
-                    .target = target,
-                };
-            }
-
-            /// Updates the
-            pub inline fn next(self: *BinarySearchIterator) ?BinarySearchResult {
-                if (self.slice.len == 0) {
-                    return null;
-                }
-
-                const i: usize = @divFloor(self.slice.len, 2);
-                std.log.debug("BinarySearchIterator.next. i = {d}, ptr = 0x{X}, len = {d}", .{ i, @intFromPtr(self.slice.ptr), self.slice.len });
-                const cmp = comparison(self.target, &self.slice[i]);
-                switch (cmp) {
-                    .LessThan => self.slice = self.slice[0..i],
-                    .Equal => self.slice = self.slice[0..0], // I found the key, next time i want to return null
-                    .GreaterThan => self.slice = self.slice[(i + 1)..],
-                }
-                return BinarySearchResult{ .index = i, .compare = cmp };
-            }
-
-            /// returns the final non-null result of the next function
-            pub inline fn final(self: *BinarySearchIterator) BinarySearchResult {
-                var result: ?BinarySearchResult = undefined;
-                while (self.next()) |r| : (result = r) {}
-                return result.?;
-            }
-
-            /// returns the final non-null result of doing binary search on the slice
-            pub inline fn search(slice: []const Tkey, target: *const Tkey) BinarySearchResult {
-                var iter = BinarySearchIterator.init(slice, target);
-                return iter.final();
-            }
         };
 
         // === PUBLIC ===
@@ -113,25 +73,43 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
             return self.key_buffer.len;
         }
         /// Finds the index of the key. Returns -1 if not found
-        pub fn indexOf(self: *TSelf, k: *const Tkey) ?usize {
-            if (self.count == 0) {
-                return null;
-            }
-
-            var iter = BinarySearchIterator.init(self.keys, k);
-            while (iter.next()) |r| {
-                if (r.compare == .Equal) {
-                    return r.index;
+        pub inline fn indexOf(self: *TSelf, target: *const Tkey) ?usize {
+            var L: isize = 0;
+            var R: isize = @as(isize, @bitCast(self.count)) - @as(isize, 1);
+            while (L <= R) {
+                const mi: isize = @divFloor(L + R, 2);
+                const mu: usize = @as(usize, @intCast(mi));
+                const c = comparison(&self.keys[mu], target);
+                switch (c) {
+                    .LessThan => L = mi + 1,
+                    .GreaterThan => R = mi - 1,
+                    .Equal => return mu,
                 }
             }
-
             return null;
+        }
+        /// returns the final non-null comparison
+        pub inline fn search(self: *const TSelf, target: *const Tkey) BinarySearchResult {
+            var L: isize = 0;
+            var R: isize = @as(isize, @bitCast(self.count)) - @as(isize, 1);
+            var mi: isize = @divFloor(L + R, 2);
+            var mu: usize = @as(usize, @intCast(mi));
+            var c: compare.CompareResult = comparison(&self.keys[mu], target);
+            cmploop: while (L <= R) {
+                switch (c) {
+                    .LessThan => L = mi + 1,
+                    .GreaterThan => R = mi - 1,
+                    .Equal => break :cmploop,
+                }
+                mi = @divFloor(L + R, 2);
+                mu = @intCast(std.math.clamp(mi, 0, @as(isize, @bitCast(self.count))));
+                c = comparison(&self.keys[mu], target);
+            }
+            return .{ .index = mu, .compare = c };
         }
         /// Returns true if k is found in self.keys. Otherwise false
         pub inline fn contains(self: *TSelf, k: *const Tkey) bool {
-            const idx: isize = self.indexOf(k);
-            std.log.debug("indexOf({any}) = {d}", .{ k, idx });
-            return idx >= 0 and idx < self.keys.len;
+            return self.indexOf(k) != null;
         }
         /// Adds an item to the set.
         /// Returns true if the key could be added, otherwise false.
@@ -157,11 +135,12 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
             if (self.keys.len <= 0) {
                 self.insertAt(0, k, v);
             }
-            const final = BinarySearchIterator.search(self.keys, k);
-            if (final.compare == .Equal) {
-                updateFn(&self.values[final.index], v);
+
+            const idx: ?usize = self.indexOf(k);
+            if (idx != null) {
+                updateFn(&self.values[idx.?], v);
             } else {
-                self.insertAt(final.index, k, v);
+                self.insertAt(self.getInsertIndex(k), k, v);
             }
         }
 
@@ -190,7 +169,7 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
                 self.values = self.val_buffer[0..self.count];
             }
         }
-        fn incrementCount(self: *TSelf) void {
+        inline fn incrementCount(self: *TSelf) void {
             std.debug.assert(self.count < self.key_buffer.len);
             std.debug.assert(self.count < self.val_buffer.len);
             self.count += 1;

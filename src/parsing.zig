@@ -66,18 +66,6 @@ fn rotateBuffer(buffer: []u8, pos: usize) usize {
 
 pub const MapKey = struct {
     const bufferlen: usize = 100;
-    /// contains the (index + 1) * -1 for every position in the vector. ie: {-1, -2, -3}
-    const invidx: @Vector(bufferlen, i8) = blk: {
-        if (!@inComptime()) {
-            std.log.err("NOT IN COMPTIME!");
-            unreachable;
-        }
-        var r: @Vector(bufferlen, i8) = std.simd.iota(i8, bufferlen);
-        r += @as(@Vector(bufferlen, i8), @splat(1));
-        r *= @as(@Vector(bufferlen, i8), @splat(-1));
-        break :blk r;
-    };
-
     buffer: [bufferlen]u8 = undefined,
     len: u8 = 0,
 
@@ -132,60 +120,6 @@ pub const MapKey = struct {
             cmp += @intFromBool(a32[i] > b32[i]);
         }
         return @enumFromInt(cmp);
-    }
-
-    /// simd optimized equality check between MapKey data
-    pub inline fn equal(a: *const MapKey, b: *const MapKey) bool {
-        // TODO only compare the part that has actual data.
-        // TODO chunk into 16 byte, 32 byte, 64 byte or 100 byte vectors based on the longest input key
-        const aVecptr: *align(1) const @Vector(bufferlen, u8) = @ptrCast(&a.buffer[0]);
-        const bVecptr: *align(1) const @Vector(bufferlen, u8) = @ptrCast(&b.buffer[0]);
-        return @reduce(.And, aVecptr.* == bVecptr.*);
-    }
-
-    /// finds the index of the last difference between the keys. if no difference found, returns 0
-    pub inline fn maxDifferenceIndex(a: *const MapKey, b: *const MapKey) u8 {
-        const vlen: comptime_int = bufferlen;
-        const aVecptr: *align(1) const @Vector(vlen, u8) = @ptrCast(&a.buffer[0]);
-        const bVecptr: *align(1) const @Vector(vlen, u8) = @ptrCast(&b.buffer[0]);
-        const vec: @Vector(vlen, u8) = @as(@Vector(vlen, u8), @intFromBool(aVecptr.* != bVecptr.*)) * (comptime std.simd.iota(u8, vlen));
-        return @reduce(.Max, vec);
-    }
-
-    inline fn compare_vector(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
-        @setRuntimeSafety(false);
-
-        const av_ptr: *align(1) const @Vector(32, u8) = @ptrCast(&a.buffer[0]);
-        const bv_ptr: *align(1) const @Vector(32, u8) = @ptrCast(&b.buffer[0]);
-
-        const lt: @Vector(32, i8) = @intFromBool(av_ptr.* < bv_ptr.*) * (comptime @as(@Vector(32, i8), @splat(-1)));
-        const gt: @Vector(32, i8) = @intFromBool(av_ptr.* > bv_ptr.*);
-        const cmp: [32]i8 = gt + lt;
-
-        inline for (0..32) |i| {
-            if (cmp[i] != 0) {
-                return @as(sorted.CompareResult, @enumFromInt(cmp[i]));
-            }
-        }
-        return .Equal;
-    }
-
-    pub fn compare2(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
-        const len: usize = @max(a.len, b.len);
-        const cmp_vec = compare_vector(a, b);
-        if (len <= 32 or cmp_vec != .Equal) {
-            return cmp_vec;
-        }
-
-        inline for (32..a.buffer.len) |i| {
-            const lt: i8 = @intFromBool(a.buffer[i] < b.buffer[i]) * @as(i8, -1); // -1 if true, 0 if false
-            const gt: i8 = @intFromBool(a.buffer[i] > b.buffer[i]); // 1 if true, 0 if false
-            const char_compare = @as(sorted.CompareResult, @enumFromInt(lt + gt));
-            if (char_compare != .Equal) {
-                return char_compare;
-            }
-        }
-        return .Equal;
     }
 };
 
@@ -384,11 +318,11 @@ pub fn read(path: []const u8) !ParseResult {
 
         const keystr: []const u8 = line[0..splitIndex];
         const valstr: []const u8 = line[(splitIndex + 1)..];
-        std.log.info("line{d}: {s}, k: {s}, v: {s}", .{ line, keystr, valstr });
+        std.log.info("line{d}: {s}, k: {s}, v: {s}", .{ result.lineCount, line, keystr, valstr });
         std.debug.assert(keystr.len >= 1);
         std.debug.assert(keystr.len <= 100);
         std.debug.assert(valstr.len >= 3);
-        std.debug.assert(valstr[valstr.len - 3] == '.');
+        std.debug.assert(valstr[valstr.len - 2] == '.');
         std.debug.assert(line.len >= 5);
         std.debug.assert(line[splitIndex] == ';');
     }
@@ -410,7 +344,7 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
     defer lineReader.deinit();
 
     // variables used for parsing
-    const mapCount: comptime_int = 64;
+    const mapCount: comptime_int = 16;
     var maps: [mapCount]TMap = blk: {
         var r: [mapCount]TMap = undefined;
         for (0..mapCount) |i| {
@@ -427,29 +361,35 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
             std.log.debug("skipped line: '{s}'", .{line});
             continue :lineloop;
         }
-
+        std.debug.assert(line.len >= 5);
         result.lineCount += 1;
         var splitIndex: usize = line.len - 4;
         while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
+        std.debug.assert(line[splitIndex] == ';');
 
+
+        const keystr: []const u8 = line[0..splitIndex];
         const valstr: []const u8 = line[(splitIndex + 1)..];
+        std.log.info("line{d}: {s}, k: {s}, v: {s}", .{ result.lineCount, line, keystr, valstr });
+        std.debug.assert(keystr.len >= 1);
+        std.debug.assert(keystr.len <= 100);
+        std.debug.assert(keystr[keystr.len - 1] != ';');
+        std.debug.assert(valstr.len >= 3);
+        std.debug.assert(valstr.len <= 5);
+        std.debug.assert(valstr[valstr.len - 2] == '.');
+        std.debug.assert(valstr[0] != ';');
+        
+        
+
         // parsing key and value string
         tKey.set(line[0..splitIndex]);
-        const mapIndex: usize = @as(usize, @intCast(tKey.buffer[0] +% tKey.len)) % mapCount; // I have tried to beat this but i cant
-        const map: *TMap = &maps[mapIndex];
         const valint: Tuv = @intCast(fastIntParse(valstr));
         tVal.max = valint;
         tVal.min = valint;
         tVal.sum = valint;
 
-        // map.addOrUpdate(&tKey, &tVal, MapVal.add);
-
-        const keyIndex = map.indexOf(&tKey);
-        if (keyIndex != null) {
-            map.values[@as(usize, @intCast(keyIndex.?))].add(&tVal);
-        } else {
-            _ = map.addClobber(&tKey, &tVal);
-        }
+        const mapIndex: usize = @as(usize, @intCast(tKey.buffer[0] +% tKey.len)) % mapCount;
+        maps[mapIndex].addOrUpdate(&tKey, &tVal, MapVal.add);
     }
 
     // Adding all the maps to maps[0]
@@ -459,14 +399,7 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
             const rKey: *MapKey = &maps[i].keys[j];
             const rVal: *MapVal = &maps[i].values[j];
 
-            // _ = maps[0].addOrUpdate(rKey, rVal, MapVal.add);
-
-            const keyIndex = maps[0].indexOf(rKey);
-            if (keyIndex != null) {
-                maps[0].values[@as(usize, @intCast(keyIndex.?))].add(rVal);
-            } else {
-                _ = maps[0].addClobber(rKey, rVal);
-            }
+            maps[0].addOrUpdate(rKey, rVal, MapVal.add);
         }
         maps[i].deinit();
     }
@@ -492,7 +425,7 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
 }
 
 // ========== TESTING ==========
-test "compare2" {
+test "compare" {
     const data = @import("benchmarking/data/data.zig");
     var keyList: std.ArrayList([]const u8) = try data.readTestKeys(std.testing.allocator);
     defer keyList.deinit();
@@ -507,8 +440,8 @@ test "compare2" {
 
             const cmp1_ij = MapKey.compare_valid(&ki, &kj);
             const cmp1_ji = MapKey.compare_valid(&kj, &ki);
-            const cmp2_ij = MapKey.compare2(&ki, &kj);
-            const cmp2_ji = MapKey.compare2(&kj, &ki);
+            const cmp2_ij = MapKey.compare(&ki, &kj);
+            const cmp2_ji = MapKey.compare(&kj, &ki);
 
             const v1_ij: u8 = @abs(@intFromEnum(cmp1_ij));
             const v1_ji: u8 = @abs(@intFromEnum(cmp1_ji));
