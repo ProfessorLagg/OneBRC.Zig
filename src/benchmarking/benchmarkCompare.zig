@@ -32,7 +32,7 @@ pub const BenchmarkCompare = struct {
     }
 
     fn GSetup(allocator: std.mem.Allocator) !void {
-        var lines = try data.readCityNames(allocator);
+        var lines = try data.readTestKeys(allocator);
         defer lines.deinit();
 
         keys = try allocator.alloc(MapKey, lines.items.len);
@@ -141,7 +141,6 @@ pub const BenchmarkCompare = struct {
             // we do b first, to favor a in the results
             const b = run_benchmark(bFunc);
             const a = run_benchmark(aFunc);
-            
 
             const nameOfFastest = switch (a.ns < b.ns) {
                 true => aName,

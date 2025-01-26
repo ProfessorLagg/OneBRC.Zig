@@ -492,7 +492,7 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
 // ========== TESTING ==========
 test "compare2" {
     const data = @import("benchmarking/data/data.zig");
-    var keyList: std.ArrayList([]const u8) = try data.readCityNames(std.testing.allocator);
+    var keyList: std.ArrayList([]const u8) = try data.readTestKeys(std.testing.allocator);
     defer keyList.deinit();
 
     const names = keyList.items;
