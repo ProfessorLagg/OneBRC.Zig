@@ -51,10 +51,6 @@ fn openFile(allocator: std.mem.Allocator, path: []const u8) !fs.File {
     });
 }
 
-// inline fn divCiel(comptime T: type, numerator: T, denominator: T) T {
-//     return @divFloor(numerator + denominator - 1, denominator);
-// }
-
 inline fn divCiel(comptime T: type, numerator: T, denominator: T) T {
     return 1 + ((numerator - 1) / denominator);
 }
@@ -445,17 +441,15 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
         tVal.max = valint;
         tVal.min = valint;
         tVal.sum = valint;
-        _ = map.addOrUpdate(&tKey, &tVal, MapVal.add);
 
-        // const keyIndex = map.indexOf(&tKey);
-        // if (keyIndex >= 0) {
-        //     map.values[@as(usize, @intCast(keyIndex))].add(valint);
-        // } else {
-        //     tVal.max = valint;
-        //     tVal.min = valint;
-        //     tVal.sum = valint;
-        //     _ = map.update(&tKey, &tVal);
-        // }
+        // map.addOrUpdate(&tKey, &tVal, MapVal.add);
+
+        const keyIndex = map.indexOf(&tKey);
+        if (keyIndex != null) {
+            map.values[@as(usize, @intCast(keyIndex.?))].add(&tVal);
+        } else {
+            _ = map.addClobber(&tKey, &tVal);
+        }
     }
 
     // Adding all the maps to maps[0]
@@ -464,14 +458,15 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
         for (0..maps[i].count) |j| {
             const rKey: *MapKey = &maps[i].keys[j];
             const rVal: *MapVal = &maps[i].values[j];
-            _ = maps[0].addOrUpdate(rKey, rVal, MapVal.add);
 
-            // const keyIndex = maps[0].indexOf(rKey);
-            // if (keyIndex >= 0) {
-            //     maps[0].values[@as(usize, @intCast(keyIndex))].add(rVal);
-            // } else {
-            //     _ = maps[0].update(rKey, rVal);
-            // }
+            // _ = maps[0].addOrUpdate(rKey, rVal, MapVal.add);
+
+            const keyIndex = maps[0].indexOf(rKey);
+            if (keyIndex != null) {
+                maps[0].values[@as(usize, @intCast(keyIndex.?))].add(rVal);
+            } else {
+                _ = maps[0].addClobber(rKey, rVal);
+            }
         }
         maps[i].deinit();
     }
