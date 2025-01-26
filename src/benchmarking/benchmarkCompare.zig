@@ -11,13 +11,10 @@ pub const BenchmarkCompare = struct {
 
     var keys: []MapKey = undefined;
     var stdout: std.fs.File.Writer = undefined;
-    inline fn print(comptime fmt: []const u8, args: anytype) void {
+    fn print(comptime fmt: []const u8, args: anytype) void {
         std.fmt.format(stdout, fmt, args) catch {
             @panic("Could not print to stdout");
         };
-    }
-    inline fn prints(comptime fmt: []const u8) void {
-        print(fmt, .{});
     }
     fn noprint(comptime fmt: []const u8, args: anytype) void {
         _ = &fmt;
@@ -32,7 +29,7 @@ pub const BenchmarkCompare = struct {
     }
 
     fn GSetup(allocator: std.mem.Allocator) !void {
-        var lines = try data.readTestKeys(allocator);
+        var lines = try data.cityNames(allocator);
         defer lines.deinit();
 
         keys = try allocator.alloc(MapKey, lines.items.len);
@@ -45,66 +42,37 @@ pub const BenchmarkCompare = struct {
 
     const BenchmarkFunction = (fn (a: *const MapKey, b: *const MapKey) sorted.CompareResult);
     const BenchmarkResult = struct {
-        ns: u64 = 0,
-        count: u64 = 0,
-        sum: i8 = 0,
+        runCount: u64,
+        sumNs: u64,
 
         pub inline fn getMeanNs(self: *const BenchmarkResult) f64 {
-            const c: f64 = @floatFromInt(self.count);
-            const s: f64 = @floatFromInt(self.ns);
+            const c: f64 = @floatFromInt(self.runCount);
+            const s: f64 = @floatFromInt(self.sumNs);
             return s / c;
         }
 
         pub inline fn getRuntimeSeconds(self: *const BenchmarkResult) f64 {
             const c: f64 = std.time.ns_per_s;
-            const s: f64 = @floatFromInt(self.ns);
+            const s: f64 = @floatFromInt(self.sumNs);
             return s / c;
         }
 
         pub inline fn getOpsPerUnit(self: *const BenchmarkResult, unit: comptime_float) f64 {
-            const ns: f64 = @floatFromInt(self.ns);
+            const ns: f64 = @floatFromInt(self.sumNs);
             const t: f64 = ns / @as(f64, unit);
 
-            const ops: f64 = @floatFromInt(self.count);
+            const ops: f64 = @floatFromInt(self.runCount);
             return ops / t;
         }
-
-        pub inline fn add(self: *BenchmarkResult, ns: u64, count: u64) void {
-            self.count += count;
-            self.ns += ns;
-        }
-        pub inline fn addr(self: *BenchmarkResult, other: *const BenchmarkResult) void {
-            self.add(other.ns, other.count);
-        }
     };
-
-    const validateLog = std.log.scoped(.ValidateBenchmark);
-
-    fn validate_benchmark(comptime benchmarkA: BenchmarkFunction, comptime benchmarkB: BenchmarkFunction) void {
-        for (0..keys.len) |i| {
-            for (0..keys.len) |j| {
-                const resultA = benchmarkA(&keys[i], &keys[j]);
-                const resultB = benchmarkB(&keys[i], &keys[j]);
-                const vA: u8 = @abs(@intFromEnum(resultA));
-                const vB: u8 = @abs(@intFromEnum(resultB));
-                if (vA != vB) {
-                    validateLog.err("Different benchmark return values! A: {s}, B: {s}", .{ @tagName(resultA), @tagName(resultB) });
-                    @panic("Different benchmark return values!");
-                } else if (resultA != resultB) {
-                    validateLog.info("Different benchmark return values! A: {s}, B: {s}", .{ @tagName(resultA), @tagName(resultB) });
-                }
-            }
-        }
-    }
-    fn run_benchmark(comptime benchmark: BenchmarkFunction) BenchmarkResult {
+    fn run_benchmark(comptime benchmark: BenchmarkFunction, comptime name: []const u8) void {
         const iter_count: usize = 1;
 
         var sum: i8 = 0;
-        @prefetch(keys, .{});
         const start_time = std.time.nanoTimestamp();
         for (0..iter_count) |_| {
-            for (1..keys.len) |i| {
-                for (0..i) |j| {
+            for (0..keys.len) |i| {
+                for (0..keys.len) |j| {
                     sum +%= @as(i8, @intFromEnum(benchmark(&keys[i], &keys[j])));
                 }
             }
@@ -114,12 +82,10 @@ pub const BenchmarkCompare = struct {
         const ns: u64 = @intCast(end_time - start_time);
 
         const result = BenchmarkResult{ // NO FOLD
-            .count = keys.len * keys.len * iter_count,
-            .ns = ns,
-            .sum = sum,
+            .runCount = keys.len * keys.len * iter_count,
+            .sumNs = ns,
         };
-
-        return result;
+        print(name ++ "\truntime: {d:.3} s, mean: {d:.5} ns, {d:.0} op/us | check={d}\n", .{ result.getRuntimeSeconds(), result.getMeanNs(), result.getOpsPerUnit(std.time.ns_per_us), sum });
     }
 
     pub fn run() void {
@@ -131,27 +97,8 @@ pub const BenchmarkCompare = struct {
             @panic("Could not run Global Setup");
         };
 
-        const aName = comptime "base";
-        const bName = comptime "impr";
-        const aFunc = comptime MapKey.compare;
-        const bFunc = comptime MapKey.compare2;
-
-        validate_benchmark(aFunc, bFunc);
-        inline for (0..64) |_| {
-            // we do b first, to favor a in the results
-            const b = run_benchmark(bFunc);
-            const a = run_benchmark(aFunc);
-
-            const nameOfFastest = switch (a.ns < b.ns) {
-                true => aName,
-                false => bName,
-            };
-            const max_ns: f64 = @floatFromInt(@max(a.ns, b.ns));
-            const min_ns: f64 = @floatFromInt(@min(a.ns, b.ns));
-            const relativeDiff: f64 = (max_ns / min_ns) - 1.0;
-            print("{s}\truntime: {d:.3} s, mean: {d:.5} ns, {d:.0} op/us | check={d}\n", .{ aName, a.getRuntimeSeconds(), a.getMeanNs(), a.getOpsPerUnit(std.time.ns_per_us), a.sum });
-            print("{s}\truntime: {d:.3} s, mean: {d:.5} ns, {d:.0} op/us | check={d}\n", .{ bName, b.getRuntimeSeconds(), b.getMeanNs(), b.getOpsPerUnit(std.time.ns_per_us), b.sum });
-            print("BEST:\t| {s} | faster by {d:.2}%\n\n", .{ nameOfFastest, relativeDiff * 100.0 });
+        inline for (0..60) |_| {
+            run_benchmark(MapKey.compare, "compare");
         }
     }
 };

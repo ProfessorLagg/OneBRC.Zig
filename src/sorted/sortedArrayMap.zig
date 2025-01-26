@@ -3,6 +3,7 @@ const std = @import("std");
 const compare = @import("compare.zig");
 
 fn calc_default_initial_capacity(comptime Tkey: type, comptime Tval: type) comptime_int {
+    // TODO this is only neccecary on targets with cachelines!
     const size_cacheline: comptime_int = std.atomic.cache_line;
     const size_halfcacheline: comptime_int = size_cacheline / 2;
     const size_key: comptime_int = @sizeOf(Tkey);
@@ -18,12 +19,9 @@ fn calc_default_initial_capacity(comptime Tkey: type, comptime Tval: type) compt
     }
 }
 
-inline fn divCiel(comptime T: type, numerator: T, denominator: T) T {
-    return 1 + ((numerator - 1) / denominator);
-}
-
 pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime comparison: compare.ComparisonR(Tkey)) type {
     const default_initial_capacity: comptime_int = comptime calc_default_initial_capacity(Tkey, Tval);
+
     return struct {
         allocator: std.mem.Allocator,
         /// The actual amount of items. Do NOT modify
@@ -34,20 +32,14 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
         val_buffer: []Tval,
         keys: []Tkey,
         values: []Tval,
-        const TSelf = @This();
-
-        // === ITERATOR ===
-        const BinarySearchResult: type = struct {
-            index: usize,
-            compare: compare.CompareResult,
-        };
+        const Self = @This();
 
         // === PUBLIC ===
-        pub fn init(allocator: std.mem.Allocator) !TSelf {
-            const result: TSelf = try initWithCapacity(allocator, default_initial_capacity);
+        pub fn init(allocator: std.mem.Allocator) !Self {
+            const result: Self = try initWithCapacity(allocator, default_initial_capacity);
             return result;
         }
-        pub fn initWithCapacity(allocator: std.mem.Allocator, initial_capacity: usize) !TSelf {
+        pub fn initWithCapacity(allocator: std.mem.Allocator, initial_capacity: usize) !Self {
             std.debug.assert(initial_capacity > 0);
             var r = SortedArrayMap(Tkey, Tval, comparison){
                 .allocator = allocator,
@@ -63,96 +55,78 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
             r.values.len = 0;
             return r;
         }
-        pub fn deinit(self: *TSelf) void {
+        pub fn deinit(self: *Self) void {
             self.allocator.free(self.key_buffer);
             self.allocator.free(self.val_buffer);
         }
         /// Returns the number of values that can be contained before the backing arrays will be resized
-        pub inline fn capacity(self: *TSelf) usize {
+        pub inline fn capacity(self: *Self) usize {
             std.debug.assert(self.key_buffer.len == self.val_buffer.len);
             return self.key_buffer.len;
         }
         /// Finds the index of the key. Returns -1 if not found
-        pub inline fn indexOf(self: *TSelf, target: *const Tkey) ?usize {
+        pub fn indexOf(self: *Self, k: *const Tkey) isize {
             var L: isize = 0;
-            var R: isize = @as(isize, @bitCast(self.count)) - @as(isize, 1);
+            var R: isize = @bitCast(self.count);
+            R -= 1;
             while (L <= R) {
-                const mi: isize = @divFloor(L + R, 2);
-                const mu: usize = @as(usize, @intCast(mi));
-                const c = comparison(&self.keys[mu], target);
-                switch (c) {
-                    .LessThan => L = mi + 1,
-                    .GreaterThan => R = mi - 1,
-                    .Equal => return mu,
+                const m = @divFloor(L + R, 2);
+                const mu = @as(usize, @intCast(m));
+                const cmp = comparison(&self.keys[mu], k);
+                switch (cmp) {
+                    .LessThan => L = m + 1,
+                    .GreaterThan => R = m - 1,
+                    .Equal => return m,
                 }
             }
-            return null;
-        }
-        /// returns the final non-null comparison
-        pub inline fn search(self: *const TSelf, target: *const Tkey) BinarySearchResult {
-            var L: isize = 0;
-            var R: isize = @as(isize, @bitCast(self.count)) - @as(isize, 1);
-            var mi: isize = @divFloor(L + R, 2);
-            var mu: usize = @as(usize, @intCast(mi));
-            var c: compare.CompareResult = comparison(&self.keys[mu], target);
-            cmploop: while (L <= R) {
-                switch (c) {
-                    .LessThan => L = mi + 1,
-                    .GreaterThan => R = mi - 1,
-                    .Equal => break :cmploop,
-                }
-                mi = @divFloor(L + R, 2);
-                mu = @intCast(std.math.clamp(mi, 0, @as(isize, @bitCast(self.count))));
-                c = comparison(&self.keys[mu], target);
-            }
-            return .{ .index = mu, .compare = c };
+            return -1;
         }
         /// Returns true if k is found in self.keys. Otherwise false
-        pub inline fn contains(self: *TSelf, k: *const Tkey) bool {
-            return self.indexOf(k) != null;
+        pub inline fn contains(self: *Self, k: *const Tkey) bool {
+            const idx: isize = self.indexOf(k);
+            std.log.debug("indexOf({any}) = {d}", .{ k, idx });
+            return idx >= 0 and idx < self.keys.len;
         }
         /// Adds an item to the set.
         /// Returns true if the key could be added, otherwise false.
-        pub fn add(self: *TSelf, k: *const Tkey, v: *const Tval) bool {
-            const idx = self.indexOf(k) orelse {
-                self.addClobber(k, v);
+        pub fn add(self: *Self, k: *const Tkey, v: *const Tval) bool {
+            const idx: isize = self.indexOf(k);
+            if (idx >= 0) {
+                return false;
+            } else {
+                self.update(k, v);
                 return true;
-            };
-            std.debug.assert(idx < self.count);
-            return false;
+            }
         }
         /// Overwrites the value at k, regardless of it's already contained
-        pub fn addClobber(self: *TSelf, k: *const Tkey, v: *const Tval) void {
-            const insert = self.getInsertOrRealIndex(k);
-            self.insertAt(insert.index, k, v);
-        }
-
-        pub const UpdateFn: type = fn (update: *Tval, v: *const Tval) void;
-
-        /// Adds a value to the set if it is not found.
-        /// Otherwise uses updateFn to update the value
-        pub fn addOrUpdate(self: *TSelf, k: *const Tkey, v: *const Tval, comptime updateFn: UpdateFn) void {
-            if (self.keys.len <= 0) {
-                self.insertAt(0, k, v);
+        pub fn update(self: *Self, k: *const Tkey, v: *const Tval) void {
+            const insertionIndex = self.getInsertIndex(k);
+            if (self.count == self.key_buffer.len) {
+                const new_capacity: usize = self.capacity() * 2;
+                self.resize(new_capacity);
             }
-
-            const idx: ?usize = self.indexOf(k);
-            if (idx != null) {
-                updateFn(&self.values[idx.?], v);
+            self.insertAt(insertionIndex, k, v);
+        }
+        /// If k is in the map, updates the value at k using updateFn.
+        /// otherwise add the value from addFn to the map
+        pub fn addOrUpdate(self: *Self, k: Tkey, addFn: *const fn () Tval, updateFn: *const fn (*Tval) void) void {
+            const idx: isize = self.indexOf(k);
+            if (idx >= 0 or idx < self.count) {
+                const idxu: usize = @intCast(idx);
+                updateFn(&self.values[idxu]);
             } else {
-                self.insertAt(self.getInsertIndex(k), k, v);
+                self.update(k, addFn());
             }
         }
-
         /// Reduces capacity to exactly fit count
-        pub fn shrinkToFit(self: *TSelf) !void {
+        pub fn shrinkToFit(self: *Self) !void {
             // TODO shrinkToFit
             _ = &self;
         }
 
         // === PRIVATE ===
         /// Rezises capacity to newsize
-        fn resize(self: *TSelf, new_capacity: usize) void {
+        fn resize(self: *Self, new_capacity: usize) void {
             std.debug.assert(new_capacity > 1);
 
             if (!self.allocator.resize(self.key_buffer, new_capacity)) {
@@ -169,7 +143,7 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
                 self.values = self.val_buffer[0..self.count];
             }
         }
-        inline fn incrementCount(self: *TSelf) void {
+        fn incrementCount(self: *Self) void {
             std.debug.assert(self.count < self.key_buffer.len);
             std.debug.assert(self.count < self.val_buffer.len);
             self.count += 1;
@@ -178,7 +152,7 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
             std.debug.assert(self.keys.len == self.count);
             std.debug.assert(self.values.len == self.count);
         }
-        fn shiftRight(self: *TSelf, start_at: usize) void {
+        fn shiftRight(self: *Self, start_at: usize) void {
             std.debug.assert(start_at >= 0);
             std.debug.assert(start_at < self.count);
             std.debug.assert(self.count - start_at >= 1);
@@ -195,13 +169,10 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
         /// Caller asserts that the buffers have space.
         /// Caller asserts that the index is valid.
         /// Inserts an item and a key at the specified index.
-        fn insertAt(self: *TSelf, index: usize, k: *const Tkey, v: *const Tval) void {
+        fn insertAt(self: *Self, index: usize, k: *const Tkey, v: *const Tval) void {
             std.debug.assert(index <= self.count); // Does not get compiled in ReleaseFast and ReleaseSmall modes
+            std.debug.assert(self.keys.len < self.key_buffer.len); // Does not get compiled in ReleaseFast and ReleaseSmall modes
 
-            if (self.count == self.key_buffer.len) {
-                const new_capacity: usize = self.capacity() * 2;
-                self.resize(new_capacity);
-            }
             self.incrementCount();
             if (index == self.count - 1) {
                 // No need to shift if inserting at the end
@@ -214,27 +185,36 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
                 self.values[index] = v.*;
             }
         }
-        const ResultInsertOrRealIndex = struct { found: bool, index: usize };
-        inline fn getInsertOrRealIndex(self: *TSelf, k: *const Tkey) ResultInsertOrRealIndex {
+        /// Returns the index this key would have if present in the map.
+        fn getInsertIndex_old(self: *Self, k: *const Tkey) usize {
             if (self.count == 0) {
-                return .{
-                    .found = false,
-                    .index = 0,
-                };
+                return 0;
+            }
+            if (comparison(k, self.keys[0]) == .LessThan) {
+                return 0;
+            }
+            if (comparison(k, self.keys[self.count - 1]) == .GreaterThan) {
+                return self.count;
             }
 
-            // TODO make this use binary search!
-            for (0..self.count) |i| {
-                const cmp: compare.CompareResult = comparison(k, &self.keys[i]);
-                if (cmp != .GreaterThan) {
-                    return .{ .found = cmp == .Equal, .index = i };
+            // TODO make this use binary search
+            const l: usize = self.count - 1;
+            for (1..l) |i| {
+                const comp_i: compare.CompareResult = comparison(k, self.keys[i]);
+                if (comp_i == .Equal) {
+                    return i;
+                }
+                const comp_l: compare.CompareResult = comparison(k, self.keys[i - 1]);
+                const comp_r: compare.CompareResult = comparison(k, self.keys[i + 1]);
+                if (comp_l == .LessThan and comp_r == .GreaterThan) {
+                    return i;
                 }
             }
-            return .{ .found = false, .index = self.count };
+            return self.count;
         }
-        /// Returns the index of k in keys if found
-        /// Otherwise returns the index to insert the key at
-        fn getInsertIndex(self: *TSelf, k: *const Tkey) usize {
+
+        /// Returns the index this key would have if present in the map.
+        fn getInsertIndex(self: *Self, k: *const Tkey) usize {
             if (self.count == 0 or (comparison(k, &self.keys[0]) == .LessThan)) {
                 return 0;
             }

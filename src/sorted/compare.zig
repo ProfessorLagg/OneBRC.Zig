@@ -128,7 +128,7 @@ pub fn compareNumberFn(comptime T: type) Comparison(T) {
         else => unreachable,
     }
 }
-/// Compares 2 numbers of the same type
+
 pub fn compareNumber(a: anytype, b: anytype) CompareResult {
     comptime {
         const Ta = @TypeOf(a);

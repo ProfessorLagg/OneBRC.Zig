@@ -1,15 +1,15 @@
 const std = @import("std");
 
-pub const rawKeys = @embedFile("testkeys.txt");
+const cityNames = @embedFile("worldcities.txt");
 
-pub fn readTestKeys(allocator: std.mem.Allocator) !std.ArrayList([]const u8) {
+pub fn readCityNames(allocator: std.mem.Allocator) !std.ArrayList([]const u8) {
     var result = std.ArrayList([]const u8).init(allocator);
 
-    var split_iter = std.mem.split(u8, rawKeys[0..], "\n");
+    var split_iter = std.mem.split(u8, cityNames[0..], "\n");
     var line: []const u8 = split_iter.first();
 
     // The bounded for loop is just here to guarantee the loop has an upper iteration bound
-    for (0..rawKeys.len) |_| {
+    for (0..cityNames.len) |_| {
         if (line.len > 1) {
             try result.append(line);
         }
@@ -39,7 +39,7 @@ fn map_float(comptime T: type, v: T, fmin: T, fmax: T, tmin: T, tmax: T) T {
 
 // Generates random lines
 pub fn generateLines(allocator: std.mem.Allocator, count: usize) !std.ArrayList([]const u8) {
-    var cities: std.ArrayList([]const u8) = try readTestKeys(allocator);
+    var cities: std.ArrayList([]const u8) = try readCityNames(allocator);
     defer cities.deinit();
 
     var rand_gen = std.rand.DefaultPrng.init(0);
