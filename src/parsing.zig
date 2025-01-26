@@ -77,8 +77,8 @@ pub const MapKey = struct {
 
     pub inline fn set(self: *MapKey, str: []const u8) void {
         std.debug.assert(str.len <= bufferlen);
-        self.len = @as(u8, @intCast(str.len));
         std.mem.copyForwards(u8, &self.buffer, str);
+        self.len = @as(u8, @intCast(str.len));
     }
 
     /// Returns the key as a string
@@ -194,7 +194,6 @@ pub const ParseResult = struct {
 
 const readBufferSize: comptime_int = 1024 * 1024; // 1mb
 
-const DelimReaderLog = std.log.scoped(.DelimReader);
 /// Iterator to read a file line by line
 fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersize: usize) type {
     comptime {
@@ -252,7 +251,7 @@ fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersize: 
             goto: while (true) {
                 if (self.slice.len == 0) {
                     // contains no line
-                    DelimReaderLog.debug("DelimReader: NONE", .{});
+                    std.log.debug("DelimReader: NONE", .{});
                     self.slice = self.buffer[0..];
                     self.slice.len = try self.reader.read(self.buffer[0..]);
                     if (self.slice.len == 0) {
@@ -262,7 +261,7 @@ fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersize: 
                 const delim_index: usize = self.nextDelimIndex() orelse 0;
                 if (delim_index == 0) {
                     // Contains partial line
-                    DelimReaderLog.debug("DelimReader: PART", .{});
+                    std.log.debug("DelimReader: PART", .{});
                     // rotate buffer
                     const rotateSize = self.slice.len;
                     std.mem.copyForwards(u8, self.buffer[0..], self.slice);
@@ -282,7 +281,7 @@ fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersize: 
                 }
 
                 // Found full line
-                DelimReaderLog.debug("DelimReader: FULL", .{});
+                std.log.debug("DelimReader: FULL", .{});
                 const result: []const u8 = self.slice[0..delim_index];
                 self.slice = self.slice[delim_index + 1 ..];
                 return result;
@@ -339,8 +338,8 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
     var file: fs.File = try openFile(allocator, path);
     defer file.close();
     const fileReader = file.reader();
-    const TlineReader = DelimReader(@TypeOf(fileReader), '\n', readBufferSize);
-    var lineReader: TlineReader = try TlineReader.init(allocator, fileReader);
+
+    var lineReader:DelimReader(@TypeOf(fileReader), '\n', readBufferSize) = try DelimReader(@TypeOf(fileReader), '\n', readBufferSize).init(allocator, fileReader);
     defer lineReader.deinit();
 
     // variables used for parsing
@@ -367,7 +366,6 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
         while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
         std.debug.assert(line[splitIndex] == ';');
 
-
         const keystr: []const u8 = line[0..splitIndex];
         const valstr: []const u8 = line[(splitIndex + 1)..];
         std.log.info("line{d}: {s}, k: {s}, v: {s}", .{ result.lineCount, line, keystr, valstr });
@@ -378,11 +376,9 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
         std.debug.assert(valstr.len <= 5);
         std.debug.assert(valstr[valstr.len - 2] == '.');
         std.debug.assert(valstr[0] != ';');
-        
-        
 
         // parsing key and value string
-        tKey.set(line[0..splitIndex]);
+        tKey.set(keystr);
         const valint: Tuv = @intCast(fastIntParse(valstr));
         tVal.max = valint;
         tVal.min = valint;
