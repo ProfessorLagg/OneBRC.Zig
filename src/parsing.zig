@@ -199,14 +199,14 @@ const MapVal = struct {
     min: Tuv = std.math.maxInt(Tuv),
     max: Tuv = std.math.minInt(Tuv),
 
-    pub inline fn add(mv: *MapVal, v: Tuv) void {
+    pub inline fn addRaw(mv: *MapVal, v: Tuv) void {
         mv.count += 1;
         mv.sum += v;
         mv.min = @min(mv.min, v);
         mv.max = @max(mv.max, v);
     }
 
-    pub inline fn unionWith(mv: *MapVal, other: *const MapVal) void {
+    pub fn add(mv: *MapVal, other: *const MapVal) void {
         mv.count += other.count;
         mv.sum += other.sum;
         mv.min = @min(mv.min, other.min);
@@ -442,15 +442,20 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
         const mapIndex: usize = @as(usize, @intCast(tKey.buffer[0] +% tKey.len)) % mapCount; // I have tried to beat this but i cant
         const map: *TMap = &maps[mapIndex];
         const valint: Tuv = @intCast(fastIntParse(valstr));
-        const keyIndex = map.indexOf(&tKey);
-        if (keyIndex >= 0) {
-            map.values[@as(usize, @intCast(keyIndex))].add(valint);
-        } else {
-            tVal.max = valint;
-            tVal.min = valint;
-            tVal.sum = valint;
-            _ = map.update(&tKey, &tVal);
-        }
+        tVal.max = valint;
+        tVal.min = valint;
+        tVal.sum = valint;
+        _ = map.addOrUpdate(&tKey, &tVal, MapVal.add);
+
+        // const keyIndex = map.indexOf(&tKey);
+        // if (keyIndex >= 0) {
+        //     map.values[@as(usize, @intCast(keyIndex))].add(valint);
+        // } else {
+        //     tVal.max = valint;
+        //     tVal.min = valint;
+        //     tVal.sum = valint;
+        //     _ = map.update(&tKey, &tVal);
+        // }
     }
 
     // Adding all the maps to maps[0]
@@ -459,12 +464,14 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
         for (0..maps[i].count) |j| {
             const rKey: *MapKey = &maps[i].keys[j];
             const rVal: *MapVal = &maps[i].values[j];
-            const keyIndex = maps[0].indexOf(rKey);
-            if (keyIndex >= 0) {
-                maps[0].values[@as(usize, @intCast(keyIndex))].unionWith(rVal);
-            } else {
-                _ = maps[0].update(rKey, rVal);
-            }
+            _ = maps[0].addOrUpdate(rKey, rVal, MapVal.add);
+
+            // const keyIndex = maps[0].indexOf(rKey);
+            // if (keyIndex >= 0) {
+            //     maps[0].values[@as(usize, @intCast(keyIndex))].add(rVal);
+            // } else {
+            //     _ = maps[0].update(rKey, rVal);
+            // }
         }
         maps[i].deinit();
     }
