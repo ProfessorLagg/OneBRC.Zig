@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const rawKeys = @embedFile("testkeys.txt");
+pub const rawKeys = @embedFile("testkeys.txt");
 
 pub fn readTestKeys(allocator: std.mem.Allocator) !std.ArrayList([]const u8) {
     var result = std.ArrayList([]const u8).init(allocator);
