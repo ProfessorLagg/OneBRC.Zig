@@ -23,8 +23,8 @@ pub const std_options: std.Options = .{
 // const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\simple.txt";
 // const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\verysmall.txt";
 // const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\small.txt";
-const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
-// const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
+// const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
+const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
 // const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\large.txt";
 
 pub fn main() !void {
@@ -72,6 +72,7 @@ fn run_debug() !void {
 }
 
 fn run_read() !void {
+    std.log.debug("run_read()", .{});
     var timer = try std.time.Timer.start();
     const parseResult: parsing.ParseResult = try parsing.read(debugfilepath[0..]);
 
@@ -103,6 +104,7 @@ fn run_read() !void {
 }
 
 fn run_benchmark() void {
+    std.log.debug("run_benchmark()", .{});
     const benchmarking = @import("benchmarking/benchmarking.zig");
     benchmarking.BenchmarkCompare.run();
 }

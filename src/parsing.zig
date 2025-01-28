@@ -5,6 +5,8 @@ const fs = std.fs;
 const sorted = @import("sorted/sorted.zig");
 const compare = sorted.compare;
 
+const DelimReader = @import("delimReader.zig").DelimReader;
+
 /// Type of int used in the MapVal struct
 const Tuv = u32;
 /// Type of map used in parse function
@@ -184,101 +186,7 @@ pub const ParseResult = struct {
 
 const readBufferSize: comptime_int = 1024 * 1024; // 1mb
 
-/// Iterator to read a file line by line
-fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersize: usize) type {
-    comptime {
-        if (!std.meta.hasMethod(Treader, "read")) {
-            @compileError("Treader type " ++ @typeName(Treader) ++ " does not have a .read method");
-        }
-    }
 
-    return struct {
-        const TSelf = @This();
-        allocator: std.mem.Allocator,
-        reader: Treader,
-        buffer: []u8,
-        slice: []u8,
-
-        pub fn init(allocator: std.mem.Allocator, reader: Treader) !TSelf {
-            std.log.debug("DelimReader" ++
-                "\n\t" ++ "Treader: " ++ "{s}" ++
-                "\n\t" ++ "delim: {d} | 0x{X:0>2}" ++
-                "\n\t" ++ "buffer size: {d}" ++ "\n", .{ @typeName(Treader), delim, delim, buffersize });
-            var r = TSelf{ // NO FOLD
-                .allocator = allocator,
-                .buffer = try allocator.alloc(u8, buffersize),
-                .reader = reader,
-                .slice = undefined,
-            };
-            r.slice = r.buffer[0..];
-            r.slice.len = r.reader.read(r.buffer) catch |err| {
-                allocator.free(r.buffer);
-                return err;
-            };
-            return r;
-        }
-
-        pub fn deinit(self: *TSelf) void {
-            self.allocator.free(self.buffer);
-        }
-
-        /// Finds index of self.slice[0] in self.buffer
-        inline fn getpos(self: *TSelf) usize {
-            return @intFromPtr(self.slice.ptr) - @intFromPtr(&self.buffer[0]);
-        }
-
-        /// returns the index in self.slice of the next delimiter, otherwise null
-        inline fn nextDelimIndex(self: *TSelf) ?usize {
-            for (0..self.slice.len) |i| {
-                if (self.slice[i] == delim) {
-                    return i;
-                }
-            }
-            return null;
-        }
-
-        pub inline fn next(self: *TSelf) !?[]const u8 {
-            goto: while (true) {
-                if (self.slice.len == 0) {
-                    // contains no line
-                    std.log.debug("DelimReader: NONE", .{});
-                    self.slice = self.buffer[0..];
-                    self.slice.len = try self.reader.read(self.buffer[0..]);
-                    if (self.slice.len == 0) {
-                        return null;
-                    }
-                }
-                const delim_index: usize = self.nextDelimIndex() orelse 0;
-                if (delim_index == 0) {
-                    // Contains partial line
-                    std.log.debug("DelimReader: PART", .{});
-                    // rotate buffer
-                    const rotateSize = self.slice.len;
-                    std.mem.copyForwards(u8, self.buffer[0..], self.slice);
-                    self.slice = self.buffer[0..];
-                    self.slice.len = rotateSize;
-
-                    const readcount = try self.reader.read(self.buffer[self.slice.len..]);
-                    if (readcount > 0) {
-                        self.slice.len += readcount;
-                        continue :goto;
-                    }
-
-                    // return partial line
-                    const result: []const u8 = self.buffer[0..rotateSize];
-                    self.slice.len = 0;
-                    return result;
-                }
-
-                // Found full line
-                std.log.debug("DelimReader: FULL", .{});
-                const result: []const u8 = self.slice[0..delim_index];
-                self.slice = self.slice[delim_index + 1 ..];
-                return result;
-            }
-        }
-    };
-}
 
 /// For testing purposes only. Reads all the lines in the file, without parsing them.
 pub fn read(path: []const u8) !ParseResult {
