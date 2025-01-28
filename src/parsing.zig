@@ -7,6 +7,8 @@ const compare = sorted.compare;
 
 const DelimReader = @import("delimReader.zig").DelimReader;
 
+const MapKey = @import("mapKey.zig").MapKey;
+
 /// Type of int used in the MapVal struct
 const Tuv = u32;
 /// Type of map used in parse function
@@ -32,7 +34,6 @@ inline fn fastIntParse(numstr: []const u8) isize {
     }
     return result;
 }
-
 fn toAbsolutePath(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     const cwd_path = try fs.cwd().realpathAlloc(allocator, ".");
     defer allocator.free(cwd_path);
@@ -41,7 +42,6 @@ fn toAbsolutePath(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
         path,
     });
 }
-
 fn openFile(allocator: std.mem.Allocator, path: []const u8) !fs.File {
     const absPath: []u8 = try toAbsolutePath(allocator, path);
     defer allocator.free(absPath);
@@ -52,68 +52,9 @@ fn openFile(allocator: std.mem.Allocator, path: []const u8) !fs.File {
         .allow_ctty = false,
     });
 }
-
 inline fn divCiel(comptime T: type, numerator: T, denominator: T) T {
     return 1 + ((numerator - 1) / denominator);
 }
-
-fn rotateBuffer(buffer: []u8, pos: usize) usize {
-    const rembytes: []const u8 = buffer[pos..];
-    const remlen: usize = rembytes.len;
-    std.log.debug("\n===== pre rembytes =====\n({s})[{s}]\n", .{ buffer[0..remlen], buffer[remlen..] });
-    std.mem.copyForwards(u8, buffer, rembytes);
-    std.log.debug("\n===== post rembytes =====\n({s})[{s}]\n", .{ buffer[0..remlen], buffer[remlen..] });
-    return remlen;
-}
-
-pub const MapKey = struct {
-    const bufferlen: usize = 100;
-    buffer: [bufferlen]u8 = undefined,
-    len: u8 = 0,
-
-    pub inline fn create(str: []const u8) MapKey {
-        var r: MapKey = .{};
-        r.set(str);
-        return r;
-    }
-
-    pub inline fn set(self: *MapKey, str: []const u8) void {
-        std.debug.assert(str.len <= bufferlen);
-        std.mem.copyForwards(u8, &self.buffer, str);
-        self.len = @as(u8, @intCast(str.len));
-    }
-
-    /// Returns the key as a string
-    pub inline fn get(self: *const MapKey) []const u8 {
-        return self.buffer[0..self.len];
-    }
-
-    pub inline fn compare_valid(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
-        const len = @max(a.len, b.len);
-        for (0..len) |i| {
-            const cmp_char = sorted.compareNumber(a.buffer[i], b.buffer[i]);
-            if (cmp_char != .Equal) {
-                return cmp_char;
-            }
-        }
-        return .Equal;
-    }
-
-    pub fn compare(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
-        const cmp_len = sorted.compareNumber(a.len, b.len);
-        if (cmp_len != .Equal) {
-            return cmp_len;
-        }
-
-        for (0..a.len) |i| {
-            const cmp_char = sorted.compareNumber(a.buffer[i], b.buffer[i]);
-            if (cmp_char != .Equal) {
-                return cmp_char;
-            }
-        }
-        return .Equal;
-    }
-};
 
 const MapVal = struct {
     count: Tuv = 0,
@@ -185,9 +126,6 @@ pub const ParseResult = struct {
 };
 
 const readBufferSize: comptime_int = 1024 * 1024; // 1mb
-
-
-
 /// For testing purposes only. Reads all the lines in the file, without parsing them.
 pub fn read(path: []const u8) !ParseResult {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
