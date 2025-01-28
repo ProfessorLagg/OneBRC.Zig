@@ -188,6 +188,8 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
         }
         break :blk r;
     };
+    var keystr: []const u8 = undefined;
+    var valstr: []const u8 = undefined;
     var tKey: MapKey = .{};
     var tVal: MapVal = .{ .count = 1 };
 
@@ -203,8 +205,8 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
         while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
         std.debug.assert(line[splitIndex] == ';');
 
-        const keystr: []const u8 = line[0..splitIndex];
-        const valstr: []const u8 = line[(splitIndex + 1)..];
+        keystr = line[0..splitIndex];
+        valstr = line[(splitIndex + 1)..];
         std.log.info("line{d}: {s}, k: {s}, v: {s}", .{ result.lineCount, line, keystr, valstr });
         std.debug.assert(keystr.len >= 1);
         std.debug.assert(keystr.len <= 100);
@@ -221,7 +223,7 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
         tVal.min = valint;
         tVal.sum = valint;
 
-        const mapIndex: u8 = tKey.len % mapCount;
+        const mapIndex: u8 = tKey.sum % mapCount;
         maps[mapIndex].addOrUpdate(&tKey, &tVal, MapVal.add);
     }
 
@@ -241,7 +243,7 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
         const stdout = std.io.getStdOut().writer();
         for (0..maps[0].count) |i| {
             const k: *MapKey = &maps[0].keys[i];
-            const keystr = k.get();
+            keystr = k.get();
             const v: *MapVal = &maps[0].values[i];
             try stdout.print("{s};{d:.1};{d:.1};{d:.1}\n", .{ // NO WRAP
                 keystr,
