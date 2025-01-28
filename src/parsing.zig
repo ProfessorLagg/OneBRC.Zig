@@ -125,7 +125,7 @@ pub const ParseResult = struct {
     uniqueKeys: usize = 0,
 };
 
-const readBufferSize: comptime_int = 4096 * 256; // 1mb
+const readBufferSize: comptime_int = 4096 * @sizeOf(usize); //  4096 * 256 = 1mb
 /// For testing purposes only. Reads all the lines in the file, without parsing them.
 pub fn read(path: []const u8) !ParseResult {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
