@@ -51,6 +51,10 @@ fn openFile(allocator: std.mem.Allocator, path: []const u8) !fs.File {
     });
 }
 
+inline fn divCiel(comptime T: type, numerator: T, denominator: T) T {
+    return 1 + ((numerator - 1) / denominator);
+}
+
 fn rotateBuffer(buffer: []u8, pos: usize) usize {
     const rembytes: []const u8 = buffer[pos..];
     const remlen: usize = rembytes.len;
@@ -61,8 +65,7 @@ fn rotateBuffer(buffer: []u8, pos: usize) usize {
 }
 
 pub const MapKey = struct {
-    const bufferlen: usize = 64;
-
+    const bufferlen: usize = 100;
     buffer: [bufferlen]u8 = undefined,
     len: u8 = 0,
 
@@ -74,13 +77,24 @@ pub const MapKey = struct {
 
     pub inline fn set(self: *MapKey, str: []const u8) void {
         std.debug.assert(str.len <= bufferlen);
-        self.len = @as(u8, @intCast(str.len));
         std.mem.copyForwards(u8, &self.buffer, str);
+        self.len = @as(u8, @intCast(str.len));
     }
 
     /// Returns the key as a string
-    pub inline fn get(self: *MapKey) []const u8 {
+    pub inline fn get(self: *const MapKey) []const u8 {
         return self.buffer[0..self.len];
+    }
+
+    pub inline fn compare_valid(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
+        const len = @max(a.len, b.len);
+        for (0..len) |i| {
+            const cmp_char = sorted.compareNumber(a.buffer[i], b.buffer[i]);
+            if (cmp_char != .Equal) {
+                return cmp_char;
+            }
+        }
+        return .Equal;
     }
 
     pub fn compare(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
@@ -105,14 +119,14 @@ const MapVal = struct {
     min: Tuv = std.math.maxInt(Tuv),
     max: Tuv = std.math.minInt(Tuv),
 
-    pub inline fn add(mv: *MapVal, v: Tuv) void {
+    pub inline fn addRaw(mv: *MapVal, v: Tuv) void {
         mv.count += 1;
         mv.sum += v;
         mv.min = @min(mv.min, v);
         mv.max = @max(mv.max, v);
     }
 
-    pub inline fn unionWith(mv: *MapVal, other: *const MapVal) void {
+    pub fn add(mv: *MapVal, other: *const MapVal) void {
         mv.count += other.count;
         mv.sum += other.sum;
         mv.min = @min(mv.min, other.min);
@@ -170,7 +184,6 @@ pub const ParseResult = struct {
 
 const readBufferSize: comptime_int = 1024 * 1024; // 1mb
 
-const DelimReaderLog = std.log.scoped(.DelimReader);
 /// Iterator to read a file line by line
 fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersize: usize) type {
     comptime {
@@ -228,7 +241,7 @@ fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersize: 
             goto: while (true) {
                 if (self.slice.len == 0) {
                     // contains no line
-                    DelimReaderLog.debug("DelimReader: NONE", .{});
+                    std.log.debug("DelimReader: NONE", .{});
                     self.slice = self.buffer[0..];
                     self.slice.len = try self.reader.read(self.buffer[0..]);
                     if (self.slice.len == 0) {
@@ -238,7 +251,7 @@ fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersize: 
                 const delim_index: usize = self.nextDelimIndex() orelse 0;
                 if (delim_index == 0) {
                     // Contains partial line
-                    DelimReaderLog.debug("DelimReader: PART", .{});
+                    std.log.debug("DelimReader: PART", .{});
                     // rotate buffer
                     const rotateSize = self.slice.len;
                     std.mem.copyForwards(u8, self.buffer[0..], self.slice);
@@ -258,7 +271,7 @@ fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersize: 
                 }
 
                 // Found full line
-                DelimReaderLog.debug("DelimReader: FULL", .{});
+                std.log.debug("DelimReader: FULL", .{});
                 const result: []const u8 = self.slice[0..delim_index];
                 self.slice = self.slice[delim_index + 1 ..];
                 return result;
@@ -294,11 +307,11 @@ pub fn read(path: []const u8) !ParseResult {
 
         const keystr: []const u8 = line[0..splitIndex];
         const valstr: []const u8 = line[(splitIndex + 1)..];
-        std.log.info("line{d}: {s}, k: {s}, v: {s}", .{ line, keystr, valstr });
+        std.log.info("line{d}: {s}, k: {s}, v: {s}", .{ result.lineCount, line, keystr, valstr });
         std.debug.assert(keystr.len >= 1);
         std.debug.assert(keystr.len <= 100);
         std.debug.assert(valstr.len >= 3);
-        std.debug.assert(valstr[valstr.len - 3] == '.');
+        std.debug.assert(valstr[valstr.len - 2] == '.');
         std.debug.assert(line.len >= 5);
         std.debug.assert(line[splitIndex] == ';');
     }
@@ -315,12 +328,12 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
     var file: fs.File = try openFile(allocator, path);
     defer file.close();
     const fileReader = file.reader();
-    const TlineReader = DelimReader(@TypeOf(fileReader), '\n', readBufferSize);
-    var lineReader: TlineReader = try TlineReader.init(allocator, fileReader);
+
+    var lineReader:DelimReader(@TypeOf(fileReader), '\n', readBufferSize) = try DelimReader(@TypeOf(fileReader), '\n', readBufferSize).init(allocator, fileReader);
     defer lineReader.deinit();
 
     // variables used for parsing
-    const mapCount: comptime_int = 64;
+    const mapCount: comptime_int = 16;
     var maps: [mapCount]TMap = blk: {
         var r: [mapCount]TMap = undefined;
         for (0..mapCount) |i| {
@@ -337,26 +350,32 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
             std.log.debug("skipped line: '{s}'", .{line});
             continue :lineloop;
         }
-
+        std.debug.assert(line.len >= 5);
         result.lineCount += 1;
         var splitIndex: usize = line.len - 4;
         while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
+        std.debug.assert(line[splitIndex] == ';');
 
+        const keystr: []const u8 = line[0..splitIndex];
         const valstr: []const u8 = line[(splitIndex + 1)..];
+        std.log.info("line{d}: {s}, k: {s}, v: {s}", .{ result.lineCount, line, keystr, valstr });
+        std.debug.assert(keystr.len >= 1);
+        std.debug.assert(keystr.len <= 100);
+        std.debug.assert(keystr[keystr.len - 1] != ';');
+        std.debug.assert(valstr.len >= 3);
+        std.debug.assert(valstr.len <= 5);
+        std.debug.assert(valstr[valstr.len - 2] == '.');
+        std.debug.assert(valstr[0] != ';');
+
         // parsing key and value string
-        tKey.set(line[0..splitIndex]);
-        const mapIndex: usize = (@as(usize, @intCast(tKey.buffer[0])) + @as(usize, @intCast(tKey.len))) % mapCount; // I have tried to beat this but i cant
-        const map: *TMap = &maps[mapIndex];
+        tKey.set(keystr);
         const valint: Tuv = @intCast(fastIntParse(valstr));
-        const keyIndex = map.indexOf(&tKey);
-        if (keyIndex >= 0) {
-            map.values[@as(usize, @intCast(keyIndex))].add(valint);
-        } else {
-            tVal.max = valint;
-            tVal.min = valint;
-            tVal.sum = valint;
-            _ = map.update(&tKey, &tVal);
-        }
+        tVal.max = valint;
+        tVal.min = valint;
+        tVal.sum = valint;
+
+        const mapIndex: usize = @as(usize, @intCast(tKey.buffer[0] +% tKey.len)) % mapCount;
+        maps[mapIndex].addOrUpdate(&tKey, &tVal, MapVal.add);
     }
 
     // Adding all the maps to maps[0]
@@ -365,12 +384,8 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
         for (0..maps[i].count) |j| {
             const rKey: *MapKey = &maps[i].keys[j];
             const rVal: *MapVal = &maps[i].values[j];
-            const keyIndex = maps[0].indexOf(rKey);
-            if (keyIndex >= 0) {
-                maps[0].values[@as(usize, @intCast(keyIndex))].unionWith(rVal);
-            } else {
-                _ = maps[0].update(rKey, rVal);
-            }
+
+            maps[0].addOrUpdate(rKey, rVal, MapVal.add);
         }
         maps[i].deinit();
     }
@@ -396,6 +411,41 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
 }
 
 // ========== TESTING ==========
+test "compare" {
+    const data = @import("benchmarking/data/data.zig");
+    var keyList: std.ArrayList([]const u8) = try data.readTestKeys(std.testing.allocator);
+    defer keyList.deinit();
+
+    const names = keyList.items;
+    var iterId: u64 = 0;
+    for (1..names.len) |i| {
+        const ki: MapKey = MapKey.create(names[i]);
+        for (0..i) |j| {
+            iterId += 1;
+            const kj: MapKey = MapKey.create(names[j]);
+
+            const cmp1_ij = MapKey.compare_valid(&ki, &kj);
+            const cmp1_ji = MapKey.compare_valid(&kj, &ki);
+            const cmp2_ij = MapKey.compare(&ki, &kj);
+            const cmp2_ji = MapKey.compare(&kj, &ki);
+
+            const v1_ij: u8 = @abs(@intFromEnum(cmp1_ij));
+            const v1_ji: u8 = @abs(@intFromEnum(cmp1_ji));
+            const v2_ij: u8 = @abs(@intFromEnum(cmp2_ij));
+            const v2_ji: u8 = @abs(@intFromEnum(cmp2_ji));
+
+            std.testing.expectEqual(v1_ij, v2_ij) catch |err| {
+                std.log.warn("error at iteration {d}: ki: \"{s}\", kj: \"{s}\"", .{ iterId, ki.get(), kj.get() });
+                return err;
+            };
+            std.testing.expectEqual(v1_ji, v2_ji) catch |err| {
+                std.log.warn("error at iteration {d}: ki: \"{s}\", kj: \"{s}\"", .{ iterId, ki.get(), kj.get() });
+                return err;
+            };
+        }
+    }
+}
+
 test "Size and Alignment" {
     @setRuntimeSafety(false);
     const metainfo = @import("metainfo/metainfo.zig");
@@ -405,23 +455,4 @@ test "Size and Alignment" {
     metainfo.logMemInfo(ParseResult);
     metainfo.logMemInfo(DelimReader(fs.File.Reader, '\n', readBufferSize));
     metainfo.logMemInfo(TMap);
-}
-
-test "while capture not null" {
-    const TestIterator = struct {
-        const TSelf = @This();
-        i: usize = 0,
-        pub fn next(self: *TSelf) ?[]const u8 {
-            self.i += 1;
-            if (self.i >= 4) {
-                return null;
-            }
-            return "val";
-        }
-    };
-
-    var iter: TestIterator = .{};
-    while (iter.next()) |str| {
-        try std.testing.expectEqualStrings("val", str);
-    }
 }
