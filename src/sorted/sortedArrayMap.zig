@@ -1,6 +1,8 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const compare = @import("compare.zig");
+const CompareResult = compare.CompareResult;
+const log = std.log.scoped(.SortedArrayMap);
 
 fn calc_default_initial_capacity(comptime Tkey: type, comptime Tval: type) comptime_int {
     // TODO this is only neccecary on targets with cachelines!
@@ -68,15 +70,19 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
         pub fn indexOf(self: *Self, k: *const Tkey) isize {
             var L: isize = 0;
             var R: isize = @bitCast(self.count);
+            var i: isize = undefined;
+            var u: usize = undefined;
+            var cmp: CompareResult = undefined;
             R -= 1;
             while (L <= R) {
-                const m = @divFloor(L + R, 2);
-                const mu = @as(usize, @intCast(m));
-                const cmp = comparison(&self.keys[mu], k);
+                i = @divFloor(L + R, 2);
+                u = @as(usize, @intCast(i));
+                cmp = comparison(&self.keys[u], k);
+                log.info("L: {d}, R: {d}, i: {d}, cmp: {s}", .{ L, R, i, @tagName(cmp) });
                 switch (cmp) {
-                    .LessThan => L = m + 1,
-                    .GreaterThan => R = m - 1,
-                    .Equal => return m,
+                    .LessThan => L = i + 1,
+                    .GreaterThan => R = i - 1,
+                    .Equal => return i,
                 }
             }
             return -1;
@@ -84,7 +90,7 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
         /// Returns true if k is found in self.keys. Otherwise false
         pub inline fn contains(self: *Self, k: *const Tkey) bool {
             const idx: isize = self.indexOf(k);
-            std.log.debug("indexOf({any}) = {d}", .{ k, idx });
+            log.debug("indexOf({any}) = {d}", .{ k, idx });
             return idx >= 0 and idx < self.keys.len;
         }
         /// Adds an item to the set.
@@ -112,15 +118,17 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
         const UpdateFunc = fn (*Tval, *const Tval) void;
         /// If k is in the map, updates the value at k using updateFn.
         /// otherwise add the value from addFn to the map
-        pub fn addOrUpdate(self: *Self, k: *const Tkey, v: *const Tval, updateFn: UpdateFunc) void {
-            const idx: isize = self.indexOf(k);
-            if (idx >= 0) {
-                const idxu: usize = @bitCast(idx);
-                updateFn(&self.values[idxu], v);
+        pub fn addOrUpdate(self: *Self, k: *const Tkey, v: *const Tval, comptime updateFn: UpdateFunc) void {
+            const i: isize = self.indexOf(k);
+            var u: usize = @intCast(i);
+            if (i > 0) {
+                updateFn(&self.values[u], v);
             } else {
-                self.insertAt(self.getInsertIndex(k), k, v);
+                u = self.getInsertIndex(k);
+                self.insertAt(u, k, v);
             }
         }
+
         /// Reduces capacity to exactly fit count
         pub fn shrinkToFit(self: *Self) !void {
             // TODO shrinkToFit
@@ -150,8 +158,10 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
             std.debug.assert(self.count < self.key_buffer.len);
             std.debug.assert(self.count < self.val_buffer.len);
             self.count += 1;
-            self.keys = self.key_buffer[0..self.count];
-            self.values = self.val_buffer[0..self.count];
+            // self.keys = self.key_buffer[0..self.count];
+            // self.values = self.val_buffer[0..self.count];
+            self.keys.len = self.count;
+            self.values.len = self.count;
             std.debug.assert(self.keys.len == self.count);
             std.debug.assert(self.values.len == self.count);
         }
@@ -190,33 +200,6 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
                 self.keys[index] = k.*;
                 self.values[index] = v.*;
             }
-        }
-        /// Returns the index this key would have if present in the map.
-        fn getInsertIndex_old(self: *Self, k: *const Tkey) usize {
-            if (self.count == 0) {
-                return 0;
-            }
-            if (comparison(k, self.keys[0]) == .LessThan) {
-                return 0;
-            }
-            if (comparison(k, self.keys[self.count - 1]) == .GreaterThan) {
-                return self.count;
-            }
-
-            // TODO make this use binary search
-            const l: usize = self.count - 1;
-            for (1..l) |i| {
-                const comp_i: compare.CompareResult = comparison(k, self.keys[i]);
-                if (comp_i == .Equal) {
-                    return i;
-                }
-                const comp_l: compare.CompareResult = comparison(k, self.keys[i - 1]);
-                const comp_r: compare.CompareResult = comparison(k, self.keys[i + 1]);
-                if (comp_l == .LessThan and comp_r == .GreaterThan) {
-                    return i;
-                }
-            }
-            return self.count;
         }
 
         /// Returns the index this key would have if present in the map.

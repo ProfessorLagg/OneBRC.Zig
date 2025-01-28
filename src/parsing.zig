@@ -329,7 +329,8 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
     defer file.close();
     const fileReader = file.reader();
 
-    var lineReader:DelimReader(@TypeOf(fileReader), '\n', readBufferSize) = try DelimReader(@TypeOf(fileReader), '\n', readBufferSize).init(allocator, fileReader);
+    const TLineReader = DelimReader(@TypeOf(fileReader), '\n', readBufferSize);
+    var lineReader: TLineReader = try TLineReader.init(allocator, fileReader);
     defer lineReader.deinit();
 
     // variables used for parsing

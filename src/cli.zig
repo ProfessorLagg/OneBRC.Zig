@@ -7,7 +7,7 @@ const parsing = @import("parsing.zig");
 const parallel = @import("parallel/parallel.zig");
 const sorted = @import("sorted/sorted.zig");
 
-pub const std_options = .{
+pub const std_options: std.Options = .{
     // Set the log level to info to .debug. use the scope levels instead
     .log_level = switch (builtin.mode) {
         .Debug => .debug,
@@ -15,13 +15,16 @@ pub const std_options = .{
         .ReleaseSmall => .info,
         .ReleaseFast => .warn,
     },
+    .log_scope_levels = &[_]std.log.ScopeLevel{
+        .{ .scope = .SortedArrayMap, .level = .err },
+    },
 };
 
 // const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\simple.txt";
 // const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\verysmall.txt";
 // const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\small.txt";
-// const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
-const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
+const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
+// const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
 // const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\large.txt";
 
 pub fn main() !void {
