@@ -125,7 +125,7 @@ pub const ParseResult = struct {
     uniqueKeys: usize = 0,
 };
 
-const readBufferSize: comptime_int = 1024 * 1024; // 1mb
+const readBufferSize: comptime_int = 4096 * 256; // 1mb
 /// For testing purposes only. Reads all the lines in the file, without parsing them.
 pub fn read(path: []const u8) !ParseResult {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -176,7 +176,7 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
     const fileReader = file.reader();
 
     const TLineReader = DelimReader(@TypeOf(fileReader), '\n', readBufferSize);
-    var lineReader: TLineReader = try TLineReader.init(allocator, fileReader);
+    var lineReader: TLineReader = try TLineReader.init(std.heap.page_allocator, fileReader);
     defer lineReader.deinit();
 
     // variables used for parsing
