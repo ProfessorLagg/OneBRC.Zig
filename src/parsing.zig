@@ -98,28 +98,18 @@ pub const MapKey = struct {
     }
 
     pub fn compare(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
-        const type_cmp: type = u32;
-        const size_cmp: comptime_int = @sizeOf(type_cmp);
-        std.debug.assert(bufferlen % size_cmp == 0);
-
-        var cmp: i8 = @intFromBool(a.len < b.len) * @as(i8, -1);
-        cmp += @intFromBool(a.len > b.len);
-
-        const len32: usize = divCiel(u8, @max(a.len, b.len), size_cmp);
-        var a32: []align(1) const type_cmp = undefined;
-        a32.ptr = @ptrCast(&a.buffer[0]);
-        a32.len = len32;
-        var b32: []align(1) const type_cmp = undefined;
-        b32.ptr = @ptrCast(&b.buffer[0]);
-        b32.len = len32;
-
-        var i: usize = 0;
-        while (cmp == 0 and i < len32) : (i += 1) {
-            cmp = @intFromBool(a32[i] < b32[i]);
-            cmp *= -1;
-            cmp += @intFromBool(a32[i] > b32[i]);
+        const cmp_len = sorted.compareNumber(a.len, b.len);
+        if (cmp_len != .Equal) {
+            return cmp_len;
         }
-        return @enumFromInt(cmp);
+
+        for (0..a.len) |i| {
+            const cmp_char = sorted.compareNumber(a.buffer[i], b.buffer[i]);
+            if (cmp_char != .Equal) {
+                return cmp_char;
+            }
+        }
+        return .Equal;
     }
 };
 
