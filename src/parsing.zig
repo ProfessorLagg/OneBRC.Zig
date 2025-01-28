@@ -180,7 +180,7 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
     defer lineReader.deinit();
 
     // variables used for parsing
-    const mapCount: u8 = 32;
+    const mapCount: u8 = 255;
     var maps: [mapCount]TMap = blk: {
         var r: [mapCount]TMap = undefined;
         for (0..mapCount) |i| {
