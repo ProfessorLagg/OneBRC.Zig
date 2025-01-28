@@ -101,21 +101,24 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
         /// Overwrites the value at k, regardless of it's already contained
         pub fn update(self: *Self, k: *const Tkey, v: *const Tval) void {
             const insertionIndex = self.getInsertIndex(k);
-            if (self.count == self.key_buffer.len) {
-                const new_capacity: usize = self.capacity() * 2;
-                self.resize(new_capacity);
+            if (insertionIndex < self.count) {
+                self.keys[insertionIndex] = k;
+                self.values[insertionIndex] = v;
+            } else {
+                self.insertAt(insertionIndex, k, v);
             }
-            self.insertAt(insertionIndex, k, v);
         }
+
+        const UpdateFunc = fn (*Tval, *const Tval) void;
         /// If k is in the map, updates the value at k using updateFn.
         /// otherwise add the value from addFn to the map
-        pub fn addOrUpdate(self: *Self, k: Tkey, addFn: *const fn () Tval, updateFn: *const fn (*Tval) void) void {
+        pub fn addOrUpdate(self: *Self, k: *const Tkey, v: *const Tval, updateFn: UpdateFunc) void {
             const idx: isize = self.indexOf(k);
-            if (idx >= 0 or idx < self.count) {
-                const idxu: usize = @intCast(idx);
-                updateFn(&self.values[idxu]);
+            if (idx >= 0) {
+                const idxu: usize = @bitCast(idx);
+                updateFn(&self.values[idxu], v);
             } else {
-                self.update(k, addFn());
+                self.insertAt(self.getInsertIndex(k), k, v);
             }
         }
         /// Reduces capacity to exactly fit count
@@ -166,10 +169,13 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
             }
         }
         /// The ONLY function that's allowed to update values in the buffers!
-        /// Caller asserts that the buffers have space.
         /// Caller asserts that the index is valid.
         /// Inserts an item and a key at the specified index.
         fn insertAt(self: *Self, index: usize, k: *const Tkey, v: *const Tval) void {
+            if (self.count == self.key_buffer.len) {
+                const new_capacity: usize = self.capacity() * 2;
+                self.resize(new_capacity);
+            }
             std.debug.assert(index <= self.count); // Does not get compiled in ReleaseFast and ReleaseSmall modes
             std.debug.assert(self.keys.len < self.key_buffer.len); // Does not get compiled in ReleaseFast and ReleaseSmall modes
 
