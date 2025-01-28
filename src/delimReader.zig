@@ -69,10 +69,8 @@ pub fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersi
                     // Contains partial line
                     log.debug("DelimReader: PART", .{});
                     // rotate buffer
-                    const rotateSize = self.slice.len;
                     std.mem.copyForwards(u8, self.buffer[0..], self.slice);
-                    self.slice = self.buffer[0..];
-                    self.slice.len = rotateSize;
+                    self.slice.ptr = @ptrCast(&self.buffer[0]);
 
                     const readcount = try self.reader.read(self.buffer[self.slice.len..]);
                     if (readcount > 0) {
@@ -81,7 +79,7 @@ pub fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersi
                     }
 
                     // return partial line
-                    const result: []const u8 = self.buffer[0..rotateSize];
+                    const result: []const u8 = self.buffer[0..self.slice.len];
                     self.slice.len = 0;
                     return result;
                 }
