@@ -5,6 +5,7 @@ const fs = std.fs;
 const sorted = @import("sorted/sorted.zig");
 const compare = sorted.compare;
 
+const reading = @import("reading.zig");
 const DelimReader = @import("delimReader.zig").DelimReader;
 
 const MapKey = @import("mapKey.zig").MapKey;
@@ -125,7 +126,12 @@ pub const ParseResult = struct {
     uniqueKeys: usize = 0,
 };
 
+<<<<<<< Updated upstream
 const readBufferSize: comptime_int = 1024 * 1024; // 1mb
+=======
+const readBufferSize: comptime_int = 4096 * @sizeOf(usize); //  4096 * 256 = 1mb
+
+>>>>>>> Stashed changes
 /// For testing purposes only. Reads all the lines in the file, without parsing them.
 pub fn read(path: []const u8) !ParseResult {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -136,31 +142,40 @@ pub fn read(path: []const u8) !ParseResult {
     // Setup reading
     var file: fs.File = try openFile(allocator, path);
     defer file.close();
-    const fileReader = file.reader();
-    const TlineReader = DelimReader(@TypeOf(fileReader), '\n', readBufferSize);
-    var lineReader: TlineReader = try TlineReader.init(allocator, fileReader);
-    defer lineReader.deinit();
 
-    lineloop: while (try lineReader.next()) |line| {
-        if (line[0] == '#') {
-            std.log.debug("skipped line: '{s}'", .{line});
-            continue :lineloop;
+    const root_buffer: []u8 = try std.heap.page_allocator.alloc(u8, readBufferSize);
+    defer std.heap.page_allocator.free(root_buffer);
+
+    var buffer: []u8 = root_buffer[0..];
+    var readlen: usize = try file.read(root_buffer);
+    buffer.len = readlen;
+
+    while (buffer.len > 0) {
+        lineloop: while (reading.searchForwards(buffer, '\n')) |idx| {
+            const line: []u8 = buffer[0..idx];
+            buffer = buffer[(idx + 1)..];
+            if (line[0] == '#') {
+                continue :lineloop;
+            }
+            result.lineCount += 1;
+            std.log.info("line {d}: {s}", .{ result.lineCount, line });
         }
 
-        result.lineCount += 1;
-        var splitIndex: usize = line.len - 4;
-        while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
+        if (readlen > 0) {
+            // readlen > 0 means the last iteration actually read data
+            std.mem.copyForwards(u8, root_buffer, buffer);
+            const copylen: usize = buffer.len;
+            readlen = try file.read(root_buffer[copylen..]);
+            buffer = root_buffer[0..(copylen + readlen)];
 
-        const keystr: []const u8 = line[0..splitIndex];
-        const valstr: []const u8 = line[(splitIndex + 1)..];
-        std.log.info("line{d}: {s}, k: {s}, v: {s}", .{ result.lineCount, line, keystr, valstr });
-        std.debug.assert(keystr.len >= 1);
-        std.debug.assert(keystr.len <= 100);
-        std.debug.assert(valstr.len >= 3);
-        std.debug.assert(valstr[valstr.len - 2] == '.');
-        std.debug.assert(line.len >= 5);
-        std.debug.assert(line[splitIndex] == ';');
+            if (readlen == 0 and copylen > 0 and buffer[buffer.len - 1] != '\n') {
+                // add trailing newline if and only if it is needed
+                root_buffer[buffer.len] = '\n';
+                buffer.len += 1;
+            }
+        }
     }
+
     return result;
 }
 
