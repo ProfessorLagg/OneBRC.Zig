@@ -120,8 +120,9 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
         /// otherwise add the value from addFn to the map
         pub fn addOrUpdate(self: *Self, k: *const Tkey, v: *const Tval, comptime updateFn: UpdateFunc) void {
             const i: isize = self.indexOf(k);
-            var u: usize = @intCast(i);
+            var u: usize = undefined;
             if (i > 0) {
+                u = @intCast(i);
                 updateFn(&self.values[u], v);
             } else {
                 u = self.getInsertIndex(k);
@@ -204,11 +205,17 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
 
         /// Returns the index this key would have if present in the map.
         fn getInsertIndex(self: *Self, k: *const Tkey) usize {
-            if (self.count == 0 or (comparison(k, &self.keys[0]) == .LessThan)) {
-                return 0;
-            }
-            if (comparison(k, &self.keys[self.count - 1]) == .GreaterThan) {
-                return self.count;
+            switch (self.count) {
+                0 => return 0,
+                1 => return switch (comparison(k, &self.keys[0])) {
+                    .LessThan => 0,
+                    else => 1,
+                },
+                else => {
+                    if (comparison(k, &self.keys[self.count - 1]) == .GreaterThan) {
+                        return self.count;
+                    }
+                },
             }
 
             var low: isize = 1;

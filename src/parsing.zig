@@ -4,7 +4,7 @@ const std = @import("std");
 const fs = std.fs;
 const sorted = @import("sorted/sorted.zig");
 const compare = sorted.compare;
-
+const linelog = std.log.scoped(.Lines);
 const DelimReader = @import("delimReader.zig").DelimReader;
 
 const MapKey = @import("mapKey.zig").MapKey;
@@ -28,6 +28,31 @@ inline fn fastIntParse(numstr: []const u8) isize {
         const validInt: isize = @intFromBool(valid);
         const invalidInt: isize = @intFromBool(!valid);
         const value: isize = validInt * ((ci - 48) * m); // '0' = 48
+        result += value;
+        m = (m * 10 * validInt) + (m * invalidInt);
+        i -= 1;
+    }
+    return result;
+}
+inline fn fastIntParseT(comptime T: type, numstr: []const u8) T {
+    comptime {
+        const Ti = @typeInfo(T);
+        if (Ti != .Int or Ti.Int.signedness != .signed) {
+            @compileError("Invalid int type: " ++ @typeName(T));
+        }
+    }
+    const isNegative: bool = numstr[0] == '-';
+    const isNegativeInt: usize = @intFromBool(isNegative);
+
+    var result: T = 0;
+    var m: T = 1;
+    var i: T = @as(T, @intCast(numstr.len)) - 1;
+    while (i >= isNegativeInt) {
+        const ci: T = @intCast(numstr[@as(usize, @intCast(i))]);
+        const valid: bool = ci >= 48 and ci <= 57;
+        const validInt: T = @intFromBool(valid);
+        const invalidInt: T = @intFromBool(!valid);
+        const value: T = validInt * ((ci - 48) * m); // '0' = 48
         result += value;
         m = (m * 10 * validInt) + (m * invalidInt);
         i -= 1;
@@ -143,17 +168,18 @@ pub fn read(path: []const u8) !ParseResult {
 
     lineloop: while (try lineReader.next()) |line| {
         if (line[0] == '#') {
-            std.log.debug("skipped line: '{s}'", .{line});
+            linelog.debug("skipped line: '{s}'", .{line});
             continue :lineloop;
         }
-
         result.lineCount += 1;
+
+        linelog.info("line{d}: {s}", .{ result.lineCount, line });
+
         var splitIndex: usize = line.len - 4;
         while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
-
         const keystr: []const u8 = line[0..splitIndex];
         const valstr: []const u8 = line[(splitIndex + 1)..];
-        std.log.info("line{d}: {s}, k: {s}, v: {s}", .{ result.lineCount, line, keystr, valstr });
+        linelog.info("line{d}: {s}, k: {s}, v: {s}", .{ result.lineCount, line, keystr, valstr });
         std.debug.assert(keystr.len >= 1);
         std.debug.assert(keystr.len <= 100);
         std.debug.assert(valstr.len >= 3);
@@ -174,7 +200,6 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
     var file: fs.File = try openFile(allocator, path);
     defer file.close();
     const fileReader = file.reader();
-
     const TLineReader = DelimReader(@TypeOf(fileReader), '\n', readBufferSize);
     var lineReader: TLineReader = try TLineReader.init(std.heap.page_allocator, fileReader);
     defer lineReader.deinit();
@@ -196,7 +221,7 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
     // main loop
     lineloop: while (try lineReader.next()) |line| {
         if (line[0] == '#') {
-            std.log.debug("skipped line: '{s}'", .{line});
+            linelog.debug("skipped line: '{s}'", .{line});
             continue :lineloop;
         }
         std.debug.assert(line.len >= 5);
@@ -207,7 +232,7 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
 
         keystr = line[0..splitIndex];
         valstr = line[(splitIndex + 1)..];
-        std.log.info("line{d}: {s}, k: {s}, v: {s}", .{ result.lineCount, line, keystr, valstr });
+        linelog.info("line{d}: {s}, k: {s}, v: {s}", .{ result.lineCount, line, keystr, valstr });
         std.debug.assert(keystr.len >= 1);
         std.debug.assert(keystr.len <= 100);
         std.debug.assert(keystr[keystr.len - 1] != ';');
@@ -233,7 +258,6 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
         for (0..maps[i].count) |j| {
             const rKey: *MapKey = &maps[i].keys[j];
             const rVal: *MapVal = &maps[i].values[j];
-
             maps[0].addOrUpdate(rKey, rVal, MapVal.add);
         }
         maps[i].deinit();
@@ -256,6 +280,171 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
 
     result.uniqueKeys = maps[0].count;
     maps[0].deinit();
+    return result;
+}
+
+pub fn parseParallel(path: []const u8, comptime print_result: bool) !ParseResult {
+    _ = &print_result;
+    // Setup allocator
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    defer _ = gpa.deinit();
+
+    // Setup reading
+    var file: fs.File = try openFile(allocator, path);
+    defer file.close();
+    const fileReader = file.reader();
+    const TLineReader = DelimReader(@TypeOf(fileReader), '\n', readBufferSize);
+    var lineReader: TLineReader = try TLineReader.init(allocator, fileReader);
+    defer lineReader.deinit();
+    const filestat: std.fs.File.Stat = blk: {
+        var buf: [4096]u8 = undefined;
+        const abspath = try std.fs.cwd().realpath(path, buf[0..]);
+        var f = try std.fs.openFileAbsolute(abspath, comptime std.fs.File.OpenFlags{ //NOFOLD
+            .mode = .read_only,
+            .lock = .none,
+            .lock_nonblocking = false,
+            .allow_ctty = false,
+        });
+        defer f.close();
+        const stat = try f.stat();
+        break :blk stat;
+    };
+
+    // Setup threads
+    const ThreadContext = struct {
+        const TSelf = @This();
+        const lineSize: usize = 106;
+        const Tline = struct {
+            buf: [lineSize]u8,
+            len: usize,
+        };
+        const Tlines = std.ArrayList(Tline);
+
+        allocator: std.mem.Allocator,
+        lines: Tlines,
+        map: TMap,
+        lineCount: usize = 0,
+
+        pub fn init(alc: std.mem.Allocator) TSelf {
+            return .{
+                .allocator = alc,
+                .lines = Tlines.init(alc),
+                .map = TMap.init(alc) catch |err| {
+                    std.log.err("{}", .{err});
+                    @panic("Could not initialize map");
+                },
+            };
+        }
+
+        pub fn deinit(self: *TSelf) void {
+            self.lines.deinit();
+            self.map.deinit();
+        }
+
+        pub fn appendLine(self: *TSelf, line: []const u8) !void {
+            var v: Tline = .{ .buf = undefined, .len = line.len };
+            std.mem.copyForwards(u8, &v.buf, line);
+            try self.lines.append(v);
+        }
+
+        pub fn run(self: *TSelf) !void {
+            const threadID = std.Thread.getCurrentId();
+            std.log.info("thread {d: >6} - linecount: {d}", .{ threadID, self.lines.items.len });
+            var keystr: []const u8 = undefined;
+            var valstr: []const u8 = undefined;
+            var tKey: MapKey = .{};
+            var tVal: MapVal = .{ .count = 1 };
+            var LN: Tline = undefined;
+            lineloop: for (0..self.lines.items.len) |I| {
+                const idx = self.lines.items.len - 1 - I;
+                LN = self.lines.orderedRemove(idx);
+                self.lines.shrinkAndFree(self.lines.items.len);
+                const line = LN.buf[0..LN.len];
+
+                if (line[0] == '#') {
+                    linelog.debug("skipped line: '{s}'", .{line});
+                    continue :lineloop;
+                }
+                std.debug.assert(line.len >= 5);
+                self.lineCount += 1;
+                var splitIndex: usize = line.len - 4;
+                while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
+                std.debug.assert(line[splitIndex] == ';');
+
+                keystr = line[0..splitIndex];
+                valstr = line[(splitIndex + 1)..];
+                linelog.debug("thread {d: >6} - line{d: >6}: \"{s}\" | k: \"{s}\" | v: \"{s}\"", .{ threadID, self.lineCount, line, keystr, valstr });
+                std.debug.assert(keystr.len >= 1);
+                std.debug.assert(keystr.len <= 100);
+                std.debug.assert(keystr[keystr.len - 1] != ';');
+                std.debug.assert(valstr.len >= 3);
+                std.debug.assert(valstr.len <= 5);
+                std.debug.assert(valstr[valstr.len - 2] == '.');
+                std.debug.assert(valstr[0] != ';');
+
+                // parsing key and value string
+                tKey.set(keystr);
+                const valint: Tuv = @intCast(fastIntParse(valstr));
+                tVal.max = valint;
+                tVal.min = valint;
+                tVal.sum = valint;
+                self.map.addOrUpdate(&tKey, &tVal, MapVal.add);
+            }
+        }
+    };
+
+    const threadCount: comptime_int = 15;
+    const readSizePerThread: u64 = divCiel(u64, filestat.size, threadCount + 1);
+    var threadContexts: [threadCount]ThreadContext = undefined;
+    var threads: [threadCount]std.Thread = undefined;
+
+    threadloop: for (0..threadCount) |threadId| {
+        threadContexts[threadId] = ThreadContext.init(allocator);
+        var readSize: u64 = 0;
+        while (try lineReader.next()) |line| {
+            try threadContexts[threadId].appendLine(line);
+            readSize += line.len;
+            if (readSize >= readSizePerThread) {
+                break;
+            }
+        }
+        threads[threadId] = try std.Thread.spawn(.{ .allocator = allocator }, ThreadContext.run, .{&threadContexts[threadId]});
+        continue :threadloop;
+    }
+
+    var finalmap: TMap = try TMap.init(allocator);
+    var result: ParseResult = .{};
+    for (0..threadCount) |tid| {
+        threads[tid].join();
+        std.log.info("Joined thread {d}", .{tid});
+        var map: *TMap = &threadContexts[tid].map;
+        for (0..map.count) |i| {
+            const rKey: *MapKey = &map.keys[i];
+            const rVal: *MapVal = &map.values[i];
+            finalmap.addOrUpdate(rKey, rVal, MapVal.add);
+        }
+        result.lineCount += threadContexts[tid].lineCount;
+        threadContexts[tid].deinit();
+    }
+
+    if (print_result) {
+        const stdout = std.io.getStdOut().writer();
+        for (0..finalmap.count) |i| {
+            const k: *MapKey = &finalmap.keys[i];
+            const keystr = k.get();
+            const v: *MapVal = &finalmap.values[i];
+            try stdout.print("{s};{d:.1};{d:.1};{d:.1}\n", .{ // NO WRAP
+                keystr,
+                v.getMin(f64),
+                v.getMean(f64),
+                v.getMax(f64),
+            });
+        }
+    }
+
+    result.uniqueKeys = finalmap.count;
+    finalmap.deinit();
     return result;
 }
 
