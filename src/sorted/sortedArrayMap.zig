@@ -136,6 +136,12 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
             _ = &self;
         }
 
+        pub fn join(self: *Self, other: *const Self, comptime updateFn: UpdateFunc) void {
+            for (0..other.count) |i| {
+                self.addOrUpdate(&other.keys[i], &other.values[i], updateFn);
+            }
+        }
+
         // === PRIVATE ===
         /// Rezises capacity to newsize
         fn resize(self: *Self, new_capacity: usize) void {

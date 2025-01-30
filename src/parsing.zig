@@ -321,8 +321,13 @@ pub fn parseParallel(path: []const u8, comptime print_result: bool) !ParseResult
     // Setup threads
     const ThreadFactory = struct {
         const TSelf = @This();
-        const TList = std.DoublyLinkedList([]u8);
+
+        const TData = struct {
+            line: []u8,
+        };
+        const TList = std.DoublyLinkedList(TData);
         const TNode = TList.Node;
+
         const mapCount: u8 = 255;
         const maxRetries: u8 = 64;
 
@@ -332,9 +337,11 @@ pub fn parseParallel(path: []const u8, comptime print_result: bool) !ParseResult
         readingBegunEvent: std.Thread.ResetEvent = .{},
         readingFinishedEvent: std.Thread.ResetEvent = .{},
         lastParseEvent: std.Thread.ResetEvent = .{},
+        parseEvent: std.Thread.ResetEvent = .{},
 
         lines: TList = .{},
-        linecount: usize = 0,
+        linesMutex: std.Thread.Mutex = .{},
+        totalLineCount: usize = 0,
         map: TMap = undefined,
 
         pub fn init(alc: std.mem.Allocator) !TSelf {
@@ -345,14 +352,32 @@ pub fn parseParallel(path: []const u8, comptime print_result: bool) !ParseResult
             self.map.deinit();
         }
 
+        inline fn createData(alc: std.mem.Allocator, line: []const u8) !TData {
+            var r: TData = .{ .line = try alc.alloc(u8, line.len) };
+            @memcpy(r.line[0..], line[0..]);
+            return r;
+        }
+
+        inline fn destroyData(alc: std.mem.Allocator, data: *TData) void {
+            alc.free(data.line);
+        }
+
+        inline fn pop(self: *TSelf) ?*TNode {
+            self.linesMutex.lock();
+            const r = self.lines.pop();
+            self.linesMutex.unlock();
+            return r;
+        }
+
         fn threadFn(self: *TSelf) void {
             self.readingBegunEvent.wait();
             while (!self.readingFinishedEvent.isSet()) {
-                while (self.lines.pop()) |node| {
-                    const line = node.data;
+                while (self.pop()) |node| {
+                    self.parseEvent.set();
+                    const line = node.data.line;
                     if (line[0] != '#') {
-                        self.linecount += 1;
-                        linelog.info("line{d}: {s}", .{ self.linecount, line });
+                        self.totalLineCount += 1;
+                        linelog.info("line{d}: {s}", .{ self.totalLineCount, line });
                         var splitIdx = line.len - 4;
                         while (line[splitIdx] != ';' and splitIdx > 0) : (splitIdx -= 1) {}
                         const keystr: []const u8 = line[0..splitIdx];
@@ -362,7 +387,7 @@ pub fn parseParallel(path: []const u8, comptime print_result: bool) !ParseResult
                         const tVal: MapVal = .{ .count = 1, .sum = valint, .max = valint, .min = valint };
                         self.map.addOrUpdate(&tKey, &tVal, MapVal.add);
                     }
-                    self.allocator.free(node.data);
+                    destroyData(self.allocator, &node.data);
                     self.allocator.destroy(node);
                 }
             }
@@ -371,9 +396,11 @@ pub fn parseParallel(path: []const u8, comptime print_result: bool) !ParseResult
 
         pub fn handleLine(self: *TSelf, line: []const u8) !void {
             var node: *TNode = try self.allocator.create(TNode);
-            node.data = try self.allocator.alloc(u8, line.len);
-            @memcpy(node.data[0..], line[0..]);
+            node.data = try createData(self.allocator, line);
 
+            if (self.lines.len > 0) {
+                self.parseEvent.wait();
+            }
             self.lines.prepend(node);
             self.readingBegunEvent.set();
         }
@@ -383,31 +410,54 @@ pub fn parseParallel(path: []const u8, comptime print_result: bool) !ParseResult
         }
 
         pub fn wait(self: *TSelf) void {
+            self.readingBegunEvent.set();
             self.readingFinishedEvent.set();
             self.lastParseEvent.wait();
             self.thread.join();
         }
     };
 
-    var factory: ThreadFactory = try ThreadFactory.init(allocator);
-    try factory.start();
+    const threadCount: usize = 15;
+    var factoryAllocators: [threadCount]std.heap.GeneralPurposeAllocator(.{}) = undefined;
+    var factories: [threadCount]ThreadFactory = undefined;
+    inline for (0..threadCount) |i| {
+        factoryAllocators[i] = .{};
+        factories[i] = try ThreadFactory.init(factoryAllocators[i].allocator());
+        try factories[i].start();
+    }
+
     std.log.debug("begun reading", .{});
+    var fId: usize = 0;
     while (try lineReader.next()) |line| {
-        try factory.handleLine(line);
+        try factories[fId].handleLine(line);
+        fId = (fId + 1) % factories.len;
     }
     lineReader.deinit();
     file.close();
     std.log.debug("finished reading", .{});
 
-    std.log.debug("begun waiting", .{});
-    factory.wait();
+    std.log.debug("begun waiting and merging", .{});
+    var result: ParseResult = .{
+        .uniqueKeys = 0,
+        .lineCount = 0,
+    };
+    var map: TMap = try TMap.init(allocator);
+    defer map.deinit();
+    inline for (0..threadCount) |i| {
+        factories[i].wait();
+        map.join(&factories[i].map, MapVal.add);
+        result.lineCount += factories[i].totalLineCount;
+        factories[i].deinit();
+        _ = factoryAllocators[i].deinit();
+    }
+    result.uniqueKeys = map.count;
     std.log.debug("finished waiting", .{});
 
     if (print_result) {
         const stdout = std.io.getStdOut().writer();
-        for (0..factory.map.count) |i| {
-            const k: *MapKey = &factory.map.keys[i];
-            const v: *MapVal = &factory.map.values[i];
+        for (0..map.count) |i| {
+            const k: *MapKey = &map.keys[i];
+            const v: *MapVal = &map.values[i];
             try stdout.print("{s};{d:.1};{d:.1};{d:.1}\n", .{ // NO WRAP
                 k.get(),
                 v.getMin(f64),
@@ -416,13 +466,7 @@ pub fn parseParallel(path: []const u8, comptime print_result: bool) !ParseResult
             });
         }
     }
-    const result: ParseResult = .{
-        .uniqueKeys = factory.map.count,
-        .lineCount = factory.linecount,
-    };
-    std.log.debug("begun factory deinit", .{});
-    factory.deinit();
-    std.log.debug("finished factory deinit", .{});
+
     return result;
 }
 
