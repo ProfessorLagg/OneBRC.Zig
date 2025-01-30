@@ -81,6 +81,23 @@ inline fn divCiel(comptime T: type, numerator: T, denominator: T) T {
     return 1 + ((numerator - 1) / denominator);
 }
 
+const LineBuffer = struct { // NO FOLD
+    const TSelf = @This();
+    const size: comptime_int = 106;
+    bytes: [size]u8 = undefined,
+    len: u8 = 0,
+
+    pub inline fn create(line: []const u8) TSelf {
+        var r: TSelf = .{};
+        r.set(line);
+        return r;
+    }
+    pub inline fn set(self: *TSelf, line: []const u8) void {
+        self.len = @max(size, @as(@TypeOf(self.len), @intCast(line.len)));
+        std.mem.copyForwards(u8, &self.bytes, line);
+    }
+};
+
 const MapVal = struct {
     count: Tuv = 0,
     sum: Tuv = 0,
@@ -284,6 +301,11 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
 }
 
 pub fn parseParallel(path: []const u8, comptime print_result: bool) !ParseResult {
+    comptime {
+        if (builtin.single_threaded) {
+            @compileError("This method doesnt work in single threaded mode");
+        }
+    }
     _ = &print_result;
     // Setup allocator
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -292,150 +314,127 @@ pub fn parseParallel(path: []const u8, comptime print_result: bool) !ParseResult
 
     // Setup reading
     var file: fs.File = try openFile(allocator, path);
-    defer file.close();
     const fileReader = file.reader();
     const TLineReader = DelimReader(@TypeOf(fileReader), '\n', readBufferSize);
-    var lineReader: TLineReader = try TLineReader.init(allocator, fileReader);
-    defer lineReader.deinit();
-    const filestat: std.fs.File.Stat = blk: {
-        var buf: [4096]u8 = undefined;
-        const abspath = try std.fs.cwd().realpath(path, buf[0..]);
-        var f = try std.fs.openFileAbsolute(abspath, comptime std.fs.File.OpenFlags{ //NOFOLD
-            .mode = .read_only,
-            .lock = .none,
-            .lock_nonblocking = false,
-            .allow_ctty = false,
-        });
-        defer f.close();
-        const stat = try f.stat();
-        break :blk stat;
-    };
+    var lineReader: TLineReader = try TLineReader.init(std.heap.page_allocator, fileReader);
 
     // Setup threads
-    const ThreadContext = struct {
+    const ThreadFactory = struct {
         const TSelf = @This();
-        const lineSize: usize = 106;
-        const Tline = struct {
-            buf: [lineSize]u8,
-            len: usize,
-        };
-        const Tlines = std.ArrayList(Tline);
+        const mapCount: u8 = 255;
+        const maxRetries: u8 = 64;
 
         allocator: std.mem.Allocator,
-        lines: Tlines,
-        map: TMap,
-        lineCount: usize = 0,
+        threadPool: std.Thread.Pool,
+        wg: std.Thread.WaitGroup = .{},
+        maps: [mapCount]TMap = undefined,
+        mapLocks: [mapCount]std.Thread.Mutex = undefined,
+        mapsMerged: bool = false,
 
-        pub fn init(alc: std.mem.Allocator) TSelf {
-            return .{
+        pub fn init(alc: std.mem.Allocator) !TSelf {
+            var r = TSelf{ // NO FOLD
                 .allocator = alc,
-                .lines = Tlines.init(alc),
-                .map = TMap.init(alc) catch |err| {
-                    std.log.err("{}", .{err});
-                    @panic("Could not initialize map");
+                .threadPool = blk: {
+                    var r: std.Thread.Pool = undefined;
+                    try r.init(.{ .allocator = alc });
+                    break :blk r;
                 },
             };
-        }
 
-        pub fn deinit(self: *TSelf) void {
-            self.lines.deinit();
-            self.map.deinit();
-        }
-
-        pub fn appendLine(self: *TSelf, line: []const u8) !void {
-            var v: Tline = .{ .buf = undefined, .len = line.len };
-            std.mem.copyForwards(u8, &v.buf, line);
-            try self.lines.append(v);
-        }
-
-        pub fn run(self: *TSelf) !void {
-            const threadID = std.Thread.getCurrentId();
-            std.log.info("thread {d: >6} - linecount: {d}", .{ threadID, self.lines.items.len });
-            var keystr: []const u8 = undefined;
-            var valstr: []const u8 = undefined;
-            var tKey: MapKey = .{};
-            var tVal: MapVal = .{ .count = 1 };
-            var LN: Tline = undefined;
-            lineloop: for (0..self.lines.items.len) |I| {
-                const idx = self.lines.items.len - 1 - I;
-                LN = self.lines.orderedRemove(idx);
-                self.lines.shrinkAndFree(self.lines.items.len);
-                const line = LN.buf[0..LN.len];
-
-                if (line[0] == '#') {
-                    linelog.debug("skipped line: '{s}'", .{line});
-                    continue :lineloop;
-                }
-                std.debug.assert(line.len >= 5);
-                self.lineCount += 1;
-                var splitIndex: usize = line.len - 4;
-                while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
-                std.debug.assert(line[splitIndex] == ';');
-
-                keystr = line[0..splitIndex];
-                valstr = line[(splitIndex + 1)..];
-                linelog.debug("thread {d: >6} - line{d: >6}: \"{s}\" | k: \"{s}\" | v: \"{s}\"", .{ threadID, self.lineCount, line, keystr, valstr });
-                std.debug.assert(keystr.len >= 1);
-                std.debug.assert(keystr.len <= 100);
-                std.debug.assert(keystr[keystr.len - 1] != ';');
-                std.debug.assert(valstr.len >= 3);
-                std.debug.assert(valstr.len <= 5);
-                std.debug.assert(valstr[valstr.len - 2] == '.');
-                std.debug.assert(valstr[0] != ';');
-
-                // parsing key and value string
-                tKey.set(keystr);
-                const valint: Tuv = @intCast(fastIntParse(valstr));
-                tVal.max = valint;
-                tVal.min = valint;
-                tVal.sum = valint;
-                self.map.addOrUpdate(&tKey, &tVal, MapVal.add);
+            for (0..mapCount) |i| {
+                r.mapLocks[i] = .{};
+                r.maps[i] = try TMap.init(alc);
             }
+
+            return r;
+        }
+        pub fn deinit(self: *TSelf) void {
+            self.threadPool.mutex.lock();
+            self.threadPool.is_running = false;
+            self.threadPool.mutex.unlock();
+            self.threadPool.cond.broadcast();
+            for (self.threadPool.threads) |thread| {
+                thread.detach();
+            }
+            self.threadPool.allocator.free(self.threadPool.threads);
+            inline for (0..mapCount) |i| {
+                self.maps[i].deinit();
+            }
+        }
+
+        fn threadFn(self: *TSelf, line: []const u8) void {
+            var splitIdx = line.len - 4;
+            while (line[splitIdx] != ';' and splitIdx > 0) : (splitIdx -= 1) {}
+            const keystr: []const u8 = line[0..splitIdx];
+            const valstr: []const u8 = line[(splitIdx + 1)..];
+            const valint: Tuv = @intCast(fastIntParse(valstr));
+            const tKey: MapKey = MapKey.create(keystr);
+            const tVal: MapVal = .{ .count = 1, .sum = valint, .max = valint, .min = valint };
+            const mapIndex: u8 = tKey.sum % mapCount;
+
+            self.mapLocks[mapIndex].lock();
+            self.maps[mapIndex].addOrUpdate(&tKey, &tVal, MapVal.add);
+            self.mapLocks[mapIndex].unlock();
+
+            self.allocator.free(line);
+        }
+
+        pub fn handleLine(self: *TSelf, line: []const u8) !bool {
+            if (line[0] == '#') {
+                return false;
+            }
+            var linecopy: []u8 = try self.allocator.alloc(u8, line.len);
+            @memcpy(linecopy[0..], line[0..]);
+            self.threadPool.spawnWg(&self.wg, threadFn, .{ self, linecopy });
+            return true;
+        }
+        pub fn mergeMaps(self: *TSelf) *const TMap {
+            inline for (1..mapCount) |i| {
+                std.log.debug("map[{d:0>2}] keycount = {d}", .{ i, self.maps[i].count });
+                for (0..self.maps[i].count) |j| {
+                    const rKey: *MapKey = &self.maps[i].keys[j];
+                    const rVal: *MapVal = &self.maps[i].values[j];
+                    self.maps[0].addOrUpdate(rKey, rVal, MapVal.add);
+                }
+            }
+            self.mapsMerged = true;
+            return &self.maps[0];
+        }
+        pub fn wait(self: *TSelf) void {
+            self.threadPool.waitAndWork(&self.wg);
         }
     };
 
-    const threadCount: comptime_int = 15;
-    const readSizePerThread: u64 = divCiel(u64, filestat.size, threadCount + 1);
-    var threadContexts: [threadCount]ThreadContext = undefined;
-    var threads: [threadCount]std.Thread = undefined;
-
-    threadloop: for (0..threadCount) |threadId| {
-        threadContexts[threadId] = ThreadContext.init(allocator);
-        var readSize: u64 = 0;
-        while (try lineReader.next()) |line| {
-            try threadContexts[threadId].appendLine(line);
-            readSize += line.len;
-            if (readSize >= readSizePerThread) {
-                break;
-            }
-        }
-        threads[threadId] = try std.Thread.spawn(.{ .allocator = allocator }, ThreadContext.run, .{&threadContexts[threadId]});
-        continue :threadloop;
-    }
-
-    var finalmap: TMap = try TMap.init(allocator);
+    var factory: ThreadFactory = try ThreadFactory.init(allocator);
     var result: ParseResult = .{};
-    for (0..threadCount) |tid| {
-        threads[tid].join();
-        std.log.info("Joined thread {d}", .{tid});
-        var map: *TMap = &threadContexts[tid].map;
-        for (0..map.count) |i| {
-            const rKey: *MapKey = &map.keys[i];
-            const rVal: *MapVal = &map.values[i];
-            finalmap.addOrUpdate(rKey, rVal, MapVal.add);
+
+    std.log.debug("begun reading", .{});
+    while (try lineReader.next()) |line| {
+        if (try factory.handleLine(line)) {
+            result.lineCount += 1;
+            linelog.info("line{d}: {s}", .{ result.lineCount, line });
         }
-        result.lineCount += threadContexts[tid].lineCount;
-        threadContexts[tid].deinit();
     }
+    lineReader.deinit();
+    file.close();
+    std.log.debug("finished reading", .{});
+
+    std.log.debug("begun waiting", .{});
+    factory.wait();
+    std.log.debug("finished waiting", .{});
+
+    std.log.debug("begun merging", .{});
+    const map = factory.mergeMaps();
+    std.log.debug("finished merging", .{});
+    result.uniqueKeys = map.count;
 
     if (print_result) {
         const stdout = std.io.getStdOut().writer();
-        for (0..finalmap.count) |i| {
-            const k: *MapKey = &finalmap.keys[i];
-            const keystr = k.get();
-            const v: *MapVal = &finalmap.values[i];
+        for (0..map.count) |i| {
+            const k: *MapKey = &map.keys[i];
+            const v: *MapVal = &map.values[i];
             try stdout.print("{s};{d:.1};{d:.1};{d:.1}\n", .{ // NO WRAP
-                keystr,
+                k.get(),
                 v.getMin(f64),
                 v.getMean(f64),
                 v.getMax(f64),
@@ -443,8 +442,9 @@ pub fn parseParallel(path: []const u8, comptime print_result: bool) !ParseResult
         }
     }
 
-    result.uniqueKeys = finalmap.count;
-    finalmap.deinit();
+    std.log.debug("begun factory deinit", .{});
+    factory.deinit();
+    std.log.debug("finished factory deinit", .{});
     return result;
 }
 
