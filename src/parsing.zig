@@ -360,7 +360,7 @@ pub fn parseParallel(path: []const u8, comptime print_result: bool) !ParseResult
                         const valint: Tuv = @intCast(fastIntParse(valstr));
                         const tKey: MapKey = MapKey.create(keystr);
                         const tVal: MapVal = .{ .count = 1, .sum = valint, .max = valint, .min = valint };
-                        self.map.addOrUpdate(&tKey, &tVal, MapVal.add);   
+                        self.map.addOrUpdate(&tKey, &tVal, MapVal.add);
                     }
                     self.allocator.free(node.data);
                     self.allocator.destroy(node);

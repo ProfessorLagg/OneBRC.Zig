@@ -22,11 +22,11 @@ pub const std_options: std.Options = .{
     },
 };
 
-// const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\simple.txt";
+const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\simple.txt";
 // const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\verysmall.txt";
 // const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\small.txt";
 // const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
-const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
+// const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
 // const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\large.txt";
 
 pub fn main() !void {
