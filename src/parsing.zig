@@ -348,15 +348,20 @@ pub fn parseParallel(path: []const u8, comptime print_result: bool) !ParseResult
 
             return r;
         }
-        pub fn deinit(self: *TSelf) void {
-            self.threadPool.mutex.lock();
-            self.threadPool.is_running = false;
-            self.threadPool.mutex.unlock();
-            self.threadPool.cond.broadcast();
-            for (self.threadPool.threads) |thread| {
+
+        // the std lib deinit blocks forever for some reason
+        fn deinitThreadPool(pool: *std.Thread.Pool) void {
+            pool.mutex.lock();
+            pool.is_running = false;
+            pool.mutex.unlock();
+            pool.cond.broadcast();
+            for (pool.threads) |thread| {
                 thread.detach();
             }
-            self.threadPool.allocator.free(self.threadPool.threads);
+            pool.allocator.free(pool.threads);
+        }
+        pub fn deinit(self: *TSelf) void {
+            deinitThreadPool(&self.threadPool);
             inline for (0..mapCount) |i| {
                 self.maps[i].deinit();
             }
