@@ -108,8 +108,8 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
         pub fn update(self: *Self, k: *const Tkey, v: *const Tval) void {
             const insertionIndex = self.getInsertIndex(k);
             if (insertionIndex < self.count) {
-                self.keys[insertionIndex] = k;
-                self.values[insertionIndex] = v;
+                self.keys[insertionIndex] = k.*;
+                self.values[insertionIndex] = v.*;
             } else {
                 self.insertAt(insertionIndex, k, v);
             }
@@ -119,11 +119,13 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
         /// If k is in the map, updates the value at k using updateFn.
         /// otherwise add the value from addFn to the map
         pub fn addOrUpdate(self: *Self, k: *const Tkey, v: *const Tval, comptime updateFn: UpdateFunc) void {
-            const s = self.getInsertOrUpdateIndex(k);
-            if (s.equal) {
-                updateFn(&self.values[s.index], v);
+            const s: u32 = self.getInsertOrUpdateIndex(k);
+            const e: bool = (s & 0b10000000000000000000000000000000) > 0;
+            const i: u32 = s & 0b01111111111111111111111111111111;
+            if (e) {
+                updateFn(&self.values[i], v);
             } else {
-                self.insertAt(s.index, k, v);
+                self.insertAt(i, k, v);
             }
         }
 
@@ -248,16 +250,15 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
             return midu;
         }
 
-        const InsertOrUpdateResult = struct {
-            equal: bool,
-            index: u31,
-        };
-        /// Returns the index this key would have if present in the map.
-        inline fn getInsertOrUpdateIndex(self: *Self, k: *const Tkey) InsertOrUpdateResult {
+        inline fn makeInsertOrUpdateResult(equal: bool, index: u31) u32 {
+            return index | (@as(u32, @intFromBool(equal)) << 31);
+        }
+
+        inline fn getInsertOrUpdateIndex(self: *Self, k: *const Tkey) u32 {
             // Testing for edge cases
             if (self.count == 0) {
                 // this is the first key
-                return .{ .equal = false, .index = 0 };
+                return 0;
             }
 
             var L: isize = 0;
@@ -274,11 +275,11 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
                 switch (cmp) {
                     .LessThan => R = i - 1,
                     .GreaterThan => L = i + 1,
-                    .Equal => return .{ .equal = true, .index = u },
+                    .Equal => return makeInsertOrUpdateResult(true, u),
                 }
             }
 
-            return .{ .equal = false, .index = u + @intFromBool(cmp == .GreaterThan) };
+            return u + @intFromBool(cmp == .GreaterThan);
         }
     };
 }

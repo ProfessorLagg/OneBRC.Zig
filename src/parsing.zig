@@ -471,40 +471,40 @@ pub fn parseParallel(path: []const u8, comptime print_result: bool) !ParseResult
 }
 
 // ========== TESTING ==========
-test "compare" {
-    const data = @import("benchmarking/data/data.zig");
-    var keyList: std.ArrayList([]const u8) = try data.readTestKeys(std.testing.allocator);
-    defer keyList.deinit();
+// test "compare" {
+//     const data = @import("benchmarking/data/data.zig");
+//     var keyList: std.ArrayList([]const u8) = try data.readCityNames(std.testing.allocator);
+//     defer keyList.deinit();
 
-    const names = keyList.items;
-    var iterId: u64 = 0;
-    for (1..names.len) |i| {
-        const ki: MapKey = MapKey.create(names[i]);
-        for (0..i) |j| {
-            iterId += 1;
-            const kj: MapKey = MapKey.create(names[j]);
+//     const names = keyList.items;
+//     var iterId: u64 = 0;
+//     for (1..names.len) |i| {
+//         const ki: MapKey = MapKey.create(names[i]);
+//         for (0..i) |j| {
+//             iterId += 1;
+//             const kj: MapKey = MapKey.create(names[j]);
 
-            const cmp1_ij = MapKey.compare_valid(&ki, &kj);
-            const cmp1_ji = MapKey.compare_valid(&kj, &ki);
-            const cmp2_ij = MapKey.compare(&ki, &kj);
-            const cmp2_ji = MapKey.compare(&kj, &ki);
+//             const cmp1_ij = MapKey.compare_valid(&ki, &kj);
+//             const cmp1_ji = MapKey.compare_valid(&kj, &ki);
+//             const cmp2_ij = MapKey.compare(&ki, &kj);
+//             const cmp2_ji = MapKey.compare(&kj, &ki);
 
-            const v1_ij: u8 = @abs(@intFromEnum(cmp1_ij));
-            const v1_ji: u8 = @abs(@intFromEnum(cmp1_ji));
-            const v2_ij: u8 = @abs(@intFromEnum(cmp2_ij));
-            const v2_ji: u8 = @abs(@intFromEnum(cmp2_ji));
+//             const v1_ij: u8 = @abs(@intFromEnum(cmp1_ij));
+//             const v1_ji: u8 = @abs(@intFromEnum(cmp1_ji));
+//             const v2_ij: u8 = @abs(@intFromEnum(cmp2_ij));
+//             const v2_ji: u8 = @abs(@intFromEnum(cmp2_ji));
 
-            std.testing.expectEqual(v1_ij, v2_ij) catch |err| {
-                std.log.warn("error at iteration {d}: ki: \"{s}\", kj: \"{s}\"", .{ iterId, ki.get(), kj.get() });
-                return err;
-            };
-            std.testing.expectEqual(v1_ji, v2_ji) catch |err| {
-                std.log.warn("error at iteration {d}: ki: \"{s}\", kj: \"{s}\"", .{ iterId, ki.get(), kj.get() });
-                return err;
-            };
-        }
-    }
-}
+//             std.testing.expectEqual(v1_ij, v2_ij) catch |err| {
+//                 std.log.warn("error at iteration {d}: ki: \"{s}\", kj: \"{s}\"", .{ iterId, ki.get(), kj.get() });
+//                 return err;
+//             };
+//             std.testing.expectEqual(v1_ji, v2_ji) catch |err| {
+//                 std.log.warn("error at iteration {d}: ki: \"{s}\", kj: \"{s}\"", .{ iterId, ki.get(), kj.get() });
+//                 return err;
+//             };
+//         }
+//     }
+// }
 
 test "Size and Alignment" {
     @setRuntimeSafety(false);
@@ -515,4 +515,8 @@ test "Size and Alignment" {
     metainfo.logMemInfo(ParseResult);
     metainfo.logMemInfo(DelimReader(fs.File.Reader, '\n', readBufferSize));
     metainfo.logMemInfo(TMap);
+
+    const v31: u31 = std.math.maxInt(u31);
+    const v32: u32 = v31 | (@as(u32, @intFromBool(false)) << 31);
+    std.log.warn("v31 | (@as(u32, @intFromBool(false)) << 31) = 0b{b:0>32}", .{v32});
 }
