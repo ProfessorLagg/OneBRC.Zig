@@ -264,7 +264,7 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
                 return .{ .equal = false, .index = 0 };
             }
             if (comparison(k, &self.keys[self.count - 1]) == .GreaterThan) {
-                 // The key is greater than all elements
+                // The key is greater than all elements
                 return .{ .equal = false, .index = @truncate(self.count) };
             }
 
@@ -286,16 +286,7 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
                 }
             }
 
-            switch (cmp) {
-                .Equal => unreachable,
-                .GreaterThan => {
-                    return .{ .equal = false, .index = u + 1};
-                },
-                .LessThan => {
-                    return .{ .equal = false, .index = u };
-                }
-            }
-            
+            return .{ .equal = false, .index = u + @intFromBool(cmp == .GreaterThan) };
         }
     };
 }
