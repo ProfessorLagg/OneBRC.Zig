@@ -119,14 +119,11 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
         /// If k is in the map, updates the value at k using updateFn.
         /// otherwise add the value from addFn to the map
         pub fn addOrUpdate(self: *Self, k: *const Tkey, v: *const Tval, comptime updateFn: UpdateFunc) void {
-            const i: isize = self.indexOf(k);
-            var u: usize = undefined;
-            if (i > 0) {
-                u = @intCast(i);
-                updateFn(&self.values[u], v);
+            const s = self.getInsertOrUpdateIndex(k);
+            if (s.equal) {
+                updateFn(&self.values[s.index], v);
             } else {
-                u = self.getInsertIndex(k);
-                self.insertAt(u, k, v);
+                self.insertAt(s.index, k, v);
             }
         }
 
@@ -249,6 +246,56 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
                 midu = @as(usize, @intCast(mid));
             }
             return midu;
+        }
+
+        const InsertOrUpdateResult = struct {
+            equal: bool,
+            index: u31,
+        };
+        /// Returns the index this key would have if present in the map.
+        inline fn getInsertOrUpdateIndex(self: *Self, k: *const Tkey) InsertOrUpdateResult {
+            // Testing for edge cases
+            if (self.count == 0) {
+                // this is the first key
+                return .{ .equal = false, .index = 0 };
+            }
+            if (comparison(k, &self.keys[0]) == .LessThan) {
+                // The key is less than all elements
+                return .{ .equal = false, .index = 0 };
+            }
+            if (comparison(k, &self.keys[self.count - 1]) == .GreaterThan) {
+                 // The key is greater than all elements
+                return .{ .equal = false, .index = @truncate(self.count) };
+            }
+
+            var L: isize = 0;
+            var R: isize = @bitCast(self.count);
+            var i: isize = undefined;
+            var u: u31 = undefined;
+            var cmp: CompareResult = undefined;
+            R -= 1;
+            while (L <= R) {
+                i = @divFloor(L + R, 2);
+                u = @as(u31, @intCast(i));
+                cmp = comparison(k, &self.keys[u]);
+                log.info("L: {d}, R: {d}, i: {d}, cmp: {s}", .{ L, R, i, @tagName(cmp) });
+                switch (cmp) {
+                    .LessThan => R = i - 1,
+                    .GreaterThan => L = i + 1,
+                    .Equal => return .{ .equal = true, .index = u },
+                }
+            }
+
+            switch (cmp) {
+                .Equal => unreachable,
+                .GreaterThan => {
+                    return .{ .equal = false, .index = u + 1};
+                },
+                .LessThan => {
+                    return .{ .equal = false, .index = u };
+                }
+            }
+            
         }
     };
 }
