@@ -259,14 +259,6 @@ pub fn SortedArrayMap(comptime Tkey: type, comptime Tval: type, comptime compari
                 // this is the first key
                 return .{ .equal = false, .index = 0 };
             }
-            if (comparison(k, &self.keys[0]) == .LessThan) {
-                // The key is less than all elements
-                return .{ .equal = false, .index = 0 };
-            }
-            if (comparison(k, &self.keys[self.count - 1]) == .GreaterThan) {
-                // The key is greater than all elements
-                return .{ .equal = false, .index = @truncate(self.count) };
-            }
 
             var L: isize = 0;
             var R: isize = @bitCast(self.count);
