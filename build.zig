@@ -20,7 +20,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/cli.zig"),
         .target = target,
         .optimize = optimize,
-        .single_threaded = false,
+        .single_threaded = true,
     });
 
     // This declares intent for the executable to be installed into the
