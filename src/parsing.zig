@@ -10,55 +10,39 @@ const DelimReader = @import("delimReader.zig").DelimReader;
 const MapKey = @import("mapKey.zig").MapKey;
 
 /// Type of int used in the MapVal struct
-const Tuv = u32;
+const Tival = i32;
 /// Type of map used in parse function
 const TMap = sorted.SortedArrayMap(MapKey, MapVal, MapKey.compare);
 
-inline fn fastIntParse(numstr: []const u8) isize {
-    // @setRuntimeSafety(false);
-    const isNegative: bool = numstr[0] == '-';
-    const isNegativeInt: usize = @intFromBool(isNegative);
-
-    var result: isize = 0;
-    var m: isize = 1;
-    var i: isize = @as(isize, @intCast(numstr.len)) - 1;
-    while (i >= isNegativeInt) {
-        const ci: isize = @intCast(numstr[@as(usize, @intCast(i))]);
-        const valid: bool = ci >= 48 and ci <= 57;
-        const validInt: isize = @intFromBool(valid);
-        const invalidInt: isize = @intFromBool(!valid);
-        const value: isize = validInt * ((ci - 48) * m); // '0' = 48
-        result += value;
-        m = (m * 10 * validInt) + (m * invalidInt);
-        i -= 1;
-    }
-    return result;
-}
-inline fn fastIntParseT(comptime T: type, numstr: []const u8) T {
+fn fastIntParse(comptime T: type, numstr: []const u8) T {
     comptime {
         const Ti = @typeInfo(T);
         if (Ti != .Int or Ti.Int.signedness != .signed) {
-            @compileError("Invalid int type: " ++ @typeName(T));
+            @compileError("T must be an signed integer, but was: " + @typeName(T));
         }
     }
+
+    std.debug.assert(numstr.len > 0);
     const isNegative: bool = numstr[0] == '-';
-    const isNegativeInt: usize = @intFromBool(isNegative);
+    const isNegativeInt: T = @intFromBool(isNegative);
 
     var result: T = 0;
     var m: T = 1;
-    var i: T = @as(T, @intCast(numstr.len)) - 1;
-    while (i >= isNegativeInt) {
-        const ci: T = @intCast(numstr[@as(usize, @intCast(i))]);
+
+    var i: isize = @as(isize, @intCast(numstr.len)) - 1;
+    while (i >= isNegativeInt) : (i -= 1) {
+        const ci: T = @intCast(numstr[@as(usize, @bitCast(i))]);
         const valid: bool = ci >= 48 and ci <= 57;
         const validInt: T = @intFromBool(valid);
         const invalidInt: T = @intFromBool(!valid);
-        const value: T = validInt * ((ci - 48) * m); // '0' = 48
-        result += value;
+        result += validInt * ((ci - 48) * m); // '0' = 48
         m = (m * 10 * validInt) + (m * invalidInt);
-        i -= 1;
     }
-    return result;
+
+    const sign: T = (-1 * isNegativeInt) + @as(T, @intFromBool(!isNegative));
+    return result * sign;
 }
+
 fn toAbsolutePath(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     const cwd_path = try fs.cwd().realpathAlloc(allocator, ".");
     defer allocator.free(cwd_path);
@@ -99,12 +83,12 @@ const LineBuffer = struct { // NO FOLD
 };
 
 const MapVal = struct {
-    count: Tuv = 0,
-    sum: Tuv = 0,
-    min: Tuv = std.math.maxInt(Tuv),
-    max: Tuv = std.math.minInt(Tuv),
+    count: Tival = 0,
+    sum: Tival = 0,
+    min: Tival = std.math.maxInt(Tival),
+    max: Tival = std.math.minInt(Tival),
 
-    pub inline fn addRaw(mv: *MapVal, v: Tuv) void {
+    pub inline fn addRaw(mv: *MapVal, v: Tival) void {
         mv.count += 1;
         mv.sum += v;
         mv.min = @min(mv.min, v);
@@ -260,7 +244,7 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
 
         // parsing key and value string
         tKey.set(keystr);
-        const valint: Tuv = @intCast(fastIntParse(valstr));
+        const valint: Tival = fastIntParse(Tival, valstr);
         tVal.max = valint;
         tVal.min = valint;
         tVal.sum = valint;
@@ -382,7 +366,7 @@ pub fn parseParallel(path: []const u8, comptime print_result: bool) !ParseResult
                         while (line[splitIdx] != ';' and splitIdx > 0) : (splitIdx -= 1) {}
                         const keystr: []const u8 = line[0..splitIdx];
                         const valstr: []const u8 = line[(splitIdx + 1)..];
-                        const valint: Tuv = @intCast(fastIntParse(valstr));
+                        const valint: Tival = @intCast(fastIntParse(Tival, valstr));
                         const tKey: MapKey = MapKey.create(keystr);
                         const tVal: MapVal = .{ .count = 1, .sum = valint, .max = valint, .min = valint };
                         self.map.addOrUpdate(&tKey, &tVal, MapVal.add);
@@ -471,40 +455,48 @@ pub fn parseParallel(path: []const u8, comptime print_result: bool) !ParseResult
 }
 
 // ========== TESTING ==========
-// test "compare" {
-//     const data = @import("benchmarking/data/data.zig");
-//     var keyList: std.ArrayList([]const u8) = try data.readCityNames(std.testing.allocator);
-//     defer keyList.deinit();
+test "compare" {
+    const data = @import("benchmarking/data/data.zig");
+    var keyList: std.ArrayList([]const u8) = try data.readCityNames(std.testing.allocator);
+    defer keyList.deinit();
 
-//     const names = keyList.items;
-//     var iterId: u64 = 0;
-//     for (1..names.len) |i| {
-//         const ki: MapKey = MapKey.create(names[i]);
-//         for (0..i) |j| {
-//             iterId += 1;
-//             const kj: MapKey = MapKey.create(names[j]);
+    const len = std.math.clamp(keyList.items.len, 0, 256);
+    const names = keyList.items[0..len];
+    var iterId: u64 = 0;
+    for (1..names.len) |i| {
+        const ki: MapKey = MapKey.create(names[i]);
+        for (0..i) |j| {
+            iterId += 1;
+            const kj: MapKey = MapKey.create(names[j]);
 
-//             const cmp1_ij = MapKey.compare_valid(&ki, &kj);
-//             const cmp1_ji = MapKey.compare_valid(&kj, &ki);
-//             const cmp2_ij = MapKey.compare(&ki, &kj);
-//             const cmp2_ji = MapKey.compare(&kj, &ki);
+            const cmp1_ij = MapKey.compare_valid(&ki, &kj);
+            const cmp1_ji = MapKey.compare_valid(&kj, &ki);
+            const cmp2_ij = MapKey.compare(&ki, &kj);
+            const cmp2_ji = MapKey.compare(&kj, &ki);
 
-//             const v1_ij: u8 = @abs(@intFromEnum(cmp1_ij));
-//             const v1_ji: u8 = @abs(@intFromEnum(cmp1_ji));
-//             const v2_ij: u8 = @abs(@intFromEnum(cmp2_ij));
-//             const v2_ji: u8 = @abs(@intFromEnum(cmp2_ji));
+            const v1_ij: u8 = @abs(@intFromEnum(cmp1_ij));
+            const v1_ji: u8 = @abs(@intFromEnum(cmp1_ji));
+            const v2_ij: u8 = @abs(@intFromEnum(cmp2_ij));
+            const v2_ji: u8 = @abs(@intFromEnum(cmp2_ji));
 
-//             std.testing.expectEqual(v1_ij, v2_ij) catch |err| {
-//                 std.log.warn("error at iteration {d}: ki: \"{s}\", kj: \"{s}\"", .{ iterId, ki.get(), kj.get() });
-//                 return err;
-//             };
-//             std.testing.expectEqual(v1_ji, v2_ji) catch |err| {
-//                 std.log.warn("error at iteration {d}: ki: \"{s}\", kj: \"{s}\"", .{ iterId, ki.get(), kj.get() });
-//                 return err;
-//             };
-//         }
-//     }
-// }
+            std.testing.expectEqual(v1_ij, v2_ij) catch |err| {
+                std.log.warn("error at iteration {d}: ki: \"{s}\", kj: \"{s}\"", .{ iterId, ki.get(), kj.get() });
+                return err;
+            };
+            std.testing.expectEqual(v1_ji, v2_ji) catch |err| {
+                std.log.warn("error at iteration {d}: ki: \"{s}\", kj: \"{s}\"", .{ iterId, ki.get(), kj.get() });
+                return err;
+            };
+        }
+    }
+}
+
+test "fastIntParse" {
+    try std.testing.expectEqual(@as(Tival, -123), fastIntParse(Tival, "-123"));
+    try std.testing.expectEqual(@as(Tival, -123), fastIntParse(Tival, "-12.3"));
+    try std.testing.expectEqual(@as(Tival, 123), fastIntParse(Tival, "123"));
+    try std.testing.expectEqual(@as(Tival, 123), fastIntParse(Tival, "12.3"));
+}
 
 test "Size and Alignment" {
     @setRuntimeSafety(false);
@@ -515,8 +507,4 @@ test "Size and Alignment" {
     metainfo.logMemInfo(ParseResult);
     metainfo.logMemInfo(DelimReader(fs.File.Reader, '\n', readBufferSize));
     metainfo.logMemInfo(TMap);
-
-    const v31: u31 = std.math.maxInt(u31);
-    const v32: u32 = v31 | (@as(u32, @intFromBool(false)) << 31);
-    std.log.warn("v31 | (@as(u32, @intFromBool(false)) << 31) = 0b{b:0>32}", .{v32});
 }
