@@ -247,7 +247,7 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
         tVal.sum = valint;
 
         const mapIndex: u8 = MapKey.sumString(keystr) % mapCount;
-        maps[mapIndex].addOrUpdate(keystr, &tVal, MapVal.add);
+        maps[mapIndex].addOrUpdateString(keystr, &tVal, MapVal.add);
     }
 
     // Adding all the maps to maps[0]
@@ -256,7 +256,7 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
         for (0..maps[i].count) |j| {
             const rKey = maps[i].keys[j];
             const rVal = &maps[i].values[j];
-            maps[0].addOrUpdate(rKey.asSlice(), rVal, MapVal.add);
+            maps[0].addOrUpdate(rKey, rVal, MapVal.add);
         }
         maps[i].deinit();
     }

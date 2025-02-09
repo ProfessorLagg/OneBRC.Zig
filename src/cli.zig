@@ -16,17 +16,19 @@ pub const std_options: std.Options = .{
         .ReleaseFast => .warn,
     },
     .log_scope_levels = &[_]std.log.ScopeLevel{
-        .{ .scope = .SortedArrayMap, .level = .err },
+        .{ .scope = .SortedArrayMap, .level = .warn },
         .{ .scope = .DelimReader, .level = .err },
         .{ .scope = .Lines, .level = .err },
+        .{ .scope = .SSO, .level = .info },
+
     },
 };
 
-const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\simple.txt";
+// const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\simple.txt";
 // const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\verysmall.txt";
 // const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\small.txt";
 // const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
-// const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
+const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
 // const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\large.txt";
 
 pub fn main() !void {
