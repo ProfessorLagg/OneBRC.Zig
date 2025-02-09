@@ -154,3 +154,23 @@ fn CMPSB_REPNE(len: usize, a: *const u8, b: *const u8) u8 {
           [b] "{RDI}" (b),
     );
 }
+
+// ===== STRINGS ======
+pub inline fn compareString(a: []const u8, b: []const u8) CompareResult {
+    var cmp: CompareResult = compareNumber(a.len, b.len);
+    if (cmp != .Equal) {
+        return cmp;
+    }
+
+    for (0..a.len) |i| {
+        cmp = compareNumber(a[i], b[i]);
+        if (cmp != .Equal) {
+            return cmp;
+        }
+    }
+    return .Equal;
+}
+
+pub fn compareStringR(a: *const []const u8, b: *const []const u8) CompareResult {
+    return compareString(a.*, b.*);
+}

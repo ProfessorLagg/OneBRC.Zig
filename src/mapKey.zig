@@ -2,7 +2,7 @@ const std = @import("std");
 const sorted = @import("sorted/sorted.zig");
 pub const MapKey = @This();
 
-inline fn sumString(str: []const u8) u8 {
+pub inline fn sumString(str: []const u8) u8 {
     var sum: u8 = str[0];
     for (1..str.len) |i| {
         sum +%= str[i];

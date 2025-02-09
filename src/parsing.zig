@@ -12,7 +12,7 @@ const MapKey = @import("mapKey.zig").MapKey;
 /// Type of int used in the MapVal struct
 const Tival = i32;
 /// Type of map used in parse function
-const TMap = sorted.SortedArrayMap(MapKey, MapVal, MapKey.compare);
+const TMap = sorted.StringSortedArrayMap(MapVal);
 
 fn fastIntParse(comptime T: type, numstr: []const u8) T {
     comptime {
@@ -42,7 +42,6 @@ fn fastIntParse(comptime T: type, numstr: []const u8) T {
     const sign: T = (-1 * isNegativeInt) + @as(T, @intFromBool(!isNegative));
     return result * sign;
 }
-
 fn toAbsolutePath(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     const cwd_path = try fs.cwd().realpathAlloc(allocator, ".");
     defer allocator.free(cwd_path);
@@ -216,7 +215,6 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
     };
     var keystr: []const u8 = undefined;
     var valstr: []const u8 = undefined;
-    var tKey: MapKey = .{};
     var tVal: MapVal = .{ .count = 1 };
 
     // main loop
@@ -243,22 +241,21 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
         std.debug.assert(valstr[0] != ';');
 
         // parsing key and value string
-        tKey.set(keystr);
         const valint: Tival = fastIntParse(Tival, valstr);
         tVal.max = valint;
         tVal.min = valint;
         tVal.sum = valint;
 
-        const mapIndex: u8 = tKey.sum % mapCount;
-        maps[mapIndex].addOrUpdate(&tKey, &tVal, MapVal.add);
+        const mapIndex: u8 = MapKey.sumString(keystr) % mapCount;
+        maps[mapIndex].addOrUpdate(keystr, &tVal, MapVal.add);
     }
 
     // Adding all the maps to maps[0]
     for (1..mapCount) |i| {
         std.log.debug("map[{d:0>2}] keycount = {d}", .{ i, maps[i].count });
         for (0..maps[i].count) |j| {
-            const rKey: *MapKey = &maps[i].keys[j];
-            const rVal: *MapVal = &maps[i].values[j];
+            const rKey = maps[i].keys[j];
+            const rVal = &maps[i].values[j];
             maps[0].addOrUpdate(rKey, rVal, MapVal.add);
         }
         maps[i].deinit();
