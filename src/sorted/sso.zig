@@ -90,7 +90,7 @@ inline fn compareSmall(a: *const SmallString, b: *const SmallString) CompareResu
         return cmp;
     }
 
-    for (0..a.len) |i| {
+    inline for (0..SmallString.bufsize) |i| {
         cmp = compare.compareNumber(a.buf[i], b.buf[i]);
         if (cmp != .Equal) {
             return cmp;
