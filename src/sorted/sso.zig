@@ -85,12 +85,18 @@ pub const SSO = union(SSO_TYPE) {
     }
 };
 inline fn compareSmall(a: *const SmallString, b: *const SmallString) CompareResult {
-    var cmp: CompareResult = compare.compareNumber(a.len, b.len);
+    std.debug.assert(SmallString.bufsize > @sizeOf(usize));
+    const veclen = @sizeOf(usize);
+
+    const vec_a: *const usize = @ptrCast(&a.buf[0]);
+    const vec_b: *const usize = @ptrCast(&b.buf[0]);
+
+    var cmp: CompareResult = compare.compareNumber(vec_a.*, vec_b.*);
     if (cmp != .Equal) {
         return cmp;
     }
 
-    inline for (0..SmallString.bufsize) |i| {
+    inline for (veclen..SmallString.bufsize) |i| {
         cmp = compare.compareNumber(a.buf[i], b.buf[i]);
         if (cmp != .Equal) {
             return cmp;
