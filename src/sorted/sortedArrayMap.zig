@@ -289,21 +289,129 @@ pub fn AutoNumberSortedArrayMap(comptime Tkey: type, comptime Tval: type) type {
     return SortedArrayMap(Tkey, Tval, comptime compare.compareNumberFn(Tkey));
 }
 
+pub fn String(comptime Tlen: type) type {
+    comptime {
+        const Ti = @typeInfo(Tlen);
+        if (Ti != .Int or Ti.Int.signedness != .unsigned) {
+            @compileError("Invalid type '" ++ @typeName(String(Tlen)) ++ "': Tlen must be an unsigned integer");
+        }
+    }
+
+    return struct {
+        const TSelf = @This();
+        const maxSmallLen = @sizeOf(usize);
+        ptr: usize = 0,
+        len: Tlen = 0,
+
+        fn isSmallLen(len: Tlen) bool {
+            return len <= maxSmallLen;
+        }
+        fn isSmall(self: *const TSelf) bool {
+            return isSmallLen(self.len);
+        }
+
+        fn initLarge(allocator: std.mem.Allocator, len: Tlen) !TSelf {
+            std.debug.assert(len > maxSmallLen);
+            const slice = try allocator.alloc(u8, len);
+            return TSelf{ .ptr = @intFromPtr(slice.ptr), .len = len };
+        }
+        fn initSmall(len: Tlen) TSelf {
+            return TSelf{ .ptr = 0, .len = len };
+        }
+
+        /// Creates a new string using the input slice instead of allocating new memory for large strings
+        /// You should not call deinit on strings created with this function
+        pub fn create(str: []const u8) TSelf {
+            std.debug.assert(str.len <= std.math.maxInt(Tlen));
+            const len: Tlen = @truncate(str.len);
+            var r: TSelf = undefined;
+            if (isSmallLen(len)) {
+                r = initSmall(len);
+                const slice: []u8 = r.asSlice();
+                @memcpy(slice[0..len], str[0..]);
+            } else {
+                r.ptr = @intFromPtr(str.ptr);
+                r.len = len;
+            }
+            return r;
+        }
+
+        /// Creates a new string using the heap if neccecary.
+        /// You must call deinit to free strings created with this function
+        pub fn init(allocator: std.mem.Allocator, str: []const u8) !TSelf {
+            std.debug.assert(str.len <= std.math.maxInt(Tlen));
+            const len: Tlen = @truncate(str.len);
+            var r: TSelf = undefined;
+            if (isSmallLen(len)) {
+                r = initSmall(len);
+            } else {
+                r = try initLarge(allocator, len);
+            }
+            var slice: []u8 = @constCast(r.asSlice());
+            @memcpy(slice[0..str.len], str[0..]);
+            return r;
+        }
+        pub fn initPanic(allocator: std.mem.Allocator, str: []const u8) TSelf {
+            return TSelf.init(allocator, str) catch |err| {
+                std.debug.panic("Could not init {s} due to error: {s}", .{ @typeName(@This()), @errorName(err) });
+            };
+        }
+        pub fn deinit(self: *TSelf, allocator: std.mem.Allocator) void {
+            if (!self.isSmall()) {
+                const slice = self.asSlice();
+                allocator.free(slice);
+            }
+        }
+
+        pub fn asSlice(self: *const TSelf) []u8 {
+            var r: []u8 = undefined;
+            r.len = self.len;
+            if (self.len > maxSmallLen) {
+                r.ptr = @ptrFromInt(self.ptr);
+            } else {
+                r.ptr = @ptrFromInt(@intFromPtr(&self.ptr));
+            }
+            return r;
+        }
+
+        pub fn compareTo(a: TSelf, b: TSelf) CompareResult {
+            var cmp: CompareResult = compare.compareNumber(a.len, b.len);
+            if (cmp != .Equal) {
+                return cmp;
+            }
+
+            if (a.isSmall() and b.isSmall()) {
+                return compare.compareNumber(a.ptr, b.ptr);
+            }
+
+            const aslice: []const u8 = a.asSlice();
+            const bslice: []const u8 = a.asSlice();
+            for (0..a.len) |i| {
+                cmp = compare.compareNumber(aslice[i], bslice[i]);
+                if (cmp != .Equal) {
+                    return cmp;
+                }
+            }
+            return .Equal;
+        }
+    };
+}
 /// SortedArrayMap using string keys
 pub fn StringSortedArrayMap(comptime Tval: type) type {
     const default_initial_capacity: comptime_int = comptime calc_default_initial_capacity([]const u8, Tval);
-    const comparison = comptime compare.compareString;
     return struct {
         const Self = @This();
-        const string = []const u8;
+        const TString = String(u16);
+        const comparison = TString.compareTo;
+
         allocator: std.mem.Allocator,
         /// The actual amount of items. Do NOT modify
         count: usize,
         /// Backing array for keys slice. Do NOT modify
-        key_buffer: []string,
+        key_buffer: []TString,
         /// Backing array for values slice. Do NOT modify
         val_buffer: []Tval,
-        keys: []string,
+        keys: []TString,
         values: []Tval,
 
         // === PUBLIC ===
@@ -316,7 +424,7 @@ pub fn StringSortedArrayMap(comptime Tval: type) type {
             var r = Self{
                 .allocator = allocator,
                 .count = 0,
-                .key_buffer = try allocator.alloc(string, initial_capacity),
+                .key_buffer = try allocator.alloc(TString, initial_capacity),
                 .val_buffer = try allocator.alloc(Tval, initial_capacity),
                 .values = undefined,
                 .keys = undefined,
@@ -328,8 +436,8 @@ pub fn StringSortedArrayMap(comptime Tval: type) type {
             return r;
         }
         pub fn deinit(self: *Self) void {
-            for (self.keys) |key| {
-                self.allocator.free(key);
+            for (0..self.key_buffer.len) |ki| {
+                self.key_buffer[ki].deinit(self.allocator);
             }
             self.allocator.free(self.key_buffer);
             self.allocator.free(self.val_buffer);
@@ -340,7 +448,8 @@ pub fn StringSortedArrayMap(comptime Tval: type) type {
             return self.key_buffer.len;
         }
         /// Finds the index of the key. Returns -1 if not found
-        pub fn indexOf(self: *Self, k: *const string) isize {
+        pub fn indexOf(self: *Self, key: []const u8) isize {
+            const k: TString = TString.create(key);
             var L: isize = 0;
             var R: isize = @bitCast(self.count);
             var i: isize = undefined;
@@ -361,14 +470,16 @@ pub fn StringSortedArrayMap(comptime Tval: type) type {
             return -1;
         }
         /// Returns true if k is found in self.keys. Otherwise false
-        pub inline fn contains(self: *Self, k: string) bool {
+        pub inline fn contains(self: *Self, key: []const u8) bool {
+            const k: TString = TString.create(key);
             const idx: isize = self.indexOf(k);
             log.debug("indexOf({any}) = {d}", .{ k, idx });
             return idx >= 0 and idx < self.keys.len;
         }
         /// Adds an item to the set.
         /// Returns true if the key could be added, otherwise false.
-        pub fn add(self: *Self, k: string, v: *const Tval) bool {
+        pub fn add(self: *Self, key: []const u8, v: *const Tval) bool {
+            const k: TString = TString.create(key);
             const idx: isize = self.indexOf(k);
             if (idx >= 0) {
                 return false;
@@ -378,7 +489,8 @@ pub fn StringSortedArrayMap(comptime Tval: type) type {
             }
         }
         /// Overwrites the value at k, regardless of it's already contained
-        pub fn update(self: *Self, k: string, v: *const Tval) void {
+        pub fn update(self: *Self, key: []const u8, v: *const Tval) void {
+            const k: TString = TString.create(key);
             const insertionIndex = self.getInsertIndex(k);
             if (insertionIndex < self.count) {
                 self.keys[insertionIndex] = k.*;
@@ -391,14 +503,15 @@ pub fn StringSortedArrayMap(comptime Tval: type) type {
         const UpdateFunc = fn (*Tval, *const Tval) void;
         /// If k is in the map, updates the value at k using updateFn.
         /// otherwise add the value from addFn to the map
-        pub fn addOrUpdate(self: *Self, k: string, v: *const Tval, comptime updateFn: UpdateFunc) void {
+        pub fn addOrUpdate(self: *Self, key: []const u8, v: *const Tval, comptime updateFn: UpdateFunc) void {
+            const k: TString = TString.create(key);
             const s: u32 = self.getInsertOrUpdateIndex(k);
             const e: bool = (s & 0b10000000000000000000000000000000) > 0;
             const i: u32 = s & 0b01111111111111111111111111111111;
             if (e) {
                 updateFn(&self.values[i], v);
             } else {
-                self.insertAt(i, k, v);
+                self.insertAt(i, key, v);
             }
         }
 
@@ -448,7 +561,7 @@ pub fn StringSortedArrayMap(comptime Tval: type) type {
             std.debug.assert(start_at >= 0);
             std.debug.assert(start_at < self.count);
             std.debug.assert(self.count - start_at >= 1);
-            var key_slice: []string = self.keys[start_at..];
+            var key_slice: []TString = self.keys[start_at..];
             var val_slice: []Tval = self.values[start_at..];
             var i: usize = key_slice.len;
             while (i > 1) {
@@ -458,20 +571,10 @@ pub fn StringSortedArrayMap(comptime Tval: type) type {
             }
         }
 
-        /// Copies a string to a new slice owned by self.allocator
-        fn cloneKey(self: *Self, k: string) string {
-            var res: []u8 = self.allocator.alloc(u8, k.len) catch {
-                std.log.err("{s}.cloneKey could not allocate memory", .{@typeName(@This())});
-                @panic("could not allocate memory");
-            };
-            @memcpy(res[0..], k[0..]);
-            return res;
-        }
-
         /// The ONLY function that's allowed to update values in the buffers!
         /// Caller asserts that the index is valid.
         /// Inserts an item and a key at the specified index.
-        fn insertAt(self: *Self, index: usize, k: string, v: *const Tval) void {
+        fn insertAt(self: *Self, index: usize, key: []const u8, v: *const Tval) void {
             if (self.count == self.key_buffer.len) {
                 const new_capacity: usize = self.capacity() * 2;
                 self.resize(new_capacity);
@@ -482,18 +585,18 @@ pub fn StringSortedArrayMap(comptime Tval: type) type {
             self.incrementCount();
             if (index == self.count - 1) {
                 // No need to shift if inserting at the end
-                self.keys[index] = self.cloneKey(k);
+                self.keys[index] = TString.initPanic(self.allocator, key);
                 self.values[index] = v.*;
                 return;
             } else {
                 self.shiftRight(index);
-                self.keys[index] = self.cloneKey(k);
+                self.keys[index] = TString.initPanic(self.allocator, key);
                 self.values[index] = v.*;
             }
         }
 
         /// Returns the index this key would have if present in the map.
-        fn getInsertIndex(self: *Self, k: string) usize {
+        fn getInsertIndex(self: *Self, k: TString) usize {
             switch (self.count) {
                 0 => return 0,
                 1 => return switch (comparison(k, self.keys[0])) {
@@ -538,7 +641,7 @@ pub fn StringSortedArrayMap(comptime Tval: type) type {
             return index | (@as(u32, @intFromBool(equal)) << 31);
         }
 
-        inline fn getInsertOrUpdateIndex(self: *Self, k: string) u32 {
+        inline fn getInsertOrUpdateIndex(self: *Self, k: TString) u32 {
             // Testing for edge cases
             if (self.count == 0) {
                 // this is the first key
