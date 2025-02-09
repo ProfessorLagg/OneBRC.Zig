@@ -254,7 +254,7 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
     for (1..mapCount) |i| {
         std.log.debug("map[{d:0>2}] keycount = {d}", .{ i, maps[i].count });
         for (0..maps[i].count) |j| {
-            const rKey = maps[i].keys[j];
+            const rKey = &maps[i].keys[j];
             const rVal = &maps[i].values[j];
             maps[0].addOrUpdate(rKey, rVal, MapVal.add);
         }
@@ -264,8 +264,8 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
     if (print_result) {
         const stdout = std.io.getStdOut().writer();
         for (0..maps[0].count) |i| {
-            const k: *MapKey = &maps[0].keys[i];
-            keystr = k.get();
+            const k = &maps[0].keys[i];
+            keystr = k.toString();
             const v: *MapVal = &maps[0].values[i];
             try stdout.print("{s};{d:.1};{d:.1};{d:.1}\n", .{ // NO WRAP
                 keystr,
@@ -440,7 +440,7 @@ pub fn parseParallel(path: []const u8, comptime print_result: bool) !ParseResult
             const k: *MapKey = &map.keys[i];
             const v: *MapVal = &map.values[i];
             try stdout.print("{s};{d:.1};{d:.1};{d:.1}\n", .{ // NO WRAP
-                k.get(),
+                k.toString(),
                 v.getMin(f64),
                 v.getMean(f64),
                 v.getMax(f64),
@@ -452,6 +452,32 @@ pub fn parseParallel(path: []const u8, comptime print_result: bool) !ParseResult
 }
 
 // ========== TESTING ==========
+test "fastIntParse" {
+    try std.testing.expectEqual(@as(Tival, -123), fastIntParse(Tival, "-123"));
+    try std.testing.expectEqual(@as(Tival, -123), fastIntParse(Tival, "-12.3"));
+    try std.testing.expectEqual(@as(Tival, 123), fastIntParse(Tival, "123"));
+    try std.testing.expectEqual(@as(Tival, 123), fastIntParse(Tival, "12.3"));
+}
+
+test "Size and Alignment" {
+    @setRuntimeSafety(false);
+    const metainfo = @import("metainfo/metainfo.zig");
+    const sso = @import("sorted/sso.zig");
+    metainfo.logMemInfo(MapKey);
+    metainfo.logMemInfo(MapVal);
+    metainfo.logMemInfo(ParseResult);
+    metainfo.logMemInfo(DelimReader(fs.File.Reader, '\n', readBufferSize));
+    metainfo.logMemInfo(TMap);
+
+    const smallSize = @sizeOf(sso.SmallString);
+    const largeSize = @sizeOf(sso.LargeString);
+    try std.testing.expectEqual(largeSize, smallSize);
+
+    const smallAlignment = @alignOf(sso.SmallString);
+    const largeAlignment = @alignOf(sso.LargeString);
+    try std.testing.expectEqual(largeAlignment, smallAlignment);
+}
+
 test "compare" {
     const data = @import("benchmarking/data/data.zig");
     var keyList: std.ArrayList([]const u8) = try data.readCityNames(std.testing.allocator);
@@ -477,31 +503,13 @@ test "compare" {
             const v2_ji: u8 = @abs(@intFromEnum(cmp2_ji));
 
             std.testing.expectEqual(v1_ij, v2_ij) catch |err| {
-                std.log.warn("error at iteration {d}: ki: \"{s}\", kj: \"{s}\"", .{ iterId, ki.get(), kj.get() });
+                std.log.warn("error at iteration {d}: ki: \"{s}\", kj: \"{s}\"", .{ iterId, ki.toString(), kj.toString() });
                 return err;
             };
             std.testing.expectEqual(v1_ji, v2_ji) catch |err| {
-                std.log.warn("error at iteration {d}: ki: \"{s}\", kj: \"{s}\"", .{ iterId, ki.get(), kj.get() });
+                std.log.warn("error at iteration {d}: ki: \"{s}\", kj: \"{s}\"", .{ iterId, ki.toString(), kj.toString() });
                 return err;
             };
         }
     }
-}
-
-test "fastIntParse" {
-    try std.testing.expectEqual(@as(Tival, -123), fastIntParse(Tival, "-123"));
-    try std.testing.expectEqual(@as(Tival, -123), fastIntParse(Tival, "-12.3"));
-    try std.testing.expectEqual(@as(Tival, 123), fastIntParse(Tival, "123"));
-    try std.testing.expectEqual(@as(Tival, 123), fastIntParse(Tival, "12.3"));
-}
-
-test "Size and Alignment" {
-    @setRuntimeSafety(false);
-    const metainfo = @import("metainfo/metainfo.zig");
-
-    metainfo.logMemInfo(MapKey);
-    metainfo.logMemInfo(MapVal);
-    metainfo.logMemInfo(ParseResult);
-    metainfo.logMemInfo(DelimReader(fs.File.Reader, '\n', readBufferSize));
-    metainfo.logMemInfo(TMap);
 }

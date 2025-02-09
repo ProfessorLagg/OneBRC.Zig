@@ -10,7 +10,7 @@ pub const SmallString = struct {
     const Tlen: type = std.meta.Int(.unsigned, Tlen_bitcount);
     pub const bufsize: usize = largeSize - @sizeOf(Tlen);
 
-    buf: [bufsize]u8 = undefined,
+    buf: [bufsize]u8 align(8) = undefined,
     len: Tlen = 0,
 };
 pub const LargeString = []u8;
@@ -26,7 +26,7 @@ pub const SSO = union(SSO_TYPE) {
         return len <= SmallString.bufsize;
     }
 
-    pub fn init(allocator: *std.mem.Allocator, str: []const u8) !SSO {
+    pub inline fn init(allocator: *std.mem.Allocator, str: []const u8) !SSO {
         var result: SSO = undefined;
         if (SSO.isSmallLen(str.len)) {
             std.debug.assert(str[0..].len <= SmallString.bufsize);
@@ -42,7 +42,7 @@ pub const SSO = union(SSO_TYPE) {
         }
     }
 
-    pub fn clone(self: *const SSO, allocator: *std.mem.Allocator) !SSO {
+    pub inline fn clone(self: *const SSO, allocator: *std.mem.Allocator) !SSO {
         const deref = self.*;
         return switch (deref) {
             .small => deref,
@@ -50,7 +50,7 @@ pub const SSO = union(SSO_TYPE) {
         };
     }
 
-    pub fn deinit(self: SSO, allocator: *std.mem.Allocator) void {
+    pub inline fn deinit(self: SSO, allocator: *std.mem.Allocator) void {
         const tag: SSO_TYPE = @as(SSO_TYPE, self);
         log.debug("deinit SSO.{s}", .{@tagName(tag)});
         switch (tag) {
@@ -61,7 +61,7 @@ pub const SSO = union(SSO_TYPE) {
         }
     }
 
-    pub fn create(str: []const u8) SSO {
+    pub inline fn create(str: []const u8) SSO {
         var result: SSO = undefined;
         if (SSO.isSmallLen(str.len)) {
             std.debug.assert(str[0..].len <= SmallString.bufsize);
@@ -75,8 +75,16 @@ pub const SSO = union(SSO_TYPE) {
             return result;
         }
     }
+
+    pub inline fn toString(self: *const SSO) []const u8 {
+        const tag = @as(SSO_TYPE, self.*);
+        return switch (tag) {
+            .small => self.small.buf[0..self.small.len],
+            .large => self.large,
+        };
+    }
 };
-inline fn compareSmall(a: SmallString, b: SmallString) CompareResult {
+inline fn compareSmall(a: *const SmallString, b: *const SmallString) CompareResult {
     var cmp: CompareResult = compare.compareNumber(a.len, b.len);
     if (cmp != .Equal) {
         return cmp;
@@ -90,26 +98,21 @@ inline fn compareSmall(a: SmallString, b: SmallString) CompareResult {
     }
     return .Equal;
 }
-pub fn compareSSO(a: SSO, b: SSO) CompareResult {
-    const aTag = @as(SSO_TYPE, a);
-    const bTag = @as(SSO_TYPE, b);
-    if (aTag == SSO_TYPE.small and bTag == SSO_TYPE.small) {
-        return compareSmall(a.small, b.small);
-    }
-    const aSlice: []const u8 = switch (a) {
-        SSO_TYPE.small => a.small.buf[0..a.small.len],
-        SSO_TYPE.large => a.large[0..],
-    };
+pub inline fn compareSSO(a: *const SSO, b: *const SSO) CompareResult {
+    const aTag: SSO_TYPE = @as(SSO_TYPE, a.*);
+    const bTag: SSO_TYPE = @as(SSO_TYPE, b.*);
 
+    if (aTag == .small and bTag == .small) {
+        return compareSmall(&a.small, &b.small);
+    }
+
+    const aSlice: []const u8 = switch (aTag) {
+        .small => a.small.buf[0..a.small.len],
+        .large => a.large[0..],
+    };
     const bSlice: []const u8 = switch (bTag) {
-        SSO_TYPE.small => b.small.buf[0..b.small.len],
-        SSO_TYPE.large => b.large[0..],
+        .small => b.small.buf[0..b.small.len],
+        .large => b.large[0..],
     };
     return compare.compareString(aSlice, bSlice);
-}
-
-test "SSO size equals" {
-    const smallSize = @sizeOf(SmallString);
-    const largeSize = @sizeOf(LargeString);
-    std.testing.expectEqual(largeSize, smallSize);
 }

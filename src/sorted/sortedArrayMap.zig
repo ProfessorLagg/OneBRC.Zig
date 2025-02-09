@@ -399,7 +399,7 @@ pub fn StringSortedArrayMap(comptime Tval: type) type {
         const UpdateFunc = fn (*Tval, *const Tval) void;
         /// If k is in the map, updates the value at k using updateFn.
         /// otherwise add the value from addFn to the map
-        pub fn addOrUpdate(self: *Self, k: SSO, v: *const Tval, comptime updateFn: UpdateFunc) void {
+        pub fn addOrUpdate(self: *Self, k: *const SSO, v: *const Tval, comptime updateFn: UpdateFunc) void {
             const s: u32 = self.getInsertOrUpdateIndex(k);
             const e: bool = (s & 0b10000000000000000000000000000000) > 0;
             const i: u32 = s & 0b01111111111111111111111111111111;
@@ -413,7 +413,7 @@ pub fn StringSortedArrayMap(comptime Tval: type) type {
         /// otherwise add the value from addFn to the map
         pub fn addOrUpdateString(self: *Self, key: []const u8, v: *const Tval, comptime updateFn: UpdateFunc) void {
             const k: SSO = SSO.create(key);
-            self.addOrUpdate(k, v, updateFn);
+            self.addOrUpdate(&k, v, updateFn);
         }
 
         /// Reduces capacity to exactly fit count
@@ -475,7 +475,7 @@ pub fn StringSortedArrayMap(comptime Tval: type) type {
         /// The ONLY function that's allowed to update values in the buffers!
         /// Caller asserts that the index is valid.
         /// Inserts an item and a key at the specified index.
-        fn insertAt(self: *Self, index: usize, k: SSO, v: *const Tval) void {
+        fn insertAt(self: *Self, index: usize, k: *const SSO, v: *const Tval) void {
             if (self.count == self.key_buffer.len) {
                 const new_capacity: usize = self.capacity() * 2;
                 self.resize(new_capacity);
@@ -542,7 +542,7 @@ pub fn StringSortedArrayMap(comptime Tval: type) type {
             return index | (@as(u32, @intFromBool(equal)) << 31);
         }
 
-        inline fn getInsertOrUpdateIndex(self: *Self, k: SSO) u32 {
+        inline fn getInsertOrUpdateIndex(self: *Self, k: *const SSO) u32 {
             // Testing for edge cases
             if (self.count == 0) {
                 // this is the first key
@@ -558,7 +558,7 @@ pub fn StringSortedArrayMap(comptime Tval: type) type {
             while (L <= R) {
                 i = @divFloor(L + R, 2);
                 u = @as(u31, @intCast(i));
-                cmp = comparison(k, self.keys[u]);
+                cmp = comparison(k, &self.keys[u]);
                 log.info("L: {d}, R: {d}, i: {d}, cmp: {s}", .{ L, R, i, @tagName(cmp) });
                 switch (cmp) {
                     .LessThan => R = i - 1,

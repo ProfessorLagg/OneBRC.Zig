@@ -28,7 +28,7 @@ pub inline fn set(self: *MapKey, str: []const u8) void {
 }
 
 /// Returns the key as a string
-pub inline fn get(self: *const MapKey) []const u8 {
+pub inline fn toString(self: *const MapKey) []const u8 {
     return self.buffer[0..self.len];
 }
 
@@ -45,11 +45,11 @@ pub inline fn compare_valid(a: *const MapKey, b: *const MapKey) sorted.CompareRe
 
 pub fn compare(a: *const MapKey, b: *const MapKey) sorted.CompareResult {
     var cmp = sorted.compareNumber(a.sum, b.sum);
-    if(cmp != .Equal){
+    if (cmp != .Equal) {
         return cmp;
     }
     cmp = sorted.compareNumber(a.len, b.len);
-    if(cmp != .Equal){
+    if (cmp != .Equal) {
         return cmp;
     }
 
