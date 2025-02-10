@@ -209,7 +209,7 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
     var maps: [mapCount]TMap = blk: {
         var r: [mapCount]TMap = undefined;
         for (0..mapCount) |i| {
-            r[i] = try TMap.init(allocator);
+            r[i] = try TMap.initWithCapacity(allocator, 256);
         }
         break :blk r;
     };
@@ -252,7 +252,7 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
 
     // Adding all the maps to maps[0]
     for (1..mapCount) |i| {
-        std.log.debug("map[{d:0>2}] keycount = {d}", .{ i, maps[i].count });
+        std.log.debug("map[{d:0>3}] keycount = {d}", .{ i, maps[i].count });
         for (0..maps[i].count) |j| {
             const rKey = &maps[i].keys[j];
             const rVal = &maps[i].values[j];
@@ -468,6 +468,8 @@ test "Size and Alignment" {
     metainfo.logMemInfo(ParseResult);
     metainfo.logMemInfo(DelimReader(fs.File.Reader, '\n', readBufferSize));
     metainfo.logMemInfo(TMap);
+    metainfo.logMemInfo(sso.SmallString);
+    metainfo.logMemInfo(sso.LargeString);
 
     const smallSize = @sizeOf(sso.SmallString);
     const largeSize = @sizeOf(sso.LargeString);
