@@ -21,6 +21,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .single_threaded = true,
+        .link_libc = true,
     });
 
     // This declares intent for the executable to be installed into the
@@ -59,6 +60,8 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/cli.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
+        .single_threaded = true,
     });
     const run_cli_unit_tests = b.addRunArtifact(cli_unit_tests);
     test_step.dependOn(&run_cli_unit_tests.step);
@@ -68,6 +71,8 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/sorted/sorted.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
+        .single_threaded = true,
     });
     const run_sorted_unit_tests = b.addRunArtifact(sorted_unit_tests);
     test_step.dependOn(&run_sorted_unit_tests.step);
@@ -77,6 +82,8 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/parsing.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
+        .single_threaded = true,
     });
     const run_parsing_unit_tests = b.addRunArtifact(parsing_unit_tests);
     test_step.dependOn(&run_parsing_unit_tests.step);
@@ -86,6 +93,8 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/benchmarking/benchmarking.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
+        .single_threaded = true,
     });
     const run_benchmarking_unit_tests = b.addRunArtifact(benchmarking_unit_tests);
     test_step.dependOn(&run_benchmarking_unit_tests.step);

@@ -134,4 +134,4 @@ test "CompareNumber" {
     try std.testing.expectEqual(.GreaterThan, gti16);
     try std.testing.expectEqual(.GreaterThan, gtu16);
     try std.testing.expectEqual(.GreaterThan, gtf16);
-}
+} 

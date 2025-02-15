@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const std = @import("std");
 
 const TypeError = error{NotNumber};
@@ -23,6 +24,17 @@ pub inline fn compareFromBools(lessThan: bool, greaterThan: bool) CompareResult 
 }
 
 // ===== NUMBERS ======
+pub fn isUnsignedIntegerType(T: type) bool {
+    const Ti = @typeInfo(T);
+    return Ti == .Int and Ti.Int.signedness == .unsigned;
+}
+pub fn isSignedIntegerType(T: type) bool {
+    const Ti = @typeInfo(T);
+    return Ti == .Int and Ti.Int.signedness == .signed;
+}
+pub fn isIntegerType(T: type) bool {
+    return @typeInfo(T) == .Int;
+}
 pub fn isNumberType(T: type) bool {
     switch (@typeInfo(T)) {
         .Int, .Float, .ComptimeInt, .ComptimeFloat => {
@@ -156,6 +168,47 @@ fn CMPSB_REPNE(len: usize, a: *const u8, b: *const u8) u8 {
 }
 
 // ===== STRINGS ======
+pub inline fn indexOfFirstDifference(comptime T: type, a: []const u8, b: []const u8) ?T {
+    const maxlen: comptime_int = comptime blk: {
+        if (!isUnsignedIntegerType(T)) {
+            @compileError("Expected unsigned integer type, but found " ++ @typeName(T));
+        }
+        break :blk std.math.maxInt(T);
+    };
+    std.debug.assert(a.len < @as(@TypeOf(a.len), maxlen));
+    std.debug.assert(b.len < @as(@TypeOf(b.len), maxlen));
+
+    const minLen: T = @min(a.len, b.len);
+    const maxLen: T = @max(a.len, b.len);
+
+    var i: T = 0;
+    while (i < minLen) : (i += 1) {
+        if (a[i] != b[i]) {
+            return i;
+        }
+    }
+
+    if (minLen == maxLen) {
+        return null;
+    } else {
+        return minLen;
+    }
+}
+
+// fn loadVector(comptime len: comptime_int, bytes: []const u8) @Vector(len, u8){
+//     var vec: @Vector(len, u8) = undefined;
+
+// }
+// pub fn indexOfFirstDifferenceASM(a: []const u8, b: []const u8) u32 {
+//     const veclen: comptime_int = comptime std.simd.suggestVectorLengthForCpu(u8, builtin.target);
+//     const vec_a: [veclen]u8 = undefined;
+//     const vec_b: [veclen]u8 = undefined;
+//     @memcpy(vec_a[0..], a[0..]);
+//     @memcpy(vec_b[0..], a[0..]);
+
+//     return 0;
+// }
+
 pub inline fn compareString(a: []const u8, b: []const u8) CompareResult {
     var cmp: CompareResult = compareNumber(a.len, b.len);
     if (cmp != .Equal) {
