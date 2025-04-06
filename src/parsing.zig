@@ -17,9 +17,7 @@ const TMap = sorted.StringSortedArrayMap(MapVal);
 fn fastIntParse(comptime T: type, numstr: []const u8) T {
     comptime {
         const Ti = @typeInfo(T);
-        if (Ti != .Int or Ti.Int.signedness != .signed) {
-            @compileError("T must be an signed integer, but was: " + @typeName(T));
-        }
+        if (Ti != .int or Ti.int.signedness != .signed) @compileError("T must be an signed integer, but was: " + @typeName(T));
     }
 
     std.debug.assert(numstr.len > 0);

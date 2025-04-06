@@ -36,14 +36,11 @@ pub fn isIntegerType(T: type) bool {
     return @typeInfo(T) == .Int;
 }
 pub fn isNumberType(T: type) bool {
-    switch (@typeInfo(T)) {
-        .Int, .Float, .ComptimeInt, .ComptimeFloat => {
-            return true;
-        },
-        else => {
-            return false;
-        },
-    }
+    const Ti: std.builtin.Type = @typeInfo(T);
+    return switch (Ti) {
+        .int, .float, .comptime_int, .comptime_float => true,
+        else => false,
+    };
 }
 /// true v @typeOf(v) is a number, else false
 pub fn isNumber(v: anytype) bool {
@@ -71,18 +68,14 @@ pub fn compareFloatFn(comptime T: type) Comparison(T) {
 /// Returns a numeric value comparison function for the input type
 pub fn compareSignedFn(comptime T: type) Comparison(T) {
     comptime {
-        const Tinfo: std.builtin.Type = @typeInfo(T);
+        const Ti: std.builtin.Type = @typeInfo(T);
         const err_msg = @typeName(T) ++ " is not a signed integer type";
-        switch (Tinfo) {
-            .ComptimeInt => {},
-            .Int => {
-                if (Tinfo.Int.signedness != .signed) {
-                    @compileError(err_msg);
-                }
+        switch (Ti) {
+            .comptime_int => {},
+            .int => {
+                if (Ti.int.signedness != .signed) @compileError(err_msg);
             },
-            else => {
-                @compileError(err_msg);
-            },
+            else => @compileError(err_msg),
         }
     }
 
@@ -100,9 +93,9 @@ pub fn compareUnsignedFn(comptime T: type) Comparison(T) {
         const Tinfo: std.builtin.Type = @typeInfo(T);
         const err_msg = @typeName(T) ++ " is not an unsigned integer type";
         switch (Tinfo) {
-            .ComptimeInt => {},
-            .Int => {
-                if (Tinfo.Int.signedness != .unsigned) {
+            .comptime_int => {},
+            .int => {
+                if (Tinfo.int.signedness != .unsigned) {
                     @compileError(err_msg);
                 }
             },
@@ -128,15 +121,15 @@ pub fn compareNumberFn(comptime T: type) Comparison(T) {
 
     const Tinfo: std.builtin.Type = comptime @typeInfo(T);
     switch (Tinfo) {
-        .Float, .ComptimeFloat => return compareFloatFn(T),
-        .Int => {
-            if (Tinfo.Int.signedness == .signed) {
+        .float, .comptime_float => return compareFloatFn(T),
+        .int => {
+            if (Tinfo.int.signedness == .signed) {
                 return compareSignedFn(T);
             } else {
                 return compareUnsignedFn(T);
             }
         },
-        .ComptimeInt => return compareSignedFn(T),
+        .comptime_int => return compareSignedFn(T),
         else => unreachable,
     }
 }
