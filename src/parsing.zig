@@ -189,11 +189,9 @@ pub fn read(path: []const u8) !ParseResult {
 }
 
 pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}).init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
-
-    var result: ParseResult = .{};
 
     // Setup reading
     var file: fs.File = try openFile(allocator, path);
@@ -204,6 +202,7 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
     defer lineReader.deinit();
 
     // variables used for parsing
+    var result: ParseResult = .{};
     const mapCount: u8 = 255;
     var maps: [mapCount]TMap = blk: {
         var r: [mapCount]TMap = undefined;
