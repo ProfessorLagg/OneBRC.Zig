@@ -1,5 +1,7 @@
 const std = @import("std");
 const log = std.log.scoped(.DelimReader);
+const utils = @import("utils.zig");
+
 /// Iterator to read a file line by line
 pub fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersize: usize) type {
     comptime {
@@ -69,19 +71,20 @@ pub fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersi
                     // Contains partial line
                     log.debug("DelimReader: PART", .{});
                     // rotate buffer
-                    std.mem.copyForwards(u8, self.buffer[0..], self.slice);
-                    self.slice.ptr = @ptrCast(&self.buffer[0]);
+                    utils.mem.copyForwards(u8, self.buffer[0..], self.slice);
+
+                    self.slice = self.buffer[0..self.slice.len];
 
                     const readcount = try self.reader.read(self.buffer[self.slice.len..]);
-                    if (readcount > 0) {
-                        self.slice.len += readcount;
-                        continue :goto;
+                    self.slice.len += readcount;
+                    if (readcount <= 0) {
+                        // return partial line
+                        const result_len: usize = self.slice.len;
+                        self.slice.len = 0;
+                        return self.buffer[0..result_len];
                     }
 
-                    // return partial line
-                    const result: []const u8 = self.buffer[0..self.slice.len];
-                    self.slice.len = 0;
-                    return result;
+                    continue :goto;
                 }
 
                 // Found full line
