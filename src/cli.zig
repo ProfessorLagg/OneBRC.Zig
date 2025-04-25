@@ -20,19 +20,21 @@ pub const std_options: std.Options = .{
         .{ .scope = .DelimReader, .level = .err },
         .{ .scope = .Lines, .level = .err },
         .{ .scope = .SSO, .level = .info },
-
     },
 };
 
-// const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\simple.txt";
-// const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\verysmall.txt";
-// const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\small.txt";
-// const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
-const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
-// const debugfilepath = "C:\\CodeProjects\\1BillionRowChallenge\\data\\large.txt";
+//var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\simple.txt";
+var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\verysmall.txt";
+//var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\small.txt";
+// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
+//var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
+// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\large.txt";
 
 pub fn main() !void {
-    // TODO parse console args
+    try parseArgs();
+
+    // try printArgs();
+
     // try run();
     try debug();
     // try run_debugParallel();
@@ -40,12 +42,44 @@ pub fn main() !void {
     // run_benchmark();
 }
 
+fn parseArgs() !void {
+    const allocator = std.heap.c_allocator;
+
+    // Parse args into string array (error union needs 'try')
+    const args_base = std.process.argsAlloc(allocator) catch {
+        @panic("Could not allocate args");
+    };
+    defer std.process.argsFree(allocator, args_base);
+
+    const args = args_base[1..];
+    if (args.len <= 0 or args[0].len < 1) return;
+    debugfilepath = args[0];
+}
+
+fn printArgs() !void {
+    // Get allocator
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    defer _ = gpa.deinit();
+
+    // Parse args into string array (error union needs 'try')
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
+
+    // Get and print them!
+    std.debug.print("There are {d} args:\n", .{args.len});
+    for (args) |arg| {
+        std.debug.print("  {s}\n", .{arg});
+    }
+}
+
 fn run() !void {
     _ = try parsing.parse(debugfilepath[0..], true);
 }
-
 inline fn debug() !void {
-    if(builtin.single_threaded){
+    const stdout = std.io.getStdOut().writer();
+    try std.fmt.format(stdout, "Running benchmark mode on file: {s}\n", .{debugfilepath});
+    if (builtin.single_threaded) {
         try run_debug();
     } else {
         try run_debugParallel();
@@ -115,7 +149,6 @@ fn run_debugParallel() !void {
     const bytes_per_second: u64 = @intFromFloat(@as(f64, @floatFromInt(stat.size)) / s);
     std.log.warn("parsed {d:.0} lines in {any} | {d:.2} ns/line | found {d} unique keys ({d:.2}%) | read speed: {d:.2}/s\n", .{ parseResult.lineCount, std.fmt.fmtDuration(ns), ns_per_line, uniqueKeys, key_percent, std.fmt.fmtIntSizeBin(bytes_per_second) });
 }
-
 fn run_read() !void {
     std.log.debug("run_read()", .{});
     var timer = try std.time.Timer.start();
@@ -147,7 +180,6 @@ fn run_read() !void {
     const bytes_per_second: u64 = @intFromFloat(@as(f64, @floatFromInt(stat.size)) / s);
     std.log.warn("read {d:.0} lines in {any} | {d:.2} ns/line | found {d} unique keys ({d:.2}%) | read speed: {d:.2}/s\n", .{ parseResult.lineCount, std.fmt.fmtDuration(ns), ns_per_line, uniqueKeys, key_percent, std.fmt.fmtIntSizeBin(bytes_per_second) });
 }
-
 fn run_benchmark() void {
     std.log.debug("run_benchmark()", .{});
     const benchmarking = @import("benchmarking/benchmarking.zig");
