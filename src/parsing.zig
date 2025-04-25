@@ -103,7 +103,7 @@ const MapVal = struct {
         comptime {
             const Ti = @typeInfo(T);
             switch (Ti) {
-                .Float => {},
+                .float => {},
                 else => {
                     @compileError("Expected floating point type, but found " ++ @typeName(T));
                 },
@@ -117,7 +117,7 @@ const MapVal = struct {
         comptime {
             const Ti = @typeInfo(T);
             switch (Ti) {
-                .Float => {},
+                .float => {},
                 else => {
                     @compileError("Expected floating point type, but found " ++ @typeName(T));
                 },
@@ -131,7 +131,7 @@ const MapVal = struct {
         comptime {
             const Ti = @typeInfo(T);
             switch (Ti) {
-                .Float => {},
+                .float => {},
                 else => {
                     @compileError("Expected floating point type, but found " ++ @typeName(T));
                 },
@@ -218,34 +218,37 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
     // main loop
     lineloop: while (try lineReader.next()) |line| {
         if (line[0] == '#') {
+            @branchHint(std.builtin.BranchHint.cold);
             linelog.debug("skipped line: '{s}'", .{line});
             continue :lineloop;
+        } else {
+            @branchHint(std.builtin.BranchHint.likely);
+            std.debug.assert(line.len >= 5);
+            result.lineCount += 1;
+            var splitIndex: usize = line.len - 4;
+            while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
+            std.debug.assert(line[splitIndex] == ';');
+
+            keystr = line[0..splitIndex];
+            valstr = line[(splitIndex + 1)..];
+            linelog.info("line{d}: {s}, k: {s}, v: {s}", .{ result.lineCount, line, keystr, valstr });
+            std.debug.assert(keystr.len >= 1);
+            std.debug.assert(keystr.len <= 100);
+            std.debug.assert(keystr[keystr.len - 1] != ';');
+            std.debug.assert(valstr.len >= 3);
+            std.debug.assert(valstr.len <= 5);
+            std.debug.assert(valstr[valstr.len - 2] == '.');
+            std.debug.assert(valstr[0] != ';');
+
+            // parsing key and value string
+            const valint: Tival = fastIntParse(Tival, valstr);
+            tVal.max = valint;
+            tVal.min = valint;
+            tVal.sum = valint;
+
+            const mapIndex: u8 = MapKey.sumString(keystr) % mapCount;
+            maps[mapIndex].addOrUpdateString(keystr, &tVal, MapVal.add);
         }
-        std.debug.assert(line.len >= 5);
-        result.lineCount += 1;
-        var splitIndex: usize = line.len - 4;
-        while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
-        std.debug.assert(line[splitIndex] == ';');
-
-        keystr = line[0..splitIndex];
-        valstr = line[(splitIndex + 1)..];
-        linelog.info("line{d}: {s}, k: {s}, v: {s}", .{ result.lineCount, line, keystr, valstr });
-        std.debug.assert(keystr.len >= 1);
-        std.debug.assert(keystr.len <= 100);
-        std.debug.assert(keystr[keystr.len - 1] != ';');
-        std.debug.assert(valstr.len >= 3);
-        std.debug.assert(valstr.len <= 5);
-        std.debug.assert(valstr[valstr.len - 2] == '.');
-        std.debug.assert(valstr[0] != ';');
-
-        // parsing key and value string
-        const valint: Tival = fastIntParse(Tival, valstr);
-        tVal.max = valint;
-        tVal.min = valint;
-        tVal.sum = valint;
-
-        const mapIndex: u8 = MapKey.sumString(keystr) % mapCount;
-        maps[mapIndex].addOrUpdateString(keystr, &tVal, MapVal.add);
     }
 
     // Adding all the maps to maps[0]
