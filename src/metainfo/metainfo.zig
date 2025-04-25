@@ -5,25 +5,25 @@ pub fn sumFieldSizes(comptime T: type) comptime_int {
     }
 
     const Ti: std.builtin.Type = @typeInfo(T);
-    if (Ti != .Struct) {
+    if (Ti != .@"struct") {
         @compileError("Can only sum the size of fields for structs. " ++ @typeName(T) ++ " is not a struct");
     }
 
-    const field_count = Ti.Struct.fields.len;
+    const field_count = Ti.@"struct".fields.len;
 
     var sum: comptime_int = 0;
     for (0..field_count) |field_index| {
-        const field_info: std.builtin.Type.StructField = Ti.Struct.fields[field_index];
+        const field_info: std.builtin.Type.StructField = Ti.@"struct".fields[field_index];
         sum += @sizeOf(field_info.type);
     }
     return sum;
 }
 pub fn StructMemInfo(comptime T: type) type {
-    const Ti = comptime @typeInfo(T);
+    const Ti: std.builtin.Type = comptime @typeInfo(T);
     const T_size = comptime @sizeOf(T);
     const T_align = comptime @alignOf(T);
     const T_fieldSize = comptime switch (Ti) {
-        .Struct => sumFieldSizes(T),
+        .@"struct" => sumFieldSizes(T),
         else => 0,
     };
     return struct {
@@ -39,7 +39,7 @@ pub fn getStructMemInfo(comptime T: type) StructMemInfo(T) {
 }
 
 pub fn logMemInfo(comptime T: type) void {
-    std.debug.assert(@typeInfo(T) == .Struct);
+    std.debug.assert(@typeInfo(T) == .@"struct");
     const memInfo: StructMemInfo(T) = getStructMemInfo(T);
 
     const format_data = .{ @typeName(T), memInfo.size, memInfo.alignment, memInfo.fieldSize, memInfo.padding };

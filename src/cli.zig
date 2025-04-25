@@ -18,20 +18,21 @@ pub const std_options: std.Options = .{
     .log_scope_levels = &[_]std.log.ScopeLevel{
         .{ .scope = .SortedArrayMap, .level = .warn },
         .{ .scope = .DelimReader, .level = .err },
-        .{ .scope = .Lines, .level = .err },
-        .{ .scope = .SSO, .level = .info },
+        .{ .scope = .Lines, .level = .debug },
+        .{ .scope = .SSO, .level = .debug },
     },
 };
 
-//var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\simple.txt";
+// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\simple.txt";
 var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\verysmall.txt";
-//var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\small.txt";
+// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\small.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\medium.txt";
 //var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\1GB.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\large.txt";
 
 pub fn main() !void {
-    try parseArgs();
+    try test_packed_structs();
+    //try parseArgs();
 
     // try printArgs();
 
@@ -211,4 +212,26 @@ test "custom iterator" {
     try std.testing.expectEqual("one", iter.next().?);
     try std.testing.expectEqual("three", iter.next().?);
     try std.testing.expectEqual(null, iter.next());
+}
+
+fn test_packed_structs() !void {
+    const PS = packed struct {
+        data: u7 = 0,
+        flag: u1 = 1,
+    };
+
+    var v = PS{ .data = 123, .flag = 0 };
+
+    const stdout = std.io.getStdOut().writer();
+    try std.fmt.format(stdout, "unset = {any}\n", .{v});
+    v.flag = 1;
+    try std.fmt.format(stdout, "set   = {any}\n", .{v});
+    v.data = 45;
+    try std.fmt.format(stdout, "set   = {any}\n", .{v});
+    v.flag = 0;
+    try std.fmt.format(stdout, "unset = {any}\n", .{v});
+
+    try std.fmt.format(stdout, "size: {d}, align: {d}\n", .{ @sizeOf(PS), @alignOf(PS) });
+
+    try std.fmt.format(stdout, "name: {s}, size: {d}, align: {d}\n", .{ @typeName([*]const u8), @sizeOf([*]const u8), @alignOf([*]const u8) });
 }

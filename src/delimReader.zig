@@ -71,7 +71,7 @@ pub fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersi
                     // Contains partial line
                     log.debug("DelimReader: PART", .{});
                     // rotate buffer
-                    utils.mem.copyForwards(u8, self.buffer[0..], self.slice);
+                    std.mem.copyForwards(u8, self.buffer[0..], self.slice);
 
                     self.slice = self.buffer[0..self.slice.len];
 

@@ -12,7 +12,8 @@ const MapKey = @import("mapKey.zig").MapKey;
 /// Type of int used in the MapVal struct
 const Tival = i32;
 /// Type of map used in parse function
-const TMap = sorted.StringSortedArrayMap(MapVal);
+// const TMap = sorted.SSOSortedArrayMap(MapVal);
+const TMap = sorted.BRCStringSortedArrayMap(MapVal);
 
 fn fastIntParse(comptime T: type, numstr: []const u8) T {
     comptime {
@@ -231,7 +232,7 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
 
             keystr = line[0..splitIndex];
             valstr = line[(splitIndex + 1)..];
-            linelog.info("line{d}: {s}, k: {s}, v: {s}", .{ result.lineCount, line, keystr, valstr });
+            std.log.info("line{d}: {s}, k: {s}, v: {s}", .{ result.lineCount, line, keystr, valstr });
             std.debug.assert(keystr.len >= 1);
             std.debug.assert(keystr.len <= 100);
             std.debug.assert(keystr[keystr.len - 1] != ';');
@@ -249,6 +250,93 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
             const mapIndex: u8 = MapKey.sumString(keystr) % mapCount;
             maps[mapIndex].addOrUpdateString(keystr, &tVal, MapVal.add);
         }
+    }
+
+    // Adding all the maps to maps[0]
+    for (1..mapCount) |i| {
+        std.log.debug("map[{d:0>3}] keycount = {d}", .{ i, maps[i].count });
+        for (0..maps[i].count) |j| {
+            const rKey = &maps[i].keys[j];
+            const rVal = &maps[i].values[j];
+            maps[0].addOrUpdate(rKey, rVal, MapVal.add);
+        }
+        maps[i].deinit();
+    }
+
+    if (print_result) {
+        const stdout = std.io.getStdOut().writer();
+        for (0..maps[0].count) |i| {
+            const k = &maps[0].keys[i];
+            keystr = k.toString();
+            const v: *MapVal = &maps[0].values[i];
+            try stdout.print("{s};{d:.1};{d:.1};{d:.1}\n", .{ // NO WRAP
+                keystr,
+                v.getMin(f64),
+                v.getMean(f64),
+                v.getMax(f64),
+            });
+        }
+    }
+
+    result.uniqueKeys = maps[0].count;
+    maps[0].deinit();
+    return result;
+}
+
+pub fn parse_skipComments(path: []const u8, comptime print_result: bool) !ParseResult {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    // Setup reading
+    var file: fs.File = try openFile(allocator, path);
+    defer file.close();
+    const fileReader = file.reader();
+    const TLineReader = DelimReader(@TypeOf(fileReader), '\n', readBufferSize);
+    var lineReader: TLineReader = try TLineReader.init(std.heap.page_allocator, fileReader);
+    defer lineReader.deinit();
+
+    // variables used for parsing
+    var result: ParseResult = .{};
+    const mapCount: u8 = 255;
+    var maps: [mapCount]TMap = blk: {
+        var r: [mapCount]TMap = undefined;
+        for (0..mapCount) |i| {
+            r[i] = try TMap.initWithCapacity(allocator, 256);
+        }
+        break :blk r;
+    };
+    var keystr: []const u8 = undefined;
+    var valstr: []const u8 = undefined;
+    var tVal: MapVal = .{ .count = 1 };
+
+    // main loop
+    while (try lineReader.next()) |line| {
+        std.debug.assert(line.len >= 5);
+        result.lineCount += 1;
+        var splitIndex: usize = line.len - 4;
+        while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
+        std.debug.assert(line[splitIndex] == ';');
+
+        keystr = line[0..splitIndex];
+        valstr = line[(splitIndex + 1)..];
+        linelog.info("line{d}: {s}, k: {s}, v: {s}", .{ result.lineCount, line, keystr, valstr });
+        std.debug.assert(keystr.len >= 1);
+        std.debug.assert(keystr.len <= 100);
+        std.debug.assert(keystr[keystr.len - 1] != ';');
+        std.debug.assert(valstr.len >= 3);
+        std.debug.assert(valstr.len <= 5);
+        std.debug.assert(valstr[valstr.len - 2] == '.');
+        std.debug.assert(valstr[0] != ';');
+
+        // parsing key and value string
+        const valint: Tival = fastIntParse(Tival, valstr);
+        tVal.max = valint;
+        tVal.min = valint;
+        tVal.sum = valint;
+
+        const mapIndex: u8 = MapKey.sumString(keystr) % mapCount;
+        maps[mapIndex].addOrUpdateString(keystr, &tVal, MapVal.add);
     }
 
     // Adding all the maps to maps[0]
@@ -461,7 +549,6 @@ test "fastIntParse" {
 }
 
 test "Size and Alignment" {
-    @setRuntimeSafety(false);
     const metainfo = @import("metainfo/metainfo.zig");
     const sso = @import("sorted/sso.zig");
     metainfo.logMemInfo(MapKey);

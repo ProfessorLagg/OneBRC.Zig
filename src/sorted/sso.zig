@@ -3,6 +3,7 @@ const std = @import("std");
 const compare = @import("compare.zig");
 const CompareResult = compare.CompareResult;
 const log = std.log.scoped(.SSO);
+const utils = @import("../utils.zig");
 
 pub const SmallString = struct {
     const largeSize: usize = @sizeOf(usize) + @sizeOf(*u8);
@@ -122,3 +123,120 @@ pub inline fn compareSSO(a: *const SSO, b: *const SSO) CompareResult {
     };
     return compare.compareString(aSlice, bSlice);
 }
+
+pub const BRCString = struct {
+    const ArrSize = @sizeOf(usize);
+    const TArr = [ArrSize]u8;
+
+    const u8f = packed struct {
+        const TSelf = @This();
+        len: u7 = 0,
+        flag: u1 = 0,
+
+        pub inline fn isSmall(self: TSelf) bool {
+            return self.len <= ArrSize;
+        }
+        pub inline fn isLarge(self: TSelf) bool {
+            return self.len > ArrSize;
+        }
+    };
+
+    /// meta.flag == 1 when data is an owned slice on the heap
+    meta: u8f = .{},
+    data: usize = 0,
+
+    inline fn asSliceS(self: *const BRCString) []const u8 {
+        const a: TArr = @bitCast(self.data);
+        return a[0..self.meta.len];
+    }
+    pub fn asSlice(self: *const BRCString) []const u8 {
+        if (self.meta.isSmall()) return self.asSliceS();
+        var r: []const u8 = undefined;
+        r.ptr = @ptrFromInt(self.data);
+        r.len = self.meta.len;
+        return r;
+    }
+
+    inline fn initS(string: []const u8) BRCString {
+        std.debug.assert(string.len <= ArrSize);
+        var arr: TArr = undefined;
+        @memset(arr[0..], 0);
+        utils.mem.copyForwards(u8, arr[0..], string);
+
+        var r = BRCString{};
+        // r.meta.flag = 0;
+        r.meta.len = @truncate(string.len);
+        r.data = @bitCast(arr);
+        log.debug("initS:  {any} from \"{s}\"", .{ r, string });
+        return r;
+    }
+    inline fn initL(allocator: std.mem.Allocator, string: []const u8) !BRCString {
+        const str_clone: []u8 = try allocator.alloc(u8, string.len);
+        utils.mem.copy(u8, str_clone, string);
+
+        var r = BRCString{};
+        r.meta.flag = 1;
+        r.meta.len = @truncate(str_clone.len);
+        r.data = @intFromPtr(string.ptr);
+        log.debug("initL:  {any} from \"{s}\"", .{ r, string });
+        return r;
+    }
+    pub fn init(allocator: std.mem.Allocator, string: []const u8) !BRCString {
+        std.debug.assert(string.len <= comptime std.math.maxInt(u7));
+        if (string.len <= ArrSize) return initS(string);
+        return initL(allocator, string);
+    }
+    pub fn create(string: []const u8) BRCString {
+        if (string.len <= ArrSize) return initS(string);
+        var r = BRCString{};
+        // r.meta.flag = 0;
+        r.meta.len = @truncate(string.len);
+        r.data = @intFromPtr(string.ptr);
+        log.debug("create: {any} from \"{s}\"", .{ r, string });
+        return r;
+    }
+    pub inline fn clone(self: *const BRCString, allocator: std.mem.Allocator) !BRCString {
+        if (self.meta.isSmall()) return self.*;
+
+        return try initL(allocator, self.asSlice());
+    }
+    pub fn deinit(self: *BRCString, allocator: std.mem.Allocator) void {
+        if (self.meta.flag == 1 and self.meta.isLarge()) {
+            const s = self.asSlice();
+            log.debug("deinit: len: {d}, flag: {d}, data: {d} | 0x{X}, slice: \"{s}\"", .{ self.meta.len, self.meta.flag, self.data, self.data, s });
+            allocator.free(s);
+            // _ = &allocator;
+        }
+    }
+
+    inline fn cmpS(a: *const BRCString, b: *const BRCString) CompareResult {
+        const avec: @Vector(@sizeOf(TArr), u8) = @bitCast(a.data);
+        const bvec: @Vector(@sizeOf(TArr), u8) = @bitCast(b.data);
+
+        const invert_vector: @Vector(@sizeOf(TArr), i8) = comptime @splat(-1);
+        const ltv: @Vector(@sizeOf(TArr), i8) = @as(@Vector(@sizeOf(TArr), i8), @intCast(@intFromBool(avec < bvec))) * invert_vector;
+        const gtv: @Vector(@sizeOf(TArr), i8) = @intCast(@intFromBool(avec > bvec));
+
+        const sumv: @Vector(@sizeOf(TArr), i8) = ltv + gtv;
+        inline for (0..@sizeOf(TArr)) |i| {
+            if (sumv[i] != 0) return @enumFromInt(sumv[i]);
+        }
+        return .Equal;
+    }
+
+    inline fn cmpL(a: *const BRCString, b: *const BRCString) CompareResult {
+        const as: []const u8 = a.asSlice();
+        const bs: []const u8 = b.asSlice();
+        return compare.compareStringR(&as, &bs);
+    }
+    pub fn cmp(a: BRCString, b: BRCString) CompareResult {
+        const maxlen: u7 = @max(a.meta.len, b.meta.len);
+        if (maxlen > ArrSize) return cmpL(&a, &b);
+        return cmpS(&a, &b);
+    }
+    pub fn cmpR(a: *const BRCString, b: *const BRCString) CompareResult {
+        const maxlen: u7 = @max(a.meta.len, b.meta.len);
+        if (maxlen > ArrSize) return cmpL(a, b);
+        return cmpS(a, b);
+    }
+};

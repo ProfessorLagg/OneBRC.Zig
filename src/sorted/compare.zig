@@ -49,8 +49,9 @@ pub fn isNumber(v: anytype) bool {
 /// Returns a numeric value comparison function for the input type
 pub fn compareFloatFn(comptime T: type) Comparison(T) {
     comptime {
-        switch (@typeInfo(T)) {
-            .Float, .ComptimeFloat => {},
+        const Ti: std.builtin.Type = @typeInfo(T);
+        switch (Ti) {
+            .float, .comptime_float => {},
             else => {
                 @compileError(@typeName(T) ++ " is not a float type");
             },
