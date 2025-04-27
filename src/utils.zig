@@ -2,6 +2,9 @@ const builtin = @import("builtin");
 const std = @import("std");
 
 pub const mem = struct {
+    pub const KB: comptime_int = 1024;
+    pub const MB: comptime_int = KB * 1024;
+    pub const GB: comptime_int = MB * 1024;
     /// Copy all of source into dest at position 0.
     /// dst.len must be >= src.len.
     /// If the slices overlap, dst.ptr must be <= src.ptr.
@@ -43,5 +46,34 @@ pub const mem = struct {
         const result: []T = try allocator.alloc(T, a.len);
         copy(T, result, a);
         return result;
+    }
+
+    pub fn allocLargeBytes(allocator: std.mem.Allocator, n: usize) ![]u8 {
+        const page_size: comptime_int = comptime std.heap.page_size_min;
+        const Page: type = [page_size]u8;
+
+        const page_count = try std.math.divCeil(usize, n, page_size);
+        const pages: []Page = try allocator.alignedAlloc(Page, page_size, page_count);
+        return std.mem.sliceAsBytes(pages);
+    }
+
+    pub fn readAllBytes(file: std.fs.File, allocator: std.mem.Allocator) ![]u8 {
+        const stat = try file.stat();
+        std.debug.assert(stat.size < std.math.maxInt(usize));
+        const bytes: []u8 = try allocator.alloc(u8, stat.size);
+
+        const bufsize: comptime_int = 2 * GB;
+        if (bytes.len < bufsize) {
+            _ = try file.read(bytes);
+        } else {
+            var slice: []u8 = bytes[0..];
+            while (slice.len > 0) {
+                const buf = slice[0..@min(slice.len, bufsize)];
+                _ = try file.read(buf);
+                slice = slice[buf.len..];
+            }
+        }
+
+        return bytes;
     }
 };

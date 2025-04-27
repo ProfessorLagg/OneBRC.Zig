@@ -4,7 +4,10 @@ const std = @import("std");
 const fs = std.fs;
 const sorted = @import("sorted/sorted.zig");
 const compare = sorted.compare;
+const utils = @import("utils.zig");
 const linelog = std.log.scoped(.Lines);
+
+const ProgressiveFileReader = @import("progressiveFileReader.zig").ProgressiveFileReader;
 const DelimReader = @import("delimReader.zig").DelimReader;
 
 const MapKey = @import("mapKey.zig").MapKey;
@@ -12,8 +15,8 @@ const MapKey = @import("mapKey.zig").MapKey;
 /// Type of int used in the MapVal struct
 const Tival = i32;
 /// Type of map used in parse function
-// const TMap = sorted.SSOSortedArrayMap(MapVal);
-const TMap = sorted.BRCStringSortedArrayMap(MapVal);
+const TMap = sorted.SSOSortedArrayMap(MapVal);
+// const TMap = sorted.BRCStringSortedArrayMap(MapVal);
 
 fn fastIntParse(comptime T: type, numstr: []const u8) T {
     comptime {
@@ -189,7 +192,7 @@ pub fn read(path: []const u8) !ParseResult {
     return result;
 }
 
-pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
+pub fn parse_respectComments(path: []const u8, comptime print_result: bool) !ParseResult {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -283,7 +286,7 @@ pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
     return result;
 }
 
-pub fn parse_skipComments(path: []const u8, comptime print_result: bool) !ParseResult {
+pub fn parse_delimReader(path: []const u8, comptime print_result: bool) !ParseResult {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -314,13 +317,16 @@ pub fn parse_skipComments(path: []const u8, comptime print_result: bool) !ParseR
     while (try lineReader.next()) |line| {
         std.debug.assert(line.len >= 5);
         result.lineCount += 1;
+        linelog.info("line{d}: {s}", .{ result.lineCount, line });
+
         var splitIndex: usize = line.len - 4;
         while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
         std.debug.assert(line[splitIndex] == ';');
 
         keystr = line[0..splitIndex];
         valstr = line[(splitIndex + 1)..];
-        linelog.info("line{d}: {s}, k: {s}, v: {s}", .{ result.lineCount, line, keystr, valstr });
+        // linelog.info("line{d}: {s}, k: {s}, v: {s}", .{ result.lineCount, line, keystr, valstr });
+
         std.debug.assert(keystr.len >= 1);
         std.debug.assert(keystr.len <= 100);
         std.debug.assert(keystr[keystr.len - 1] != ';');
@@ -370,166 +376,96 @@ pub fn parse_skipComments(path: []const u8, comptime print_result: bool) !ParseR
     return result;
 }
 
-pub fn parseParallel(path: []const u8, comptime print_result: bool) !ParseResult {
-    comptime {
-        if (builtin.single_threaded) {
-            @compileError("This method doesnt work in single threaded mode");
-        }
-    }
-    _ = &print_result;
-    // Setup allocator
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
+pub fn parse_readAll(path: []const u8, comptime print_result: bool) !ParseResult {
+    var gpa = std.heap.DebugAllocator(.{}).init;
     defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
 
-    // Setup reading
+    // Read entire file
     var file: fs.File = try openFile(allocator, path);
-    const fileReader = file.reader();
-    const TLineReader = DelimReader(@TypeOf(fileReader), '\n', readBufferSize);
-    var lineReader: TLineReader = try TLineReader.init(std.heap.page_allocator, fileReader);
+    defer file.close();
 
-    // Setup threads
-    const ThreadFactory = struct {
-        const TSelf = @This();
+    std.log.debug("begun reading file content", .{});
 
-        const TData = struct {
-            line: []u8,
-        };
-        const TList = std.DoublyLinkedList(TData);
-        const TNode = TList.Node;
+    // const stat = try file.stat();
+    // const fileContent: []u8 = try std.heap.page_allocator.alloc(u8, stat.size);
+    // defer std.heap.page_allocator.free(fileContent);
+    // const buffer_size: usize = try file.read(fileContent);
+    // const buffer: []const u8 = fileContent[0..buffer_size];
 
-        const mapCount: u8 = 255;
-        const maxRetries: u8 = 64;
+    var buffer: []const u8 = try utils.mem.readAllBytes(file, allocator);
+    defer allocator.free(buffer);
+    defer std.log.debug("finished reading file content", .{});
 
-        allocator: std.mem.Allocator,
-        thread: std.Thread = undefined,
-
-        readingBegunEvent: std.Thread.ResetEvent = .{},
-        readingFinishedEvent: std.Thread.ResetEvent = .{},
-        lastParseEvent: std.Thread.ResetEvent = .{},
-        parseEvent: std.Thread.ResetEvent = .{},
-
-        lines: TList = .{},
-        linesMutex: std.Thread.Mutex = .{},
-        totalLineCount: usize = 0,
-        map: TMap = undefined,
-
-        pub fn init(alc: std.mem.Allocator) !TSelf {
-            return TSelf{ .allocator = alc, .map = try TMap.init(alc) };
+    // variables used for parsing
+    var result: ParseResult = .{};
+    const mapCount: u8 = 255;
+    var maps: [mapCount]TMap = blk: {
+        var r: [mapCount]TMap = undefined;
+        for (0..mapCount) |i| {
+            r[i] = try TMap.initWithCapacity(allocator, 256);
         }
-
-        pub fn deinit(self: *TSelf) void {
-            self.map.deinit();
-        }
-
-        inline fn createData(alc: std.mem.Allocator, line: []const u8) !TData {
-            var r: TData = .{ .line = try alc.alloc(u8, line.len) };
-            @memcpy(r.line[0..], line[0..]);
-            return r;
-        }
-
-        inline fn destroyData(alc: std.mem.Allocator, data: *TData) void {
-            alc.free(data.line);
-        }
-
-        inline fn pop(self: *TSelf) ?*TNode {
-            self.linesMutex.lock();
-            const r = self.lines.pop();
-            self.linesMutex.unlock();
-            return r;
-        }
-
-        fn threadFn(self: *TSelf) void {
-            self.readingBegunEvent.wait();
-            while (!self.readingFinishedEvent.isSet()) {
-                while (self.pop()) |node| {
-                    self.parseEvent.set();
-                    const line = node.data.line;
-                    if (line[0] != '#') {
-                        self.totalLineCount += 1;
-                        linelog.info("line{d}: {s}", .{ self.totalLineCount, line });
-                        var splitIdx = line.len - 4;
-                        while (line[splitIdx] != ';' and splitIdx > 0) : (splitIdx -= 1) {}
-                        const keystr: []const u8 = line[0..splitIdx];
-                        const valstr: []const u8 = line[(splitIdx + 1)..];
-                        const valint: Tival = @intCast(fastIntParse(Tival, valstr));
-                        const tKey: MapKey = MapKey.create(keystr);
-                        const tVal: MapVal = .{ .count = 1, .sum = valint, .max = valint, .min = valint };
-                        self.map.addOrUpdate(&tKey, &tVal, MapVal.add);
-                    }
-                    destroyData(self.allocator, &node.data);
-                    self.allocator.destroy(node);
-                }
-            }
-            self.lastParseEvent.set();
-        }
-
-        pub fn handleLine(self: *TSelf, line: []const u8) !void {
-            var node: *TNode = try self.allocator.create(TNode);
-            node.data = try createData(self.allocator, line);
-
-            if (self.lines.len > 0) {
-                self.parseEvent.wait();
-            }
-            self.lines.prepend(node);
-            self.readingBegunEvent.set();
-        }
-
-        pub fn start(self: *TSelf) !void {
-            self.thread = try std.Thread.spawn(.{ .allocator = self.allocator }, threadFn, .{self});
-        }
-
-        pub fn wait(self: *TSelf) void {
-            self.readingBegunEvent.set();
-            self.readingFinishedEvent.set();
-            self.lastParseEvent.wait();
-            self.thread.join();
-        }
+        break :blk r;
     };
+    var keystr: []const u8 = undefined;
+    var valstr: []const u8 = undefined;
+    var tVal: MapVal = .{ .count = 1 };
 
-    const threadCount: usize = 15;
-    var factoryAllocators: [threadCount]std.heap.GeneralPurposeAllocator(.{}) = undefined;
-    var factories: [threadCount]ThreadFactory = undefined;
-    inline for (0..threadCount) |i| {
-        factoryAllocators[i] = .{};
-        factories[i] = try ThreadFactory.init(factoryAllocators[i].allocator());
-        try factories[i].start();
+    // main loop
+    var L: usize = 0;
+    var R: usize = 1;
+    while (R < buffer.len) {
+        while (buffer[R] != ';') : (R += 1) {}
+        std.debug.assert(buffer[R] == ';');
+        keystr = buffer[L..R];
+        R += 1;
+        L = R;
+
+        while (R < buffer.len and buffer[R] != '\n') : (R += 1) {}
+        valstr = buffer[L..R];
+        R += 1;
+        L = R;
+
+        result.lineCount += 1;
+        linelog.info("line{d}: {s};{s}, k: {s}, v: {s}", .{ result.lineCount, keystr, valstr, keystr, valstr });
+
+        std.debug.assert(keystr.len >= 1);
+        std.debug.assert(keystr.len <= 100);
+        std.debug.assert(keystr[keystr.len - 1] != ';');
+        std.debug.assert(valstr.len >= 3);
+        std.debug.assert(valstr.len <= 5);
+        std.debug.assert(valstr[valstr.len - 2] == '.');
+        std.debug.assert(valstr[0] != ';');
+
+        // parsing key and value string
+        const valint: Tival = fastIntParse(Tival, valstr);
+        tVal.max = valint;
+        tVal.min = valint;
+        tVal.sum = valint;
+
+        const mapIndex: u8 = MapKey.sumString(keystr) % mapCount;
+        maps[mapIndex].addOrUpdateString(keystr, &tVal, MapVal.add);
     }
 
-    std.log.debug("begun reading", .{});
-    var fId: usize = 0;
-    while (try lineReader.next()) |line| {
-        try factories[fId].handleLine(line);
-        fId = (fId + 1) % factories.len;
+    // Adding all the maps to maps[0]
+    for (1..mapCount) |i| {
+        std.log.debug("map[{d:0>3}] keycount = {d}", .{ i, maps[i].count });
+        for (0..maps[i].count) |j| {
+            const rKey = &maps[i].keys[j];
+            const rVal = &maps[i].values[j];
+            maps[0].addOrUpdate(rKey, rVal, MapVal.add);
+        }
+        maps[i].deinit();
     }
-    lineReader.deinit();
-    file.close();
-    std.log.debug("finished reading", .{});
-
-    std.log.debug("begun waiting and merging", .{});
-    var result: ParseResult = .{
-        .uniqueKeys = 0,
-        .lineCount = 0,
-    };
-    var map: TMap = try TMap.init(allocator);
-    defer map.deinit();
-    inline for (0..threadCount) |i| {
-        factories[i].wait();
-        map.join(&factories[i].map, MapVal.add);
-        result.lineCount += factories[i].totalLineCount;
-        factories[i].deinit();
-        _ = factoryAllocators[i].deinit();
-    }
-    result.uniqueKeys = map.count;
-    std.log.debug("finished waiting", .{});
 
     if (print_result) {
         const stdout = std.io.getStdOut().writer();
-        for (0..map.count) |i| {
-            const k: *MapKey = &map.keys[i];
-            const v: *MapVal = &map.values[i];
+        for (0..maps[0].count) |i| {
+            const k = &maps[0].keys[i];
+            keystr = k.toString();
+            const v: *MapVal = &maps[0].values[i];
             try stdout.print("{s};{d:.1};{d:.1};{d:.1}\n", .{ // NO WRAP
-                k.toString(),
+                keystr,
                 v.getMin(f64),
                 v.getMean(f64),
                 v.getMax(f64),
@@ -537,7 +473,230 @@ pub fn parseParallel(path: []const u8, comptime print_result: bool) !ParseResult
         }
     }
 
+    result.uniqueKeys = maps[0].count;
+    maps[0].deinit();
     return result;
+}
+
+pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
+    return try parse_readAll(path, print_result);
+}
+
+pub fn parseParallel_readAll(path: []const u8, comptime print_result: bool) !ParseResult {
+    const allocator = std.heap.smp_allocator;
+
+    // Prepare Reading
+    var file: fs.File = try openFile(allocator, path);
+    defer file.close();
+    var reader: ProgressiveFileReader = try ProgressiveFileReader.init(allocator, file);
+
+    // variables used for parsing
+    var result: ParseResult = .{};
+    const mapCount: u8 = 255;
+    var maps: [mapCount]TMap = blk: {
+        var r: [mapCount]TMap = undefined;
+        for (0..mapCount) |i| {
+            r[i] = try TMap.initWithCapacity(allocator, 256);
+        }
+        break :blk r;
+    };
+    var keystr: []const u8 = undefined;
+    var valstr: []const u8 = undefined;
+    var tVal: MapVal = .{ .count = 1 };
+
+    var readThread: std.Thread = try std.Thread.spawn(.{ .allocator = allocator }, ProgressiveFileReader.read, .{&reader});
+
+    // main loop
+    var L: usize = 0;
+    var R: usize = 1;
+    var buffer: []const u8 = undefined;
+    while (reader.isReading or R < reader.buffer.len) {
+        nosuspend {
+            buffer = reader.data;
+        }
+        if (R >= buffer.len or buffer.len < 4) continue;
+
+        while (buffer[R] != ';') : (R += 1) {}
+        std.debug.assert(buffer[R] == ';');
+        keystr = buffer[L..R];
+        R += 1;
+        L = R;
+
+        while (R < buffer.len and buffer[R] != '\n') : (R += 1) {}
+        valstr = buffer[L..R];
+        R += 1;
+        L = R;
+
+        result.lineCount += 1;
+        linelog.info("line{d}: {s};{s}, k: {s}, v: {s}", .{ result.lineCount, keystr, valstr, keystr, valstr });
+
+        std.debug.assert(keystr.len >= 1);
+        std.debug.assert(keystr.len <= 100);
+        std.debug.assert(keystr[keystr.len - 1] != ';');
+        std.debug.assert(valstr.len >= 3);
+        std.debug.assert(valstr.len <= 5);
+        std.debug.assert(valstr[valstr.len - 2] == '.');
+        std.debug.assert(valstr[0] != ';');
+
+        // parsing key and value string
+        const valint: Tival = fastIntParse(Tival, valstr);
+        tVal.max = valint;
+        tVal.min = valint;
+        tVal.sum = valint;
+
+        const mapIndex: u8 = MapKey.sumString(keystr) % mapCount;
+        maps[mapIndex].addOrUpdateString(keystr, &tVal, MapVal.add);
+    }
+
+    readThread.join();
+
+    // Adding all the maps to maps[0]
+    for (1..mapCount) |i| {
+        std.log.debug("map[{d:0>3}] keycount = {d}", .{ i, maps[i].count });
+        for (0..maps[i].count) |j| {
+            const rKey = &maps[i].keys[j];
+            const rVal = &maps[i].values[j];
+            maps[0].addOrUpdate(rKey, rVal, MapVal.add);
+        }
+        maps[i].deinit();
+    }
+
+    if (print_result) {
+        const stdout = std.io.getStdOut().writer();
+        for (0..maps[0].count) |i| {
+            const k = &maps[0].keys[i];
+            keystr = k.toString();
+            const v: *MapVal = &maps[0].values[i];
+            try stdout.print("{s};{d:.1};{d:.1};{d:.1}\n", .{ // NO WRAP
+                keystr,
+                v.getMin(f64),
+                v.getMean(f64),
+                v.getMax(f64),
+            });
+        }
+    }
+
+    result.uniqueKeys = maps[0].count;
+    maps[0].deinit();
+    return result;
+}
+
+pub fn parseParallel_threadpool(path: []const u8, comptime print_result: bool) !ParseResult {
+    comptime if (builtin.single_threaded) @compileError("This method doesnt work in single threaded mode");
+    const allocator = std.heap.smp_allocator;
+
+    // Setup reading
+    var file: fs.File = try openFile(allocator, path);
+    defer file.close();
+    const fileReader = file.reader();
+    const TLineReader = DelimReader(@TypeOf(fileReader), '\n', readBufferSize);
+    var lineReader: TLineReader = try TLineReader.init(std.heap.page_allocator, fileReader);
+    defer lineReader.deinit();
+
+    // variables used for parsing
+    var result: ParseResult = ParseResult{};
+
+    const mapCount: u8 = 100;
+    var maps: [mapCount]TMap = undefined;
+    var map_locks: [mapCount]std.Thread.Mutex = undefined;
+    for (0..mapCount) |i| {
+        maps[i] = try TMap.init(allocator);
+        map_locks[i] = std.Thread.Mutex{};
+    }
+
+    var pool: std.Thread.Pool = undefined;
+    const max_thread_count = try std.Thread.getCpuCount();
+    try pool.init(std.Thread.Pool.Options{
+        .allocator = allocator,
+        .n_jobs = std.math.clamp(mapCount, 2, max_thread_count),
+    });
+    defer pool.deinit();
+
+    const workFn = struct {
+        pub fn f(alc: std.mem.Allocator, line_clone: []const u8, map: *TMap, lock: *std.Thread.Mutex) void {
+            nosuspend {
+                var splitIndex: usize = line_clone.len - 4;
+                while (line_clone[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
+                std.debug.assert(line_clone[splitIndex] == ';');
+
+                const keystr = line_clone[0..splitIndex];
+                const valstr = line_clone[(splitIndex + 1)..];
+
+                std.debug.assert(keystr.len >= 1);
+                std.debug.assert(keystr.len <= 100);
+                std.debug.assert(keystr[keystr.len - 1] != ';');
+                std.debug.assert(valstr.len >= 3);
+                std.debug.assert(valstr.len <= 5);
+                std.debug.assert(valstr[valstr.len - 2] == '.');
+                std.debug.assert(valstr[0] != ';');
+
+                // parsing key and value string
+                const valint: Tival = fastIntParse(Tival, valstr);
+                const tVal: MapVal = .{
+                    .count = 1,
+                    .max = valint,
+                    .min = valint,
+                    .sum = valint,
+                };
+
+                lock.lock();
+                map.addOrUpdateString(keystr, &tVal, MapVal.add);
+                lock.unlock();
+
+                alc.free(line_clone);
+            }
+        }
+    }.f;
+
+    // main loop
+    var wg: std.Thread.WaitGroup = .{};
+    var mapIndex: usize = 0;
+    while (try lineReader.next()) |line| {
+        std.debug.assert(line.len >= 5);
+        result.lineCount += 1;
+        linelog.info("line{d}: {s}", .{ result.lineCount, line });
+
+        const line_clone: []const u8 = try utils.mem.clone(u8, allocator, line);
+        const lock: *std.Thread.Mutex = &map_locks[mapIndex];
+        pool.spawnWg(&wg, workFn, .{ allocator, line_clone, &maps[mapIndex], lock });
+        mapIndex = (mapIndex + 1) % mapCount;
+    }
+
+    wg.wait();
+
+    // Adding all the maps to maps[0]
+    for (1..mapCount) |i| {
+        std.log.debug("map[{d:0>3}] keycount = {d}", .{ i, maps[i].count });
+        for (0..maps[i].count) |j| {
+            const rKey = &maps[i].keys[j];
+            const rVal = &maps[i].values[j];
+            maps[0].addOrUpdate(rKey, rVal, MapVal.add);
+        }
+        maps[i].deinit();
+    }
+
+    if (print_result) {
+        const stdout = std.io.getStdOut().writer();
+        for (0..maps[0].count) |i| {
+            const k = &maps[0].keys[i];
+            const keystr = k.toString();
+            const v: *MapVal = &maps[0].values[i];
+            try stdout.print("{s};{d:.1};{d:.1};{d:.1}\n", .{ // NO WRAP
+                keystr,
+                v.getMin(f64),
+                v.getMean(f64),
+                v.getMax(f64),
+            });
+        }
+    }
+
+    result.uniqueKeys = maps[0].count;
+    maps[0].deinit();
+    return result;
+}
+
+pub fn parseParallel(path: []const u8, comptime print_result: bool) !ParseResult {
+    return try parseParallel_readAll(path, print_result);
 }
 
 // ========== TESTING ==========
