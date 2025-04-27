@@ -39,7 +39,8 @@ pub fn getStructMemInfo(comptime T: type) StructMemInfo(T) {
 }
 
 pub fn logMemInfo(comptime T: type) void {
-    std.debug.assert(@typeInfo(T) == .@"struct");
+    const Ti = comptime @typeInfo(T);
+    if (Ti != .@"struct") return;
     const memInfo: StructMemInfo(T) = getStructMemInfo(T);
 
     const format_data = .{ @typeName(T), memInfo.size, memInfo.alignment, memInfo.fieldSize, memInfo.padding };
