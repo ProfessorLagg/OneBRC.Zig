@@ -1,15 +1,17 @@
 const std = @import("std");
+const utils = @import("utils.zig");
 
 pub const ProgressiveFileReader = @This();
 
-const block_size = 4096;
+const block_size = 65 * utils.mem.KB;
 allocator: std.mem.Allocator,
 
 file: std.fs.File,
+isReading: bool = false,
 
 buffer: []u8,
-data: []const u8,
-isReading: bool = false,
+data: []const u8 = undefined,
+unused: []u8 = undefined,
 
 pub fn init(allocator: std.mem.Allocator, file: std.fs.File) !ProgressiveFileReader {
     const stat = try file.stat();
@@ -17,9 +19,9 @@ pub fn init(allocator: std.mem.Allocator, file: std.fs.File) !ProgressiveFileRea
         .allocator = allocator,
         .file = file,
         .buffer = try allocator.alloc(u8, stat.size),
-        .data = undefined,
     };
     r.data = r.buffer[0..0];
+    r.unused = r.buffer[0..];
     return r;
 }
 pub fn deinit(self: *ProgressiveFileReader) void {
@@ -27,11 +29,12 @@ pub fn deinit(self: *ProgressiveFileReader) void {
 }
 
 fn readBlock(self: *ProgressiveFileReader) !usize {
-    const L: usize = self.data.len;
-    const R: usize = @min(self.buffer.len, L + block_size);
-    const slice: []u8 = self.buffer[L..R];
-    const r: usize = try self.file.read(slice);
+    const l: usize = @min(block_size, self.unused.len);
+
+    const r: usize = try self.file.read(self.unused[0..l]);
     self.data.len += r;
+    const new_i: usize = @min(l, self.unused.len - 1);
+    self.unused = self.unused[new_i..];
     return r;
 }
 pub fn read(self: *ProgressiveFileReader) !void {
@@ -42,7 +45,8 @@ pub fn read(self: *ProgressiveFileReader) !void {
     self.isReading = false;
 }
 pub fn readPanic(self: *ProgressiveFileReader) void {
-    self.read() catch {
+    self.read() catch |err| {
+        std.log.warn("Reading file failed: {any}{any}", .{ err, @errorReturnTrace() });
         @panic("Reading file failed!");
     };
 }

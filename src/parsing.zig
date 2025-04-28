@@ -511,13 +511,11 @@ pub fn parseParallel_readAll(path: []const u8, comptime print_result: bool) !Par
     var R: usize = 1;
     var buffer: []const u8 = undefined;
     while (reader.isReading or R < reader.buffer.len) {
-        nosuspend {
-            buffer = reader.data;
-        }
+        nosuspend buffer = reader.data;
         if (R >= buffer.len or buffer.len < 4) continue;
 
-        while (buffer[R] != ';') : (R += 1) {}
-        std.debug.assert(buffer[R] == ';');
+        while (R < buffer.len and buffer[R] != ';') : (R += 1) {}
+        if (R >= buffer.len or buffer[R] != ';') continue;
         keystr = buffer[L..R];
         R += 1;
         L = R;
@@ -696,7 +694,9 @@ pub fn parseParallel_threadpool(path: []const u8, comptime print_result: bool) !
 }
 
 pub fn parseParallel(path: []const u8, comptime print_result: bool) !ParseResult {
-    return try parseParallel_readAll(path, print_result);
+    // return try parseParallel_readAll(path, print_result);
+    // return try @call(.never_inline, parseParallel_readAll, .{ path, print_result });
+    return try @call(.always_inline, parseParallel_readAll, .{ path, print_result });
 }
 
 // ========== TESTING ==========

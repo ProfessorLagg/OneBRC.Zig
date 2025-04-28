@@ -11,7 +11,7 @@ pub const std_options: std.Options = .{
     // Set the log level to info to .debug. use the scope levels instead
     .log_level = switch (builtin.mode) {
         .Debug => .debug,
-        .ReleaseSafe => .debug,
+        .ReleaseSafe => .info,
         .ReleaseSmall => .info,
         .ReleaseFast => .err,
     },
@@ -77,7 +77,7 @@ fn printArgs() !void {
 fn run() !void {
     _ = try parsing.parse(debugfilepath[0..], true);
 }
-inline fn debug() !void {
+fn debug() !void {
     const stdout = std.io.getStdOut().writer();
 
     const parseFn = comptime switch (builtin.single_threaded) {
@@ -92,7 +92,10 @@ inline fn debug() !void {
 
     try std.fmt.format(stdout, "Running {s}-benchmark on file: {s}\n", .{ thread_mode_str, debugfilepath });
     const start_time = std.time.nanoTimestamp();
-    const parseResult: parsing.ParseResult = try parseFn(debugfilepath[0..], false);
+    const parseResult: parsing.ParseResult = @call(.never_inline, parseFn, .{ debugfilepath[0..], false }) catch |err| {
+        std.debug.panic("{any}{any}", .{ err, @errorReturnTrace() });
+    };
+
     const end_time = std.time.nanoTimestamp();
 
     const ns: u64 = @intCast(end_time - start_time);
