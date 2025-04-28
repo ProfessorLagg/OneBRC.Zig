@@ -77,3 +77,38 @@ pub const mem = struct {
         return bytes;
     }
 };
+
+pub const types = struct {
+    pub fn isPrimitive(comptime T: type) bool {
+        comptime {
+            const primitiveTypes = [_]type{ i8, u8, i16, u16, i32, u32, i64, u64, i128, u128, isize, usize, c_char, c_short, c_ushort, c_int, c_uint, c_long, c_ulong, c_longlong, c_ulonglong, c_longdouble, f16, f32, f64, f80, f128, bool, anyopaque, void, noreturn, type, anyerror, comptime_int, comptime_float };
+            for (primitiveTypes) |pT| {
+                if (T == pT) return true;
+            }
+            return false;
+        }
+    }
+
+    pub fn isInt(comptime T: type) bool {
+        comptime {
+            const Ti: std.builtin.Type = @typeInfo(T);
+            return Ti == .int;
+        }
+    }
+
+    pub fn isUnsignedInt(comptime T: type) bool {
+        comptime {
+            const Ti: std.builtin.Type = @typeInfo(T);
+            if (Ti != .int) return false;
+            return Ti.int.signedness == .unsigned;
+        }
+    }
+
+    pub fn isSignedInt(comptime T: type) bool {
+        comptime {
+            const Ti: std.builtin.Type = @typeInfo(T);
+            if (Ti != .int) return false;
+            return Ti.int.signedness == .unsigned;
+        }
+    }
+};

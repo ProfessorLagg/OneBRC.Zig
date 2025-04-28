@@ -479,20 +479,28 @@ pub fn parse_readAll(path: []const u8, comptime print_result: bool) !ParseResult
 }
 
 pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
-    return try parse_readAll(path, print_result);
+    return try parse_delimReader(path, print_result);
 }
 
 pub fn parseParallel_readAll(path: []const u8, comptime print_result: bool) !ParseResult {
     const allocator = std.heap.smp_allocator;
 
-    // Prepare Reading
+    // Setup file reading
     var file: fs.File = try openFile(allocator, path);
     defer file.close();
     var reader: ProgressiveFileReader = try ProgressiveFileReader.init(allocator, file);
 
-    // variables used for parsing
+    // Setup splitting
+    const SizedSlice = @import("sizedSlice.zig").SizedSlice(u8, u8);
+    const KVPOffset = struct { key_s: SizedSlice, val_s: SizedSlice };
+    const offsetCount: comptime_int = 60;
+    const Toffsets: type = [offsetCount]?KVPOffset;
+    var offsets: Toffsets = undefined;
+    @memset(offsets[0..], null);
+
+    // Setup maps
     var result: ParseResult = .{};
-    const mapCount: u8 = 255;
+    const mapCount: comptime_int = 255;
     var maps: [mapCount]TMap = blk: {
         var r: [mapCount]TMap = undefined;
         for (0..mapCount) |i| {
@@ -500,53 +508,98 @@ pub fn parseParallel_readAll(path: []const u8, comptime print_result: bool) !Par
         }
         break :blk r;
     };
-    var keystr: []const u8 = undefined;
-    var valstr: []const u8 = undefined;
-    var tVal: MapVal = .{ .count = 1 };
+    const MergeContext = struct {
+        const TSelf = @This();
+        maps_ptr: *[mapCount]TMap,
+        offsets_ptr: *Toffsets,
+        run_ptr: *bool,
 
+        pub fn mergeIndex(self: *TSelf, index: usize) bool {
+            if (self.offsets_ptr[index] != null) {
+                const offset: KVPOffset = self.offsets_ptr[index].?;
+                const keystr: []u8 = offset.key_s.toSlice();
+                const valstr: []u8 = offset.val_s.toSlice();
+                std.debug.assert(keystr.len >= 1);
+                std.debug.assert(keystr.len <= 100);
+                std.debug.assert(keystr[keystr.len - 1] != ';');
+                std.debug.assert(valstr.len >= 3);
+                std.debug.assert(valstr.len <= 5);
+                std.debug.assert(valstr[valstr.len - 2] == '.');
+                std.debug.assert(valstr[0] != ';');
+
+                // parsing key and value string
+                const valint: Tival = fastIntParse(Tival, valstr);
+                const tVal: MapVal = .{ .count = 1, .max = valint, .min = valint, .sum = valint };
+                const mapIndex: u8 = MapKey.sumString(keystr) % mapCount;
+                self.maps_ptr[mapIndex].addOrUpdateString(keystr, &tVal, MapVal.add);
+
+                self.offsets_ptr[index] = null;
+                return true;
+            }
+            return false;
+        }
+
+        pub fn merge(self: *TSelf) void {
+            self.run_ptr.* = true;
+            var offsetIndex: usize = 0;
+            while (self.run_ptr.*) {
+                offsetIndex *= @intFromBool(offsetIndex < self.offsets_ptr.len); // fast modulo
+                const merged = self.mergeIndex(offsetIndex);
+                offsetIndex = (offsetIndex + @intFromBool(merged));
+            }
+        }
+        /// Merges every non-null offset
+        pub fn mergeRemaining(self: *TSelf) void {
+            for (0..self.offsets_ptr.len) |i| {
+                _ = self.mergeIndex(i);
+            }
+        }
+    };
+
+    // start reading file on new thread
     var readThread: std.Thread = try std.Thread.spawn(.{ .allocator = allocator }, ProgressiveFileReader.read, .{&reader});
-
+    // start map merge thread
+    var runMergeThread: bool = undefined;
+    var mergeContext: MergeContext = .{
+        .maps_ptr = &maps,
+        .offsets_ptr = &offsets,
+        .run_ptr = &runMergeThread,
+    };
+    var mergeThread: std.Thread = try std.Thread.spawn(.{ .allocator = allocator }, MergeContext.merge, .{&mergeContext});
     // main loop
     var L: usize = 0;
     var R: usize = 1;
     var buffer: []const u8 = undefined;
+    var writeSplitIdx: usize = 0;
     while (reader.isReading or R < reader.buffer.len) {
         nosuspend buffer = reader.data;
         if (R >= buffer.len or buffer.len < 4) continue;
 
         while (R < buffer.len and buffer[R] != ';') : (R += 1) {}
         if (R >= buffer.len or buffer[R] != ';') continue;
-        keystr = buffer[L..R];
+        const key_s = SizedSlice.fromSlice(buffer[L..R]);
         R += 1;
         L = R;
 
         while (R < buffer.len and buffer[R] != '\n') : (R += 1) {}
-        valstr = buffer[L..R];
+        const val_s = SizedSlice.fromSlice(buffer[L..R]);
         R += 1;
         L = R;
 
         result.lineCount += 1;
-        linelog.info("line{d}: {s};{s}, k: {s}, v: {s}", .{ result.lineCount, keystr, valstr, keystr, valstr });
+        linelog.info("line{d}: {s};{s}, k: {s}, v: {s}", .{ result.lineCount, key_s, val_s, key_s, val_s });
 
-        std.debug.assert(keystr.len >= 1);
-        std.debug.assert(keystr.len <= 100);
-        std.debug.assert(keystr[keystr.len - 1] != ';');
-        std.debug.assert(valstr.len >= 3);
-        std.debug.assert(valstr.len <= 5);
-        std.debug.assert(valstr[valstr.len - 2] == '.');
-        std.debug.assert(valstr[0] != ';');
-
-        // parsing key and value string
-        const valint: Tival = fastIntParse(Tival, valstr);
-        tVal.max = valint;
-        tVal.min = valint;
-        tVal.sum = valint;
-
-        const mapIndex: u8 = MapKey.sumString(keystr) % mapCount;
-        maps[mapIndex].addOrUpdateString(keystr, &tVal, MapVal.add);
+        // Wait for the merge thread to read and merge this index
+        writeSplitIdx *= @intFromBool(writeSplitIdx < offsets.len); // fast modulo
+        while (offsets[writeSplitIdx] != null) {}
+        offsets[writeSplitIdx] = KVPOffset{ .key_s = key_s, .val_s = val_s };
+        writeSplitIdx += 1;
     }
 
     readThread.join();
+    runMergeThread = false;
+    mergeThread.join();
+    mergeContext.mergeRemaining();
 
     // Adding all the maps to maps[0]
     for (1..mapCount) |i| {
@@ -563,7 +616,7 @@ pub fn parseParallel_readAll(path: []const u8, comptime print_result: bool) !Par
         const stdout = std.io.getStdOut().writer();
         for (0..maps[0].count) |i| {
             const k = &maps[0].keys[i];
-            keystr = k.toString();
+            const keystr = k.toString();
             const v: *MapVal = &maps[0].values[i];
             try stdout.print("{s};{d:.1};{d:.1};{d:.1}\n", .{ // NO WRAP
                 keystr,

@@ -3,7 +3,7 @@ const utils = @import("utils.zig");
 
 pub const ProgressiveFileReader = @This();
 
-const block_size = 65 * utils.mem.KB;
+const block_size = 4 * utils.mem.KB;
 allocator: std.mem.Allocator,
 
 file: std.fs.File,
