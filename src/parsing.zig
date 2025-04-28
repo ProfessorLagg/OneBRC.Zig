@@ -493,7 +493,7 @@ pub fn parseParallel_readAll(path: []const u8, comptime print_result: bool) !Par
     // Setup splitting
     const SizedSlice = @import("sizedSlice.zig").SizedSlice(u8, u8);
     const KVPOffset = struct { key_s: SizedSlice, val_s: SizedSlice };
-    const offsetCount: comptime_int = 60;
+    const offsetCount: comptime_int = 8;
     const Toffsets: type = [offsetCount]?KVPOffset;
     var offsets: Toffsets = undefined;
     @memset(offsets[0..], null);
@@ -512,11 +512,11 @@ pub fn parseParallel_readAll(path: []const u8, comptime print_result: bool) !Par
         const TSelf = @This();
         maps_ptr: *[mapCount]TMap,
         offsets_ptr: *Toffsets,
-        run_ptr: *bool,
+        run: bool = true,
 
-        pub fn mergeIndex(self: *TSelf, index: usize) bool {
-            if (self.offsets_ptr[index] != null) {
-                const offset: KVPOffset = self.offsets_ptr[index].?;
+        inline fn mergeIndex(self: *TSelf, index: usize) bool {
+            const offset_opt: ?KVPOffset = nosuspend self.offsets_ptr[index];
+            if (offset_opt) |offset| {
                 const keystr: []u8 = offset.key_s.toSlice();
                 const valstr: []u8 = offset.val_s.toSlice();
                 std.debug.assert(keystr.len >= 1);
@@ -533,19 +533,28 @@ pub fn parseParallel_readAll(path: []const u8, comptime print_result: bool) !Par
                 const mapIndex: u8 = MapKey.sumString(keystr) % mapCount;
                 self.maps_ptr[mapIndex].addOrUpdateString(keystr, &tVal, MapVal.add);
 
-                self.offsets_ptr[index] = null;
-                return true;
+                nosuspend {
+                    self.offsets_ptr[index] = null;
+                    std.log.warn("mergeIndex: Merged index {d}", .{index});
+                    return true;
+                }
             }
             return false;
         }
 
-        pub fn merge(self: *TSelf) void {
-            self.run_ptr.* = true;
+        pub fn merge_old(self: *TSelf) void {
+            self.run = true;
             var offsetIndex: usize = 0;
-            while (self.run_ptr.*) {
-                offsetIndex *= @intFromBool(offsetIndex < self.offsets_ptr.len); // fast modulo
+            while (@atomicLoad(bool, &self.run, .unordered)) {
                 const merged = self.mergeIndex(offsetIndex);
-                offsetIndex = (offsetIndex + @intFromBool(merged));
+                offsetIndex += @intFromBool(merged);
+                offsetIndex *= @intFromBool(offsetIndex < self.offsets_ptr.len); // fast modulo
+            }
+        }
+
+        pub fn merge(self: *TSelf) void {
+            while (@atomicLoad(bool, &self.run, .unordered)) {
+                self.mergeRemaining();
             }
         }
         /// Merges every non-null offset
@@ -559,11 +568,9 @@ pub fn parseParallel_readAll(path: []const u8, comptime print_result: bool) !Par
     // start reading file on new thread
     var readThread: std.Thread = try std.Thread.spawn(.{ .allocator = allocator }, ProgressiveFileReader.read, .{&reader});
     // start map merge thread
-    var runMergeThread: bool = undefined;
     var mergeContext: MergeContext = .{
         .maps_ptr = &maps,
         .offsets_ptr = &offsets,
-        .run_ptr = &runMergeThread,
     };
     var mergeThread: std.Thread = try std.Thread.spawn(.{ .allocator = allocator }, MergeContext.merge, .{&mergeContext});
     // main loop
@@ -590,14 +597,16 @@ pub fn parseParallel_readAll(path: []const u8, comptime print_result: bool) !Par
         linelog.info("line{d}: {s};{s}, k: {s}, v: {s}", .{ result.lineCount, key_s, val_s, key_s, val_s });
 
         // Wait for the merge thread to read and merge this index
-        writeSplitIdx *= @intFromBool(writeSplitIdx < offsets.len); // fast modulo
-        while (offsets[writeSplitIdx] != null) {}
+        std.log.warn("waiting to write to to offset {d}", .{writeSplitIdx});
+        while (offsets[writeSplitIdx] != null) try std.Thread.yield();
         offsets[writeSplitIdx] = KVPOffset{ .key_s = key_s, .val_s = val_s };
+        std.log.warn("wrote to offset {d}", .{writeSplitIdx});
         writeSplitIdx += 1;
+        writeSplitIdx *= @intFromBool(writeSplitIdx < offsets.len); // fast modulo
     }
 
     readThread.join();
-    runMergeThread = false;
+    mergeContext.run = false;
     mergeThread.join();
     mergeContext.mergeRemaining();
 

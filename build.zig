@@ -5,16 +5,17 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const single_threaded: bool = false;
     var build_waf: bool = false;
+    _ = &build_waf;
 
-    if (b.args) |args| {
-        const waf_arg: []const u8 = "-waf";
-        for (args) |arg| {
-            if (std.mem.eql(u8, arg, waf_arg)) {
-                build_waf = true;
-                continue;
-            }
-        }
-    }
+    // if (b.args) |args| {
+    //     const waf_arg: []const u8 = "-waf";
+    //     for (args) |arg| {
+    //         if (std.mem.eql(u8, arg, waf_arg)) {
+    //             build_waf = true;
+    //             continue;
+    //         }
+    //     }
+    // }
 
     const exe = b.addExecutable(.{
         .name = "1brc.cli",
