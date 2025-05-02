@@ -3,19 +3,12 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const single_threaded: bool = false;
+    const single_threaded: bool = true;
+    const link_libc: bool = true;
+    const use_llvm: bool = true;
+
     var build_waf: bool = false;
     _ = &build_waf;
-
-    // if (b.args) |args| {
-    //     const waf_arg: []const u8 = "-waf";
-    //     for (args) |arg| {
-    //         if (std.mem.eql(u8, arg, waf_arg)) {
-    //             build_waf = true;
-    //             continue;
-    //         }
-    //     }
-    // }
 
     const exe = b.addExecutable(.{
         .name = "1brc.cli",
@@ -23,7 +16,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .single_threaded = single_threaded,
-        .link_libc = true,
+        .link_libc = link_libc,
+        .use_llvm = use_llvm,
     });
     b.installArtifact(exe);
 
@@ -49,7 +43,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/cli.zig"),
         .target = target,
         .optimize = optimize,
-        .link_libc = true,
+        .link_libc = link_libc,
         .single_threaded = single_threaded,
         // .test_runner = .{ .path = b.path("src/test_runner.zig"), .mode = .simple },
     });
@@ -61,7 +55,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/sorted/sorted.zig"),
         .target = target,
         .optimize = optimize,
-        .link_libc = true,
+        .link_libc = link_libc,
         .single_threaded = single_threaded,
         // .test_runner = .{ .path = b.path("src/test_runner.zig"), .mode = .simple },
     });
@@ -73,7 +67,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/parsing.zig"),
         .target = target,
         .optimize = optimize,
-        .link_libc = true,
+        .link_libc = link_libc,
         .single_threaded = single_threaded,
         // .test_runner = .{ .path = b.path("src/test_runner.zig"), .mode = .simple },
     });
@@ -85,7 +79,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/benchmarking/benchmarking.zig"),
         .target = target,
         .optimize = optimize,
-        .link_libc = true,
+        .link_libc = link_libc,
         .single_threaded = single_threaded,
         // .test_runner = .{ .path = b.path("src/test_runner.zig"), .mode = .simple },
     });

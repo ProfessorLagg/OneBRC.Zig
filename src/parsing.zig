@@ -5,10 +5,13 @@ const fs = std.fs;
 const sorted = @import("sorted/sorted.zig");
 const compare = sorted.compare;
 const utils = @import("utils.zig");
-const linelog = std.log.scoped(.Lines);
 
+const FileMapping = @import("filemapping.zig").FileMapping;
+const FileView = @import("filemapping.zig").FileView;
 const ProgressiveFileReader = @import("progressiveFileReader.zig").ProgressiveFileReader;
 const DelimReader = @import("delimReader.zig").DelimReader;
+
+const linelog = std.log.scoped(.Lines);
 
 const MapKey = @import("mapKey.zig").MapKey;
 
@@ -55,7 +58,7 @@ fn toAbsolutePath(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
 fn openFile(allocator: std.mem.Allocator, path: []const u8) !fs.File {
     const absPath: []u8 = try toAbsolutePath(allocator, path);
     defer allocator.free(absPath);
-    return try fs.openFileAbsolute(absPath, comptime fs.File.OpenFlags{ //NOFOLD
+    return try fs.openFileAbsolute(absPath, comptime fs.File.OpenFlags{
         .mode = .read_only,
         .lock = .shared,
         .lock_nonblocking = false,
@@ -153,43 +156,58 @@ pub const ParseResult = struct {
 };
 
 const readBufferSize: comptime_int = 4096 * @sizeOf(usize); //  4096 * 256 = 1mb
-/// For testing purposes only. Reads all the lines in the file, without parsing them.
-pub fn read(path: []const u8) !ParseResult {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
-    defer _ = gpa.deinit();
-    var result: ParseResult = .{};
 
-    // Setup reading
+pub fn read_mappedFile(path: []const u8) !ParseResult {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
     var file: fs.File = try openFile(allocator, path);
     defer file.close();
-    const fileReader = file.reader();
-    const TlineReader = DelimReader(@TypeOf(fileReader), '\n', readBufferSize);
-    var lineReader: TlineReader = try TlineReader.init(allocator, fileReader);
-    defer lineReader.deinit();
 
-    lineloop: while (try lineReader.next()) |line| {
-        if (line[0] == '#') {
-            linelog.debug("skipped line: '{s}'", .{line});
-            continue :lineloop;
-        }
-        result.lineCount += 1;
+    var map: FileMapping = try FileMapping.initRead(&file);
+    defer map.deinit();
 
-        linelog.info("line{d}: {s}", .{ result.lineCount, line });
+    var view: FileView = try FileView.initRead(&map);
+    defer view.deinit();
 
-        var splitIndex: usize = line.len - 4;
-        while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
-        const keystr: []const u8 = line[0..splitIndex];
-        const valstr: []const u8 = line[(splitIndex + 1)..];
-        linelog.info("line{d}: {s}, k: {s}, v: {s}", .{ result.lineCount, line, keystr, valstr });
-        std.debug.assert(keystr.len >= 1);
-        std.debug.assert(keystr.len <= 100);
-        std.debug.assert(valstr.len >= 3);
-        std.debug.assert(valstr[valstr.len - 2] == '.');
-        std.debug.assert(line.len >= 5);
-        std.debug.assert(line[splitIndex] == ';');
+    // main loop
+    const buffer = view.slice;
+    var result: ParseResult = .{ .lineCount = 1 };
+    for (0..buffer.len) |i| {
+        result.lineCount += @intFromBool(buffer[i] == '\n');
     }
+
     return result;
+}
+
+pub fn read_progressiveReader(path: []const u8) !ParseResult {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var file: fs.File = try openFile(allocator, path);
+    defer file.close();
+
+    var reader: ProgressiveFileReader = try ProgressiveFileReader.init(allocator, file);
+    defer reader.deinit();
+
+    try reader.read();
+
+    // main loop
+    const buffer = reader.data;
+    var result: ParseResult = .{ .lineCount = 1 };
+    for (0..buffer.len) |i| {
+        result.lineCount += @intFromBool(buffer[i] == '\n');
+    }
+
+    return result;
+}
+
+/// For testing purposes only. Reads all the lines in the file, without parsing them.
+pub fn read(path: []const u8) !ParseResult {
+    return read_mappedFile(path);
+    // return read_progressiveReader(path);
 }
 
 pub fn parse_respectComments(path: []const u8, comptime print_result: bool) !ParseResult {
@@ -387,12 +405,6 @@ pub fn parse_readAll(path: []const u8, comptime print_result: bool) !ParseResult
 
     std.log.debug("begun reading file content", .{});
 
-    // const stat = try file.stat();
-    // const fileContent: []u8 = try std.heap.page_allocator.alloc(u8, stat.size);
-    // defer std.heap.page_allocator.free(fileContent);
-    // const buffer_size: usize = try file.read(fileContent);
-    // const buffer: []const u8 = fileContent[0..buffer_size];
-
     var buffer: []const u8 = try utils.mem.readAllBytes(file, allocator);
     defer allocator.free(buffer);
     defer std.log.debug("finished reading file content", .{});
@@ -478,8 +490,107 @@ pub fn parse_readAll(path: []const u8, comptime print_result: bool) !ParseResult
     return result;
 }
 
+pub fn parse_mappedFile(path: []const u8, comptime print_result: bool) !ParseResult {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    // Read entire file
+    var file: fs.File = try openFile(allocator, path);
+    defer file.close();
+
+    // Map file
+    const fMap: FileMapping = try FileMapping.initRead(&file);
+    defer fMap.deinit();
+    const fView: FileView = try FileView.initRead(&fMap);
+    defer fView.deinit();
+
+    // variables used for parsing
+    var result: ParseResult = .{};
+    const mapCount: u8 = 255;
+    var maps: [mapCount]TMap = blk: {
+        var r: [mapCount]TMap = undefined;
+        for (0..mapCount) |i| {
+            r[i] = try TMap.initWithCapacity(allocator, 256);
+        }
+        break :blk r;
+    };
+    var keystr: []const u8 = undefined;
+    var valstr: []const u8 = undefined;
+    var tVal: MapVal = .{ .count = 1 };
+
+    // main loop
+    const buffer: []const u8 = fView.slice;
+    var L: usize = 0;
+    var R: usize = 1;
+    while (R < buffer.len) {
+        while (buffer[R] != ';') : (R += 1) {}
+        std.debug.assert(buffer[R] == ';');
+        keystr = buffer[L..R];
+        R += 1;
+        L = R;
+
+        while (R < buffer.len and buffer[R] != '\n') : (R += 1) {}
+        valstr = buffer[L..R];
+        R += 1;
+        L = R;
+
+        result.lineCount += 1;
+        linelog.info("line{d}: {s};{s}, k: {s}, v: {s}", .{ result.lineCount, keystr, valstr, keystr, valstr });
+
+        std.debug.assert(keystr.len >= 1);
+        std.debug.assert(keystr.len <= 100);
+        std.debug.assert(keystr[keystr.len - 1] != ';');
+        std.debug.assert(valstr.len >= 3);
+        std.debug.assert(valstr.len <= 5);
+        std.debug.assert(valstr[valstr.len - 2] == '.');
+        std.debug.assert(valstr[0] != ';');
+
+        // parsing key and value string
+        const valint: Tival = fastIntParse(Tival, valstr);
+        tVal.max = valint;
+        tVal.min = valint;
+        tVal.sum = valint;
+
+        const mapIndex: u8 = MapKey.sumString(keystr) % mapCount;
+        maps[mapIndex].addOrUpdateString(keystr, &tVal, MapVal.add);
+    }
+
+    // Adding all the maps to maps[0]
+    for (1..mapCount) |i| {
+        std.log.debug("map[{d:0>3}] keycount = {d}", .{ i, maps[i].count });
+        for (0..maps[i].count) |j| {
+            const rKey = &maps[i].keys[j];
+            const rVal = &maps[i].values[j];
+            maps[0].addOrUpdate(rKey, rVal, MapVal.add);
+        }
+        maps[i].deinit();
+    }
+
+    if (print_result) {
+        const stdout = std.io.getStdOut().writer();
+        for (0..maps[0].count) |i| {
+            const k = &maps[0].keys[i];
+            keystr = k.toString();
+            const v: *MapVal = &maps[0].values[i];
+            try stdout.print("{s};{d:.1};{d:.1};{d:.1}\n", .{ // NO WRAP
+                keystr,
+                v.getMin(f64),
+                v.getMean(f64),
+                v.getMax(f64),
+            });
+        }
+    }
+
+    result.uniqueKeys = maps[0].count;
+    maps[0].deinit();
+    return result;
+}
+
 pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
     return try parse_delimReader(path, print_result);
+    // return try parse_readAll(path, print_result);
+    // return try parse_mappedFile(path, print_result);
 }
 
 pub fn parseParallel_readAll(path: []const u8, comptime print_result: bool) !ParseResult {
