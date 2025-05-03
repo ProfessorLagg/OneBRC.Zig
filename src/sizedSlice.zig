@@ -8,7 +8,7 @@ pub fn SizedSlice(
     comptime Tlen: type,
 ) type {
     comptime {
-        const valid: bool = utils.types.isUnsignedInt(T) and utils.types.isPrimitive(Tlen);
+        const valid: bool = utils.types.isUnsignedIntegerType(T) and utils.types.isPrimitive(Tlen);
         if (!valid) @compileError("Expected primitive unsigned integer, but found " ++ @typeName(Tlen));
     }
 
