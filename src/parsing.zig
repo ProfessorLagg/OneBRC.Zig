@@ -553,10 +553,92 @@ pub fn parse_mappedFile(path: []const u8, comptime print_result: bool) !ParseRes
     return result;
 }
 
+pub fn parse_brcmap(path: []const u8, comptime print_result: bool) !ParseResult {
+    const BRCHashMap = @import("brcHashMap.zig").BRCHashMap;
+
+    // THIS DOES NOT WORK WITH GeneralPurposeAllocator / DebugAllocator!
+    const allocator = std.heap.c_allocator;
+
+    // Read entire file
+    var file: fs.File = try openFile(allocator, path);
+    defer file.close();
+
+    // Map file
+    const fMap: FileMapping = try FileMapping.initRead(&file);
+    defer fMap.deinit();
+    const fView: FileView = try FileView.initRead(&fMap);
+    defer fView.deinit();
+
+    // variables used for parsing
+    var result: ParseResult = .{};
+    var map: BRCHashMap = BRCHashMap.init(allocator);
+    var keystr: []const u8 = undefined;
+    var valstr: []const u8 = undefined;
+
+    // main loop
+    const buffer: []const u8 = fView.slice;
+    var L: usize = 0;
+    var R: usize = 1;
+    while (R < buffer.len) {
+        while (buffer[R] != ';') : (R += 1) {}
+        std.debug.assert(buffer[R] == ';');
+        keystr = buffer[L..R];
+        R += 1;
+        L = R;
+
+        while (R < buffer.len and buffer[R] != '\n') : (R += 1) {}
+        valstr = buffer[L..R];
+        R += 1;
+        L = R;
+
+        result.lineCount += 1;
+        linelog.info("line{d}: {s};{s}, k: {s}, v: {s}", .{ result.lineCount, keystr, valstr, keystr, valstr });
+
+        std.debug.assert(keystr.len >= 1);
+        std.debug.assert(keystr.len <= 100);
+        std.debug.assert(keystr[keystr.len - 1] != ';');
+        std.debug.assert(valstr.len >= 3);
+        std.debug.assert(valstr.len <= 5);
+        std.debug.assert(valstr[valstr.len - 2] == '.');
+        std.debug.assert(valstr[0] != ';');
+
+        // parsing key and value string
+        const valint: i64 = utils.math.fastIntParse(i64, valstr);
+        map.addOrUpdate(keystr, valint) catch |err| {
+            @branchHint(.cold);
+            return err;
+        };
+    }
+
+    // Getting out the final map
+    var final_map = try map.finalize();
+    defer final_map.deinit();
+    result.uniqueKeys = final_map.count;
+
+    if (print_result) {
+        const stdout = std.io.getStdOut().writer();
+        for (0..final_map.count) |i| {
+            const k = &final_map.keys[i];
+            keystr = k.toString();
+            const v: *MapVal = &final_map.values[i];
+            try stdout.print("{s};{d:.1};{d:.1};{d:.1}\n", .{
+                keystr,
+                v.getMin(f64),
+                v.getMean(f64),
+                v.getMax(f64),
+            });
+        }
+    }
+
+    return result;
+}
+
 pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
-    return try parse_delimReader(path, print_result);
+    // return try parse_delimReader(path, print_result);
+
     // return try parse_readAll(path, print_result);
     // return try parse_mappedFile(path, print_result);
+    return try parse_brcmap(path, print_result);
 }
 
 pub fn parseParallel_readAll(path: []const u8, comptime print_result: bool) !ParseResult {

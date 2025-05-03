@@ -7,6 +7,9 @@ pub fn build(b: *std.Build) void {
     const link_libc: bool = true;
     const use_llvm: bool = true;
 
+    var build_gen: bool = false;
+    _ = &build_gen;
+
     var build_waf: bool = false;
     _ = &build_waf;
 
@@ -21,18 +24,20 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(exe);
 
-    const utils_module = b.addModule("utils", .{ .root_source_file = b.path("src/utils.zig") });
-    const gen = b.addExecutable(.{
-        .name = "1brc.gen",
-        .root_source_file = b.path("src/generator/main.zig"),
-        .target = target,
-        .optimize = optimize,
-        .single_threaded = single_threaded,
-        .link_libc = false,
-        .use_llvm = true,
-    });
-    gen.root_module.addImport("utils", utils_module);
-    b.installArtifact(gen);
+    if (build_gen) {
+        const utils_module = b.addModule("utils", .{ .root_source_file = b.path("src/utils.zig") });
+        const gen = b.addExecutable(.{
+            .name = "1brc.gen",
+            .root_source_file = b.path("src/generator/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .single_threaded = single_threaded,
+            .link_libc = false,
+            .use_llvm = true,
+        });
+        gen.root_module.addImport("utils", utils_module);
+        b.installArtifact(gen);
+    }
 
     if (build_waf) {
         const exe_waf = b.addUpdateSourceFiles();

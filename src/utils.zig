@@ -76,6 +76,12 @@ pub const mem = struct {
 
         return bytes;
     }
+
+    pub fn initDefault(comptime T: type, comptime len: usize, default: T) [len]T {
+        var result: [len]T = undefined;
+        @memset(result[0..], default);
+        return result;
+    }
 };
 
 pub const types = struct {
@@ -350,5 +356,28 @@ pub const math = struct {
 
         const sign: T = (-1 * isNegativeInt) + @as(T, @intFromBool(!isNegative));
         return result * sign;
+    }
+    /// Checks if num is even without using %. Only works for unsigned integers
+    pub fn isEven(comptime T: type, num: T) bool {
+        comptime if (!types.isUnsignedIntegerType(T)) @compileError("Expected unsigned integer, but found " + @typeName(T));
+        return (num & @as(T, 1)) == 0;
+    }
+    /// Checks if num is not even without using %. Only works for unsigned integers
+    pub fn isUneven(comptime T: type, num: T) bool {
+        comptime if (!types.isUnsignedIntegerType(T)) @compileError("Expected unsigned integer, but found " + @typeName(T));
+        return (num & @as(T, 1)) == 1;
+    }
+
+    /// calculates numerator/denominator, rounding towards positive infinity.
+    /// Only works on integers
+    pub fn divCiel(comptime T: type, numerator: T, denominator: T) T {
+        comptime {
+            const isInt = types.isIntegerType(T);
+            const isComptimeInt = T == comptime_int;
+            if (!isInt and !isComptimeInt) @compileError("Expected integer or comptime_int, but found: " ++ @typeName(T));
+        }
+        const floor: T = @divFloor(numerator, denominator);
+        const exactDivide = (floor * denominator) == numerator;
+        return floor + @as(T, @intFromBool(!exactDivide));
     }
 };
