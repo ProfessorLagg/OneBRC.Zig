@@ -21,42 +21,8 @@ const Tival = i32;
 const TMap = sorted.SSOSortedArrayMap(MapVal);
 // const TMap = sorted.BRCStringSortedArrayMap(MapVal);
 
-fn fastIntParse(comptime T: type, numstr: []const u8) T {
-    comptime {
-        const Ti = @typeInfo(T);
-        if (Ti != .int or Ti.int.signedness != .signed) @compileError("T must be an signed integer, but was: " + @typeName(T));
-    }
-
-    std.debug.assert(numstr.len > 0);
-    const isNegative: bool = numstr[0] == '-';
-    const isNegativeInt: T = @intFromBool(isNegative);
-
-    var result: T = 0;
-    var m: T = 1;
-
-    var i: isize = @as(isize, @intCast(numstr.len)) - 1;
-    while (i >= isNegativeInt) : (i -= 1) {
-        const ci: T = @intCast(numstr[@as(usize, @bitCast(i))]);
-        const valid: bool = ci >= 48 and ci <= 57;
-        const validInt: T = @intFromBool(valid);
-        const invalidInt: T = @intFromBool(!valid);
-        result += validInt * ((ci - 48) * m); // '0' = 48
-        m = (m * 10 * validInt) + (m * invalidInt);
-    }
-
-    const sign: T = (-1 * isNegativeInt) + @as(T, @intFromBool(!isNegative));
-    return result * sign;
-}
-fn toAbsolutePath(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
-    const cwd_path = try fs.cwd().realpathAlloc(allocator, ".");
-    defer allocator.free(cwd_path);
-    return try fs.path.resolve(allocator, &.{
-        cwd_path,
-        path,
-    });
-}
 fn openFile(allocator: std.mem.Allocator, path: []const u8) !fs.File {
-    const absPath: []u8 = try toAbsolutePath(allocator, path);
+    const absPath: []u8 = try utils.fs.toAbsolutePath(allocator, path);
     defer allocator.free(absPath);
     return try fs.openFileAbsolute(absPath, comptime fs.File.OpenFlags{
         .mode = .read_only,
@@ -263,7 +229,7 @@ pub fn parse_respectComments(path: []const u8, comptime print_result: bool) !Par
             std.debug.assert(valstr[0] != ';');
 
             // parsing key and value string
-            const valint: Tival = fastIntParse(Tival, valstr);
+            const valint: Tival = utils.math.fastIntParse(Tival, valstr);
             tVal.max = valint;
             tVal.min = valint;
             tVal.sum = valint;
@@ -354,7 +320,7 @@ pub fn parse_delimReader(path: []const u8, comptime print_result: bool) !ParseRe
         std.debug.assert(valstr[0] != ';');
 
         // parsing key and value string
-        const valint: Tival = fastIntParse(Tival, valstr);
+        const valint: Tival = utils.math.fastIntParse(Tival, valstr);
         tVal.max = valint;
         tVal.min = valint;
         tVal.sum = valint;
@@ -450,7 +416,7 @@ pub fn parse_readAll(path: []const u8, comptime print_result: bool) !ParseResult
         std.debug.assert(valstr[0] != ';');
 
         // parsing key and value string
-        const valint: Tival = fastIntParse(Tival, valstr);
+        const valint: Tival = utils.math.fastIntParse(Tival, valstr);
         tVal.max = valint;
         tVal.min = valint;
         tVal.sum = valint;
@@ -547,7 +513,7 @@ pub fn parse_mappedFile(path: []const u8, comptime print_result: bool) !ParseRes
         std.debug.assert(valstr[0] != ';');
 
         // parsing key and value string
-        const valint: Tival = fastIntParse(Tival, valstr);
+        const valint: Tival = utils.math.fastIntParse(Tival, valstr);
         tVal.max = valint;
         tVal.min = valint;
         tVal.sum = valint;
@@ -639,7 +605,7 @@ pub fn parseParallel_readAll(path: []const u8, comptime print_result: bool) !Par
                 std.debug.assert(valstr[0] != ';');
 
                 // parsing key and value string
-                const valint: Tival = fastIntParse(Tival, valstr);
+                const valint: Tival = utils.math.fastIntParse(Tival, valstr);
                 const tVal: MapVal = .{ .count = 1, .max = valint, .min = valint, .sum = valint };
                 const mapIndex: u8 = MapKey.sumString(keystr) % mapCount;
                 self.maps_ptr[mapIndex].addOrUpdateString(keystr, &tVal, MapVal.add);
@@ -802,7 +768,7 @@ pub fn parseParallel_threadpool(path: []const u8, comptime print_result: bool) !
                 std.debug.assert(valstr[0] != ';');
 
                 // parsing key and value string
-                const valint: Tival = fastIntParse(Tival, valstr);
+                const valint: Tival = utils.math.fastIntParse(Tival, valstr);
                 const tVal: MapVal = .{
                     .count = 1,
                     .max = valint,
@@ -874,10 +840,10 @@ pub fn parseParallel(path: []const u8, comptime print_result: bool) !ParseResult
 
 // ========== TESTING ==========
 test "fastIntParse" {
-    try std.testing.expectEqual(@as(Tival, -123), fastIntParse(Tival, "-123"));
-    try std.testing.expectEqual(@as(Tival, -123), fastIntParse(Tival, "-12.3"));
-    try std.testing.expectEqual(@as(Tival, 123), fastIntParse(Tival, "123"));
-    try std.testing.expectEqual(@as(Tival, 123), fastIntParse(Tival, "12.3"));
+    try std.testing.expectEqual(@as(Tival, -123), utils.math.fastIntParse(Tival, "-123"));
+    try std.testing.expectEqual(@as(Tival, -123), utils.math.fastIntParse(Tival, "-12.3"));
+    try std.testing.expectEqual(@as(Tival, 123), utils.math.fastIntParse(Tival, "123"));
+    try std.testing.expectEqual(@as(Tival, 123), utils.math.fastIntParse(Tival, "12.3"));
 }
 
 test "Size and Alignment" {
@@ -901,9 +867,7 @@ test "Size and Alignment" {
 }
 
 test "compare" {
-    const data = @import("benchmarking/data/data.zig");
-    var keyList: std.ArrayList([]const u8) = try data.readCityNames(std.testing.allocator);
-    defer keyList.deinit();
+    var keyList = @import("generator/worldcities.zig").CityNames;
 
     const len = std.math.clamp(keyList.items.len, 0, 256);
     const names = keyList.items[0..len];

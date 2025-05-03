@@ -21,6 +21,19 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(exe);
 
+    const utils_module = b.addModule("utils", .{ .root_source_file = b.path("src/utils.zig") });
+    const gen = b.addExecutable(.{
+        .name = "1brc.gen",
+        .root_source_file = b.path("src/generator/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .single_threaded = single_threaded,
+        .link_libc = false,
+        .use_llvm = true,
+    });
+    gen.root_module.addImport("utils", utils_module);
+    b.installArtifact(gen);
+
     if (build_waf) {
         const exe_waf = b.addUpdateSourceFiles();
         const exe_waf_path = "zig-out/bin/1brc.cli.asm";
@@ -73,16 +86,4 @@ pub fn build(b: *std.Build) void {
     });
     const run_parsing_unit_tests = b.addRunArtifact(parsing_unit_tests);
     test_step.dependOn(&run_parsing_unit_tests.step);
-
-    // benchmarking
-    const benchmarking_unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/benchmarking/benchmarking.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = link_libc,
-        .single_threaded = single_threaded,
-        // .test_runner = .{ .path = b.path("src/test_runner.zig"), .mode = .simple },
-    });
-    const run_benchmarking_unit_tests = b.addRunArtifact(benchmarking_unit_tests);
-    test_step.dependOn(&run_benchmarking_unit_tests.step);
 }

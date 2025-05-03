@@ -39,7 +39,6 @@ pub fn main() !void {
     // try run();
     try debug();
     // try debug_read();
-    // run_benchmark();
 }
 
 fn parseArgs() !void {
