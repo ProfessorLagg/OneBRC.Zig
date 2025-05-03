@@ -112,33 +112,3 @@ pub const types = struct {
         }
     }
 };
-
-pub const args = struct {
-    pub fn readArgsAlloc(allocator: std.mem.Allocator) ![][]u8 {
-        const args_iter: std.process.ArgIterator = try std.process.argsWithAllocator(allocator);
-        defer args_iter.deinit();
-
-        const args_list: std.ArrayList([]const u8) = std.ArrayList([]const u8).init(allocator);
-        while (args_iter.next()) |a| {
-            try args_list.append(a[0..]);
-        }
-
-        return try args_list.toOwnedSlice();
-    }
-
-    pub const ArgDef = struct {
-        name: @Type(.enum_literal),
-        optional: bool,
-        valuetype: ?type = null,
-    };
-    pub const ArgSet = struct {
-        definitions: []const ArgDef,
-        pub fn init(set: []const ArgDef) ArgSet {
-            return ArgSet{
-                .definitions = set,
-            };
-        }
-
-
-    };
-};

@@ -6,7 +6,6 @@ const GeneralPurposeAllocator = std.heap.GeneralPurposeAllocator;
 const parsing = @import("parsing.zig");
 const parallel = @import("parallel/parallel.zig");
 const sorted = @import("sorted/sorted.zig");
-const utils = @import("utils.zig");
 
 pub const std_options: std.Options = .{
     // Set the log level to info to .debug. use the scope levels instead
@@ -44,19 +43,15 @@ pub fn main() !void {
 }
 
 fn parseArgs() !void {
-    const bufsize: comptime_int = 65_356;
-    var buffer: [bufsize]u8 = undefined;
-    @memset(buffer, 0);
-    var fba: std.heap.FixedBufferAllocator = std.heap.FixedBufferAllocator.init(buffer[0..]);
-    const allocator: std.mem.Allocator = fba.allocator();
+    const allocator = std.heap.c_allocator;
 
-    const args: [][]u8 = try utils.args.readArgsAlloc(allocator);
-    for (args[1..]) |arg| {
-        if (arg[0] == '-') {
-            // TODO make this handle utf8 lowercasing
-            for (0..arg.len) |i| arg[i] = std.ascii.toLower(arg[i]);
-        }
-    }
+    // Parse args into string array (error union needs 'try')
+    const args_base = std.process.argsAlloc(allocator) catch {
+        @panic("Could not allocate args");
+    };
+    defer std.process.argsFree(allocator, args_base);
+
+    const args = args_base[1..];
     if (args.len <= 0 or args[0].len < 1) return;
     debugfilepath = args[0];
 }
