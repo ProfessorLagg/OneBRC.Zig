@@ -103,6 +103,23 @@ pub const BRCHashMap = struct {
             inline for (arr64) |n| r +%= n;
             return r;
         }
+
+        pub fn hash64_2(str: []const u8) u64 {
+            var tmp: u64 = undefined;
+            const tmpbytes: []u8 = std.mem.asBytes(&tmp);
+
+            var i: usize = 0;
+            var r: usize = 0;
+            while (i < str.len) : (i += @sizeOf(usize)) {
+                @memset(tmpbytes, 0);
+                const s: []const u8 = str[i..];
+                const l = @min(s.len, tmpbytes.len);
+                @memcpy(tmpbytes[0..l], s[0..l]);
+                r +%= tmp;
+            }
+            // std.log.debug("hash64_2(str: {s}) = 0x{X:0>16}", .{ str, r });
+            return r;
+        }
     };
 
     const Key = packed struct {
@@ -122,12 +139,13 @@ pub const BRCHashMap = struct {
             return ptr[0..self.len];
         }
         pub fn getHash(self: *const Key) u64 {
-            return Hashing.hash64(self.toString());
+            // return Hashing.hash64(self.toString());
+            return Hashing.hash64_2(self.toString());
         }
         pub fn toOwnedString(self: *const Key, allocator: std.mem.Allocator) ![]const u8 {
             const src: []const u8 = self.toString();
             const dst: []u8 = try allocator.alloc(u8, self.len);
-            std.log.debug("Key.toOwned alloced \"{s}\"", .{dst});
+            // std.log.debug("Key.toOwned alloced \"{s}\"", .{dst});
             std.mem.copyForwards(u8, dst, src);
             return dst;
         }
@@ -306,28 +324,21 @@ pub const BRCHashMap = struct {
         }
     };
 
-    base_allocator: std.mem.Allocator,
-    arena: std.heap.ArenaAllocator,
     allocator: std.mem.Allocator,
     buckets: []Bucket,
 
     pub fn init(allocator: std.mem.Allocator) !BRCHashMap {
         var self = BRCHashMap{
-            .base_allocator = allocator,
-            .arena = std.heap.ArenaAllocator.init(allocator),
-            .allocator = undefined,
-            .buckets = undefined,
+            .allocator = allocator,
+            .buckets = try allocator.alloc(Bucket, 100),
         };
-        self.allocator = self.arena.allocator();
-        self.buckets = try self.allocator.alloc(Bucket, 100);
         for (0..self.buckets.len) |i| {
             self.buckets[i] = try Bucket.init(self.allocator);
         }
         return self;
     }
     pub fn deinit(self: *BRCHashMap) void {
-        // for (0..self.buckets.len) |i| self.buckets[i].deinit();
-        self.arena.deinit();
+        for (0..self.buckets.len) |i| self.buckets[i].deinit();
     }
 
     pub fn addOrUpdate(self: *BRCHashMap, keystr: []const u8, val: i64) !void {
@@ -340,7 +351,7 @@ pub const BRCHashMap = struct {
     }
 
     pub fn toSortedMap(self: *const BRCHashMap) !SortedMap {
-        var sortedMap: SortedMap = SortedMap.init(self.base_allocator) catch |err| {
+        var sortedMap: SortedMap = SortedMap.init(self.allocator) catch |err| {
             @branchHint(.cold);
             return err;
         };

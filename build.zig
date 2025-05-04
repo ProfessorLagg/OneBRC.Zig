@@ -21,6 +21,7 @@ pub fn build(b: *std.Build) void {
         .single_threaded = single_threaded,
         .link_libc = link_libc,
         .use_llvm = use_llvm,
+        .strip = false,
     });
     b.installArtifact(exe);
 
@@ -34,6 +35,7 @@ pub fn build(b: *std.Build) void {
             .single_threaded = single_threaded,
             .link_libc = false,
             .use_llvm = true,
+            .strip = true,
         });
         gen.root_module.addImport("utils", utils_module);
         b.installArtifact(gen);
@@ -49,6 +51,7 @@ pub fn build(b: *std.Build) void {
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
+    run_cmd.has_side_effects = true;
 
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);

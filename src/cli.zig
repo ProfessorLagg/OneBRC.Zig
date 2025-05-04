@@ -12,8 +12,8 @@ pub const std_options: std.Options = .{
     .log_level = switch (builtin.mode) {
         .Debug => .debug,
         .ReleaseSafe => .debug,
-        .ReleaseSmall => .debug,
-        .ReleaseFast => .debug,
+        .ReleaseSmall => .warn,
+        .ReleaseFast => .warn,
     },
     .log_scope_levels = &[_]std.log.ScopeLevel{
         .{ .scope = .SortedArrayMap, .level = .warn },
@@ -75,7 +75,7 @@ fn printArgs() !void {
 fn run() !void {
     _ = try parsing.parse(debugfilepath[0..], true);
 }
-fn debug() !void {
+noinline fn debug() !void {
     const stdout = std.io.getStdOut().writer();
 
     const parseFn = comptime switch (builtin.single_threaded) {
