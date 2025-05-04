@@ -283,8 +283,7 @@ pub fn parse_delimReader(path: []const u8, comptime print_result: bool) !ParseRe
     var lineReader: TLineReader = try TLineReader.init(std.heap.page_allocator, fileReader);
     defer lineReader.deinit();
 
-    // variables used for parsing
-    var result: ParseResult = .{};
+    // Setup maps
     const mapCount: u8 = 255;
     var maps: [mapCount]TMap = blk: {
         var r: [mapCount]TMap = undefined;
@@ -293,11 +292,12 @@ pub fn parse_delimReader(path: []const u8, comptime print_result: bool) !ParseRe
         }
         break :blk r;
     };
+
+    // main loop
+    var result: ParseResult = .{};
     var keystr: []const u8 = undefined;
     var valstr: []const u8 = undefined;
     var tVal: MapVal = .{ .count = 1 };
-
-    // main loop
     while (try lineReader.next()) |line| {
         std.debug.assert(line.len >= 5);
         result.lineCount += 1;
@@ -556,43 +556,38 @@ pub fn parse_mappedFile(path: []const u8, comptime print_result: bool) !ParseRes
 pub fn parse_brcmap(path: []const u8, comptime print_result: bool) !ParseResult {
     const BRCHashMap = @import("brcHashMap.zig").BRCHashMap;
 
-    // THIS DOES NOT WORK WITH GeneralPurposeAllocator / DebugAllocator!
     const allocator = std.heap.c_allocator;
+    // var gpa = std.heap.DebugAllocator(.{}).init;
+    // defer _ = gpa.deinit();
+    // const allocator = gpa.allocator();
 
-    // Read entire file
+    // Setup reading
     var file: fs.File = try openFile(allocator, path);
     defer file.close();
+    const fileReader = file.reader();
+    const TLineReader = DelimReader(@TypeOf(fileReader), '\n', readBufferSize);
+    var lineReader: TLineReader = try TLineReader.init(std.heap.page_allocator, fileReader);
+    defer lineReader.deinit();
 
-    // Map file
-    const fMap: FileMapping = try FileMapping.initRead(&file);
-    defer fMap.deinit();
-    const fView: FileView = try FileView.initRead(&fMap);
-    defer fView.deinit();
-
-    // variables used for parsing
-    var result: ParseResult = .{};
-    var map: BRCHashMap = BRCHashMap.init(allocator);
-    var keystr: []const u8 = undefined;
-    var valstr: []const u8 = undefined;
+    // Setup map
+    var map: BRCHashMap = try BRCHashMap.init(allocator);
 
     // main loop
-    const buffer: []const u8 = fView.slice;
-    var L: usize = 0;
-    var R: usize = 1;
-    while (R < buffer.len) {
-        while (buffer[R] != ';') : (R += 1) {}
-        std.debug.assert(buffer[R] == ';');
-        keystr = buffer[L..R];
-        R += 1;
-        L = R;
-
-        while (R < buffer.len and buffer[R] != '\n') : (R += 1) {}
-        valstr = buffer[L..R];
-        R += 1;
-        L = R;
-
+    var result: ParseResult = .{};
+    var keystr: []const u8 = undefined;
+    var valstr: []const u8 = undefined;
+    while (try lineReader.next()) |line| {
+        std.debug.assert(line.len >= 5);
         result.lineCount += 1;
-        linelog.info("line{d}: {s};{s}, k: {s}, v: {s}", .{ result.lineCount, keystr, valstr, keystr, valstr });
+        linelog.info("line{d}: {s}", .{ result.lineCount, line });
+
+        var splitIndex: usize = line.len - 4;
+        while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
+        std.debug.assert(line[splitIndex] == ';');
+
+        keystr = line[0..splitIndex];
+        valstr = line[(splitIndex + 1)..];
+        // linelog.info("line{d}: {s}, k: {s}, v: {s}", .{ result.lineCount, line, keystr, valstr });
 
         std.debug.assert(keystr.len >= 1);
         std.debug.assert(keystr.len <= 100);
@@ -603,11 +598,8 @@ pub fn parse_brcmap(path: []const u8, comptime print_result: bool) !ParseResult 
         std.debug.assert(valstr[0] != ';');
 
         // parsing key and value string
-        const valint: i64 = utils.math.fastIntParse(i64, valstr);
-        map.addOrUpdate(keystr, valint) catch |err| {
-            @branchHint(.cold);
-            return err;
-        };
+        const valint: Tival = utils.math.fastIntParse(Tival, valstr);
+        try map.addOrUpdate(keystr, valint);
     }
 
     // Getting out the final map

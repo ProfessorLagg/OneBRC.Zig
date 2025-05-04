@@ -105,70 +105,54 @@ pub const BRCHashMap = struct {
         }
     };
 
-    const TKey = packed struct {
-        const TSelf = @This();
-        const THash = u64;
-        // ptr: [*]const u8,
+    const Key = packed struct {
         ptr: usize,
         len: u8,
-        hsh: THash,
 
-        inline fn getHash(str: []const u8) THash {
-            return Hashing.hash64(str);
-        }
-        pub fn init(allocator: std.mem.Allocator, keystr: []const u8) !TSelf {
-            std.debug.assert(keystr.len <= 100);
-            const str: []u8 = try allocator.alloc(u8, keystr.len);
-            std.mem.copyForwards(u8, str, keystr);
-            return TSelf{
+        pub fn fromString(str: []const u8) Key {
+            const max_len: usize = comptime std.math.maxInt(u8);
+            std.debug.assert(str.len <= max_len);
+            return Key{
                 .ptr = @intFromPtr(str.ptr),
                 .len = @truncate(str.len),
-                .hsh = getHash(str),
             };
         }
-        pub fn deinit(self: *TSelf, allocator: std.mem.Allocator) void {
-            allocator.free(self.asString());
-        }
-        pub fn wrap(str: []const u8) TSelf {
-            std.debug.assert(str.len <= 100);
-            return TSelf{
-                .ptr = @intFromPtr(str.ptr),
-                .len = @truncate(str.len),
-                .hsh = getHash(str),
-            };
-        }
-        pub fn clone(self: *const TSelf, allocator: std.mem.Allocator) !TSelf {
-            const src_str: []const u8 = self.asString();
-            const dst_str: []u8 = try allocator.alloc(u8, src_str.len);
-            std.mem.copyForwards(u8, dst_str, src_str);
-            return TSelf{
-                .ptr = @intFromPtr(dst_str.ptr),
-                .len = @truncate(dst_str.len),
-                .hsh = self.hsh,
-            };
-        }
-        pub fn asString(self: *const TSelf) []const u8 {
+        pub fn toString(self: *const Key) []const u8 {
             const ptr: [*]const u8 = @ptrFromInt(self.ptr);
             return ptr[0..self.len];
         }
-        pub fn bucketId(self: *const TKey, comptime bucketCount: u64) u64 {
-            return self.len % bucketCount;
+        pub fn getHash(self: *const Key) u64 {
+            return Hashing.hash64(self.toString());
         }
-        pub fn eql(a: *const TSelf, b: *const TSelf) bool {
-            const astr = a.asString();
-            const bstr = b.asString();
-            if (astr.len != bstr.len) {
-                @branchHint(.cold);
-                return false;
+        pub fn toOwnedString(self: *const Key, allocator: std.mem.Allocator) ![]const u8 {
+            const src: []const u8 = self.toString();
+            const dst: []u8 = try allocator.alloc(u8, self.len);
+            std.log.debug("Key.toOwned alloced \"{s}\"", .{dst});
+            std.mem.copyForwards(u8, dst, src);
+            return dst;
+        }
+        pub fn toOwned(self: *const Key, allocator: std.mem.Allocator) !Key {
+            nosuspend {
+                return Key.fromString(try self.toOwnedString(allocator));
             }
-            std.debug.assert(astr.len == bstr.len);
+        }
+        pub fn stringEquals(self: *const Key, other: *const Key) bool {
+            nosuspend {
+                const strA: []const u8 = self.toString();
+                const strB: []const u8 = other.toString();
+                const l: u8 = @min(self.len, other.len);
 
-            for (astr, bstr) |ac, bc| if (ac != bc) return false;
-            return true;
+                var i: usize = 0;
+                var cmp: bool = strA.len != strB.len;
+                while (!cmp and i < l) : (i += 1) {
+                    cmp = strA[i] == strB[i];
+                }
+                return cmp;
+            }
         }
     };
 
-    const TVal = packed struct {
+    const Val = packed struct {
         const TSelf = @This();
         count: u32 = 0,
         sum: i64 = 0,
@@ -195,103 +179,191 @@ pub const BRCHashMap = struct {
     };
 
     const KVP = struct {
-        key: TKey,
-        val: TVal,
+        key: Key,
+        val: Val,
     };
 
-    const SortedMap = sorted.SSOSortedArrayMap(TVal);
+    const SortedMap = sorted.SSOSortedArrayMap(Val);
+
+    const Bucket = struct {
+        allocator: std.mem.Allocator,
+        lock: std.Thread.Mutex = .{},
+
+        // TODO i can save a lot of space by only storing the buffer pointers, capacity and len
+        buf_keys: []Key = undefined,
+        keys: []Key = undefined,
+
+        buf_hashes: []u64 = undefined,
+        hashes: []u64 = undefined,
+
+        buf_values: []Val = undefined,
+        values: []Val = undefined,
+
+        pub fn init(allocator: std.mem.Allocator) !Bucket {
+            var self: Bucket = Bucket{ .allocator = allocator };
+            errdefer self.deinit();
+
+            self.buf_keys = try self.allocator.alloc(Key, 1);
+            self.keys = self.buf_keys[0..0];
+
+            self.buf_hashes = try self.allocator.alloc(u64, 1);
+            self.hashes = self.buf_hashes[0..0];
+
+            self.buf_values = try self.allocator.alloc(Val, 1);
+            self.values = self.buf_values[0..0];
+
+            return self;
+        }
+        pub fn deinit(self: *Bucket) void {
+            for (self.keys) |*k| self.allocator.free(k.toString());
+
+            self.allocator.free(self.buf_keys);
+            self.allocator.free(self.buf_hashes);
+            self.allocator.free(self.buf_values);
+            self.* = undefined;
+        }
+
+        fn grow(self: *Bucket) !void {
+            const old_capacity: usize = self.buf_keys.len;
+            const new_capacity: usize = @max(1, old_capacity * 2);
+            const l: usize = self.keys.len;
+
+            self.buf_keys = try self.allocator.realloc(self.buf_keys, new_capacity);
+            self.buf_hashes = try self.allocator.realloc(self.buf_hashes, new_capacity);
+            self.buf_values = try self.allocator.realloc(self.buf_values, new_capacity);
+
+            self.keys = self.buf_keys[0..l];
+            self.hashes = self.buf_hashes[0..l];
+            self.values = self.buf_values[0..l];
+        }
+        fn ensureCanAddOne(self: *Bucket) !void {
+            const len: usize = self._len();
+            const capacity: usize = self._capacity();
+            std.debug.assert(len <= capacity);
+            if (self._len() == self._capacity()) try self.grow();
+        }
+
+        fn _capacity(self: *const Bucket) usize {
+            std.debug.assert(self.buf_hashes.len == self.buf_keys.len);
+            std.debug.assert(self.buf_values.len == self.buf_keys.len);
+            return self.buf_keys.len;
+        }
+
+        fn _len(self: *const Bucket) usize {
+            // std.log.debug("Bucket._len: keys.len: {d}, hashes.len: {d}, values.len: {d}", .{ self.keys.len, self.hashes.len, self.values.len });
+            std.debug.assert(self.hashes.len == self.keys.len);
+            std.debug.assert(self.values.len == self.keys.len);
+            return self.keys.len;
+        }
+
+        fn find(self: *const Bucket, key: Key, hash: u64) ?usize {
+            var match_indexes: [std.heap.page_size_min / @sizeOf(u32)]u32 = undefined;
+            var macth_count: usize = 0;
+            for (0..self.hashes.len, self.hashes) |i, h| {
+                const match: u8 = @intFromBool(hash == h);
+                match_indexes[macth_count] = @intCast(i * match);
+                macth_count += match;
+            }
+            for (match_indexes[0..macth_count]) |i| if (key.stringEquals(&self.keys[i])) return i;
+            return null;
+        }
+        fn addOne(self: *Bucket) !usize {
+            const result: usize = self.keys.len;
+            try self.ensureCanAddOne();
+            self.keys.len += 1;
+            self.hashes.len = self.keys.len;
+            self.values.len = self.keys.len;
+            return result;
+        }
+        pub fn addOrUpdate(self: *Bucket, keystr: []const u8, valint: i64) !void {
+            self.lock.lock();
+            nosuspend {
+                const refkey: Key = Key.fromString(keystr);
+                const hash: u64 = refkey.getHash();
+                if (self.find(refkey, hash)) |index| {
+                    // The key was found
+                    self.values[index].add(valint);
+                } else {
+                    // The key was not found
+                    const index = try self.addOne();
+                    self.keys[index] = try refkey.toOwned(self.allocator);
+                    self.hashes[index] = hash;
+                    self.values[index] = Val.init(valint);
+                }
+            }
+            self.lock.unlock();
+        }
+        pub fn get(self: *const Bucket, index: usize) ?KVP {
+            if (index >= self._len()) {
+                @branchHint(.cold);
+                return null;
+            }
+
+            return KVP{
+                .key = self.keys[index],
+                .val = self.values[index],
+            };
+        }
+    };
+
     base_allocator: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
     allocator: std.mem.Allocator,
+    buckets: []Bucket,
 
-    buckets: [100]MultiArrayList(KVP),
-
-    pub fn init(allocator: std.mem.Allocator) BRCHashMap {
-        var r = BRCHashMap{
+    pub fn init(allocator: std.mem.Allocator) !BRCHashMap {
+        var self = BRCHashMap{
             .base_allocator = allocator,
             .arena = std.heap.ArenaAllocator.init(allocator),
             .allocator = undefined,
             .buckets = undefined,
         };
-        r.allocator = r.arena.allocator();
-        for (0..r.buckets.len) |i| r.buckets[i] = MultiArrayList(KVP){};
-        return r;
+        self.allocator = self.arena.allocator();
+        self.buckets = try self.allocator.alloc(Bucket, 100);
+        for (0..self.buckets.len) |i| {
+            self.buckets[i] = try Bucket.init(self.allocator);
+        }
+        return self;
     }
     pub fn deinit(self: *BRCHashMap) void {
-        for (0..self.buckets.len) |i| {
-            for (self.buckets[i].items(.key)) |*k| k.deinit(self.allocator);
-            self.buckets[i].deinit(self.allocator);
-        }
+        // for (0..self.buckets.len) |i| self.buckets[i].deinit();
         self.arena.deinit();
     }
 
-    fn indexOfKey(bucket: *const MultiArrayList(KVP), key: TKey) ?usize {
-        for (bucket.items(.key), 0..bucket.len) |*bkey, i| {
-            if (bkey.hsh == key.hsh) {
-                if (key.eql(bkey)) {
-                    return i;
-                }
-            }
-        }
-        return null;
-    }
-    fn addToBucket(allocator: std.mem.Allocator, bucket: *MultiArrayList(KVP), kvp: KVP) !void {
-        if (bucket.len <= bucket.capacity) {
-            const old_capacity = bucket.capacity;
-            const new_capacity = std.math.clamp(old_capacity * 2, 2, std.math.maxInt(usize));
-            try bucket.setCapacity(allocator, new_capacity);
-            std.debug.assert(bucket.capacity == new_capacity);
-        }
-        const prelen = bucket.len;
-        const index = bucket.addOneAssumeCapacity();
-        const postlen = bucket.len;
-        std.debug.assert(postlen > prelen);
-        bucket.set(index, kvp);
-    }
     pub fn addOrUpdate(self: *BRCHashMap, keystr: []const u8, val: i64) !void {
-        std.log.debug("addOrUpdate(key: \"{s}\", val: {d})", .{ keystr, val });
-        const key = TKey.wrap(keystr);
-        const bucketId = key.bucketId(self.buckets.len);
-        var bucket = self.buckets[bucketId];
-        const idx = indexOfKey(&bucket, key);
-        if (idx == null) {
-            const kvp = KVP{
-                // .key = try TKey.init(self.allocator, keystr),
-                .key = key,
-                .val = TVal.init(val),
-            };
-            const index = try bucket.addOne(self.allocator);
-            bucket.set(index, kvp);
-            // try addToBucket(self.allocator, &bucket, kvp);
-        } else {
-            bucket.items(.val)[idx.?].add(val);
-        }
-    }
-
-    pub fn toSortedMap(self: *const BRCHashMap) !SortedMap {
-        var r: SortedMap = SortedMap.init(self.base_allocator) catch |err| {
+        // std.log.debug("addOrUpdate(key: \"{s}\", val: {d})", .{ keystr, val });
+        const bucketId = self.buckets.len & keystr.len;
+        self.buckets[bucketId].addOrUpdate(keystr, val) catch |err| {
             @branchHint(.cold);
             return err;
         };
-        for (0..self.buckets.len) |bucketId| {
-            const bucket: *const MultiArrayList(KVP) = &self.buckets[bucketId];
+    }
+
+    pub fn toSortedMap(self: *const BRCHashMap) !SortedMap {
+        var sortedMap: SortedMap = SortedMap.init(self.base_allocator) catch |err| {
+            @branchHint(.cold);
+            return err;
+        };
+        for (0..self.buckets.len, self.buckets) |bucketId, bucket| {
             std.log.debug("adding bucket {d} to SortedMap = {any}", .{ bucketId, bucket });
 
-            for (0..bucket.len) |i| {
+            for (0..bucket._len()) |i| {
                 std.log.debug("adding kvp {d} to SortedMap", .{i});
-                const kvp: KVP = bucket.get(i);
-                const keystr: []const u8 = kvp.key.asString();
-                std.log.debug("  kvp data = key: \"{s}\", val: {any} to SortedMap", .{ keystr, kvp.val });
-                r.addOrUpdateString(keystr, &kvp.val, TVal.mergeR);
+                if (bucket.get(i)) |kvp| {
+                    @branchHint(.likely);
+                    const keystr: []const u8 = kvp.key.toString();
+                    std.log.debug("kvp data = key: \"{s}\", val: {any} to SortedMap", .{ keystr, kvp.val });
+                    sortedMap.addOrUpdateString(keystr, &kvp.val, Val.mergeR);
+                }
             }
         }
-        return r;
+        return sortedMap;
     }
 
     /// Deinits the BRCHashMap, and returns a SortedMap with the key/value pairs
     pub fn finalize(self: *BRCHashMap) !SortedMap {
-        const r = try self.toSortedMap();
+        const sortedMap = try self.toSortedMap();
         self.deinit();
-        return r;
+        return sortedMap;
     }
 };

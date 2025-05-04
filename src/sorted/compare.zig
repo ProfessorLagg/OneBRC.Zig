@@ -149,6 +149,8 @@ pub fn compareNumber(a: anytype, b: anytype) CompareResult {
 }
 
 fn CMPSB_REPNE(len: usize, a: *const u8, b: *const u8) u8 {
+    comptime if (!builtin.target.cpu.arch.isX86()) @compileError("This function only works on x86");
+
     // https://www.felixcloutier.com/x86/cmps:cmpsb:cmpsw:cmpsd:cmpsq
     // https://www.felixcloutier.com/x86/rep:repe:repz:repne:repnz
     // https://pdos.csail.mit.edu/6.828/2007/readings/i386/REP.htm
@@ -189,20 +191,6 @@ pub inline fn indexOfFirstDifference(comptime T: type, a: []const u8, b: []const
     }
 }
 
-// fn loadVector(comptime len: comptime_int, bytes: []const u8) @Vector(len, u8){
-//     var vec: @Vector(len, u8) = undefined;
-
-// }
-// pub fn indexOfFirstDifferenceASM(a: []const u8, b: []const u8) u32 {
-//     const veclen: comptime_int = comptime std.simd.suggestVectorLengthForCpu(u8, builtin.target);
-//     const vec_a: [veclen]u8 = undefined;
-//     const vec_b: [veclen]u8 = undefined;
-//     @memcpy(vec_a[0..], a[0..]);
-//     @memcpy(vec_b[0..], a[0..]);
-
-//     return 0;
-// }
-
 pub inline fn compareString(a: []const u8, b: []const u8) CompareResult {
     var cmp: CompareResult = compareNumber(a.len, b.len);
     if (cmp != .Equal) {
@@ -220,4 +208,60 @@ pub inline fn compareString(a: []const u8, b: []const u8) CompareResult {
 
 pub fn compareStringR(a: *const []const u8, b: *const []const u8) CompareResult {
     return compareString(a.*, b.*);
+}
+
+// ===== MISC ======
+pub fn BinarySearchContext(comptime T: type, comptime comparison: Comparison(T)) type {
+    return struct {
+        /// Returns index if item was found, otherwise null
+        pub fn binarySearch(A: []const T, item: T) ?usize {
+            if (A.len == 0) {
+                @branchHint(.unlikely);
+                return null;
+            }
+
+            var L: isize = 0;
+            var R: isize = @as(isize, @intCast(A.len)) - 1;
+            var m: isize = undefined;
+            var c: CompareResult = undefined;
+            while (L <= R) {
+                m = L + @divFloor(R - L, 2);
+                c = comparison(A[m], item);
+                switch (c) {
+                    .LessThan => L = m + 1,
+                    .Equal => {
+                        std.debug.assert(m >= 0);
+                        return @as(usize, @intCast(m));
+                    },
+                    .GreaterThan => R = m - 1,
+                }
+            }
+            return null;
+        }
+
+        /// Returns the index the item should have in the array
+        pub fn binarySearchInsert(A: []const T, item: T) usize {
+            if (A.len == 0) {
+                @branchHint(.unlikely);
+                return 0;
+            }
+            const len_i: isize = @as(isize, @intCast(A.len));
+            var L: isize = 0;
+            var R: isize = len_i - 1;
+            var m: isize = undefined;
+            var c: CompareResult = undefined;
+            loop: while (L <= R) {
+                m = L + @divFloor(R - L, 2);
+                c = comparison(A[m], item);
+                switch (c) {
+                    .LessThan => L = m + 1,
+                    .Equal => break :loop,
+                    .GreaterThan => R = m - 1,
+                }
+            }
+
+            const result: isize = m + @as(isize, @intFromBool(c == .GreaterThan));
+            return std.math.clamp(result, 0, len_i);
+        }
+    };
 }

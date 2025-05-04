@@ -506,6 +506,7 @@ pub fn SSOSortedArrayMap(comptime Tval: type) type {
                     else => 1,
                 },
                 else => {
+                    @branchHint(.likely);
                     if (comparison(k, self.keys[self.count - 1]) == .GreaterThan) {
                         return self.count;
                     }
@@ -546,6 +547,7 @@ pub fn SSOSortedArrayMap(comptime Tval: type) type {
         inline fn getInsertOrUpdateIndex(self: *Self, k: *const SSO) u32 {
             // Testing for edge cases
             if (self.count == 0) {
+                @branchHint(.unlikely);
                 // this is the first key
                 return 0;
             }
