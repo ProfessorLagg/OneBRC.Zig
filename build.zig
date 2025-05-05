@@ -26,7 +26,6 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(exe);
 
     if (build_gen) {
-        const utils_module = b.addModule("utils", .{ .root_source_file = b.path("src/utils.zig") });
         const gen = b.addExecutable(.{
             .name = "1brc.gen",
             .root_source_file = b.path("src/generator/main.zig"),
@@ -37,7 +36,7 @@ pub fn build(b: *std.Build) void {
             .use_llvm = true,
             .strip = true,
         });
-        gen.root_module.addImport("utils", utils_module);
+        gen.root_module.addImport("utils", b.addModule("utils", .{ .root_source_file = b.path("src/utils.zig") }));
         b.installArtifact(gen);
     }
 

@@ -2,6 +2,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const CityNames = @import("worldcities.zig").CityNames;
 const utils = @import("utils");
+
 pub const std_options: std.Options = .{
     // Set the log level to info to .debug. use the scope levels instead
     .log_level = switch (builtin.mode) {
@@ -27,9 +28,9 @@ pub fn main() !void {
     defer options.deinit();
     try std.fmt.format(stdout, "Parsed options: Line count = {d:.0} | Output File: \"{s}\"\n", .{ options.num_lines, options.output_filepath });
 
-    const result: RunResult = run_v2(&options) catch |err| printErr("Run failed", err, @errorReturnTrace());
-
-    try std.fmt.format(stdout, "Finished writing {d} lines | {d} bytes to \"{s}\" | generated at: {d} ns/line | {d:.3}/s", .{
+    const result: RunResult = run(&options) catch |err| printErr("Run failed", err, @errorReturnTrace());
+    Console.clearCurrentLine();
+    Console.printf("Finished writing {d} lines | {d} bytes to \"{s}\" | generated at: {d} ns/line | {d:.3}/s", .{
         result.linesWritten,
         result.bytesWritten,
         options.output_filepath,
@@ -61,61 +62,41 @@ const RunResult = struct {
         return @intFromFloat(numer / denom);
     }
 };
-fn run_v1(options: *const GenOptions) !RunResult {
+
+fn run(options: *const GenOptions) !RunResult {
     const stdout = std.io.getStdOut().writer();
     const file: std.fs.File = options.openOutputFile() catch |err| {
-        // std.log.err("Could not open output file: {any}{any}", .{ err, @errorReturnTrace() });
         printErr("Could not open output file:", err, @errorReturnTrace());
     };
-    var generator: LineGenerator = LineGenerator.init(options.num_lines);
-
-    var prevLineBuffer: [128]u8 = undefined;
-    var prevLine: []u8 = prevLineBuffer[0..];
-
-    var result: RunResult = .{};
-    try std.fmt.format(stdout, "Begun Writing {d} lines to \"{s}\"\n", .{ options.num_lines, options.output_filepath });
-    var timer = std.time.Timer.start() catch |err| printErr("Could not start timer", err, @errorReturnTrace());
-    while (generator.nextLine()) |line| {
-        comptime if (builtin.mode == .Debug) {
-            prevLine = prevLineBuffer[0..line.len];
-            @memcpy(prevLine, line);
-            std.debug.assert(!std.mem.eql(u8, prevLine, line));
-        };
-
-        result.bytesWritten += try file.write(line);
-        result.bytesWritten += try file.write("\n");
-        result.linesWritten += 1;
-        std.log.debug("line {d} = \"{s}\"", .{ result.linesWritten, line });
-    }
-    result.runtime_ns = timer.read();
-    return result;
-}
-
-fn run_v2(options: *const GenOptions) !RunResult {
-    const stdout = std.io.getStdOut().writer();
-    const file: std.fs.File = options.openOutputFile() catch |err| {
-        // std.log.err("Could not open output file: {any}{any}", .{ err, @errorReturnTrace() });
-        printErr("Could not open output file:", err, @errorReturnTrace());
-    };
-    // var writer = std.io.bufferedWriter(file.writer());
-    const file_writer = file.writer();
-    const BufferedWriter = std.io.BufferedWriter(std.heap.page_size_max, @TypeOf(file_writer));
-    var writer: BufferedWriter = .{ .unbuffered_writer = file_writer };
+    var writer = std.io.bufferedWriter(file.writer());
 
     var prng = std.Random.DefaultPrng.init(getSeed());
     var rand: std.Random = prng.random();
-    var linebuf: [106]u8 = undefined;
+    var linebuf: [128]u8 = undefined;
 
+    const prog_max_f: f64 = @floatFromInt(options.num_lines);
+    var prog_cur_f: f64 = 0.0;
+    const prog_act = "Writing Lines";
+    const prog_freq: u64 = std.time.ns_per_s / 2;
     var result: RunResult = .{};
     try std.fmt.format(stdout, "Begun Writing {d} lines to \"{s}\"\n", .{ options.num_lines, options.output_filepath });
     var timer = std.time.Timer.start() catch |err| printErr("Could not start timer", err, @errorReturnTrace());
-    for (0..options.num_lines) |_| {
+
+    while (result.linesWritten < options.num_lines) {
         const name_idx: u32 = rand.intRangeLessThan(u32, 0, CityNames.len);
         const value: f64 = utils.math.map(f64, rand.float(f64), 0.0, 1.0, -99.9, 99.9);
         const line = try std.fmt.bufPrint(linebuf[0..], "{s};{d:.1}\n", .{ CityNames[name_idx], value });
-        result.bytesWritten += try writer.write(line);
-        result.linesWritten += 1;
+        const bytesWritten = try writer.write(line);
+        result.linesWritten += @intFromBool(bytesWritten > 0);
+        result.bytesWritten += bytesWritten;
+        if (result.linesWritten == 0 or timer.read() % prog_freq == 0) {
+            prog_cur_f = @floatFromInt(result.linesWritten);
+            const prog_f: f64 = @floor(utils.math.map(f64, prog_cur_f, 0.0, prog_max_f, 0.0, 100.0));
+            const prog: u7 = @intFromFloat(prog_f);
+            Console.writeProgress(prog_act[0..], prog);
+        }
     }
+    try writer.flush();
     result.runtime_ns = timer.read();
     return result;
 }
@@ -248,5 +229,38 @@ const LineGenerator = struct {
         };
         self.lines_left -= 1;
         return result;
+    }
+};
+
+const Console = struct {
+    // const ANSI_ESC = "\x1B";
+    const ANSI_ESC = [_]u8{0x1B};
+    pub fn printf(comptime fmt: []const u8, args: anytype) void {
+        const stdout = std.io.getStdOut().writer();
+        std.fmt.format(stdout, fmt, args) catch |err| printErr("Could not print to stdout", err, @errorReturnTrace());
+    }
+    pub fn print(comptime fmt: []const u8) void {
+        printf(fmt, .{});
+    }
+    pub fn clearCurrentLine() void {
+        print(ANSI_ESC ++ "[2K\r");
+    }
+    pub fn hideCursor() void {
+        print(ANSI_ESC ++ "[?25l");
+    }
+    pub fn showCursor() void {
+        print(ANSI_ESC ++ "[?25h");
+    }
+
+    pub fn writeProgress(activity: []const u8, progress: u7) void {
+        const prog: u7 = std.math.clamp(progress, 0, 100);
+        var bar: [100]u8 = undefined;
+        @memset(bar[0..], ' ');
+        for (0..prog) |i| bar[i] = '#';
+        nosuspend {
+            // hideCursor();
+            printf("\r{s} {d: >3.0}%[{s}]", .{ activity, prog, bar });
+            // showCursor();
+        }
     }
 };
