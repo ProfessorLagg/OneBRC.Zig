@@ -377,20 +377,20 @@ pub fn SSOSortedArrayMap(comptime Tval: type) type {
         /// Returns true if the key could be added, otherwise false.
         pub fn add(self: *Self, key: []const u8, v: *const Tval) bool {
             const k: SSO = SSO.create(key);
-            const idx: isize = self.indexOf(k);
-            if (idx >= 0) {
+            const insertionIndex = self.getInsertIndex(k);
+            if (insertionIndex < self.count) {
+                @branchHint(.unlikely);
                 return false;
-            } else {
-                self.update(k, v);
-                return true;
             }
+            self.insertAt(insertionIndex, &k, v);
+            return true;
         }
         /// Overwrites the value at k, regardless of it's already contained
         pub fn update(self: *Self, key: []const u8, v: *const Tval) void {
             const k: SSO = SSO.create(key);
             const insertionIndex = self.getInsertIndex(k);
             if (insertionIndex < self.count) {
-                self.keys[insertionIndex] = k.*;
+                self.keys[insertionIndex] = k;
                 self.values[insertionIndex] = v.*;
             } else {
                 self.insertAt(insertionIndex, k, v);
@@ -501,13 +501,13 @@ pub fn SSOSortedArrayMap(comptime Tval: type) type {
         fn getInsertIndex(self: *Self, k: SSO) usize {
             switch (self.count) {
                 0 => return 0,
-                1 => return switch (comparison(k, self.keys[0])) {
+                1 => return switch (comparison(&k, &self.keys[0])) {
                     .LessThan => 0,
                     else => 1,
                 },
                 else => {
                     @branchHint(.likely);
-                    if (comparison(k, self.keys[self.count - 1]) == .GreaterThan) {
+                    if (comparison(&k, &self.keys[self.count - 1]) == .GreaterThan) {
                         return self.count;
                     }
                 },
@@ -518,12 +518,12 @@ pub fn SSOSortedArrayMap(comptime Tval: type) type {
             var mid: isize = low + @divTrunc(high - low, 2);
             var midu: usize = @as(usize, @intCast(mid));
             while (low <= high and mid >= 0 and mid < self.keys.len) {
-                const comp_left = comparison(k, self.keys[midu - 1]);
-                const comp_right = comparison(k, self.keys[midu + 1]);
+                const comp_left = comparison(&k, &self.keys[midu - 1]);
+                const comp_right = comparison(&k, &self.keys[midu + 1]);
                 if (comp_left == .LessThan and comp_right == .GreaterThan) {
                     return midu;
                 }
-                switch (comparison(self.keys[midu], k)) {
+                switch (comparison(&self.keys[midu], &k)) {
                     .Equal => {
                         return midu;
                     },

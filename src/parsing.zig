@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const fs = std.fs;
 const sorted = @import("sorted/sorted.zig");
+const SSOSortedArrayMap = sorted.SSOSortedArrayMap;
 const compare = sorted.compare;
 const utils = @import("utils.zig");
 
@@ -18,7 +19,7 @@ const MapKey = @import("mapKey.zig").MapKey;
 /// Type of int used in the MapVal struct
 const Tival = i32;
 /// Type of map used in parse function
-const TMap = sorted.SSOSortedArrayMap(MapVal);
+const TMap = SSOSortedArrayMap(MapVal);
 // const TMap = sorted.BRCStringSortedArrayMap(MapVal);
 
 fn openFile(allocator: std.mem.Allocator, path: []const u8) !fs.File {
@@ -52,12 +53,15 @@ const LineBuffer = struct { // NO FOLD
     }
 };
 
-const MapVal = struct {
+const MapVal = packed struct {
     count: Tival = 0,
     sum: Tival = 0,
     min: Tival = std.math.maxInt(Tival),
     max: Tival = std.math.minInt(Tival),
 
+    pub inline fn initRaw(value: Tival) MapVal {
+        return MapVal{ .count = 1, .sum = value, .min = value, .max = value };
+    }
     pub inline fn addRaw(mv: *MapVal, v: Tival) void {
         mv.count += 1;
         mv.sum += v;
@@ -625,12 +629,126 @@ pub fn parse_brcmap(path: []const u8, comptime print_result: bool) !ParseResult 
     return result;
 }
 
+pub fn parse_stdmap(path: []const u8, comptime print_result: bool) !ParseResult {
+    const HashContext = struct {
+        const TSelf = @This();
+
+        pub fn hash(self: TSelf, k: []const u8) u64 {
+            _ = &self;
+            var r: u64 = 0;
+            const s: []u8 = std.mem.asBytes(&r);
+            inline for (0..@sizeOf(u64)) |i| {
+                s[i] = k[i % k.len];
+            }
+            std.log.debug("hash(\"{s}\") = 0x{X:0>16}", .{r});
+            return r;
+        }
+
+        pub fn eql(self: TSelf, a: []const u8, b: []const u8) bool {
+            _ = self;
+            return std.mem.eql(u8, a, b);
+        }
+    };
+    const StdHashMap = std.hash_map.HashMap([]const u8, MapVal, HashContext, 50);
+
+    // const allocator = std.heap.c_allocator;
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    // Setup reading
+    var file: fs.File = try openFile(allocator, path);
+    defer file.close();
+    const fileReader = file.reader();
+    const TLineReader = DelimReader(@TypeOf(fileReader), '\n', readBufferSize);
+    var lineReader: TLineReader = try TLineReader.init(std.heap.page_allocator, fileReader);
+    defer lineReader.deinit();
+
+    // Setup map
+    var map: StdHashMap = StdHashMap.init(allocator);
+    defer map.deinit(); // The keys are deinit later
+
+    // main loop
+    var result: ParseResult = .{};
+    var keystr: []const u8 = undefined;
+    var valstr: []const u8 = undefined;
+    while (try lineReader.next()) |line| {
+        std.debug.assert(line.len >= 5);
+        result.lineCount += 1;
+        linelog.info("line{d}: {s}", .{ result.lineCount, line });
+
+        var splitIndex: usize = line.len - 4;
+        while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
+        std.debug.assert(line[splitIndex] == ';');
+
+        keystr = line[0..splitIndex];
+        valstr = line[(splitIndex + 1)..];
+        // linelog.info("line{d}: {s}, k: {s}, v: {s}", .{ result.lineCount, line, keystr, valstr });
+
+        std.debug.assert(keystr.len >= 1);
+        std.debug.assert(keystr.len <= 100);
+        std.debug.assert(keystr[keystr.len - 1] != ';');
+        std.debug.assert(valstr.len >= 3);
+        std.debug.assert(valstr.len <= 5);
+        std.debug.assert(valstr[valstr.len - 2] == '.');
+        std.debug.assert(valstr[0] != ';');
+
+        const valint: Tival = utils.math.fastIntParse(Tival, valstr);
+
+        if (map.getPtr(keystr)) |v| {
+            @branchHint(.likely);
+            v.addRaw(valint);
+        } else {
+            const k: []u8 = utils.mem.clone(u8, allocator, keystr) catch |err| {
+                @branchHint(.cold);
+                return err;
+            };
+            const v: MapVal = MapVal.initRaw(valint);
+            map.put(k, v) catch |err| {
+                @branchHint(.cold);
+                return err;
+            };
+        }
+        const gopr = try map.getOrPut(keystr);
+        if (!gopr.found_existing) gopr.value_ptr.* = .{};
+        gopr.value_ptr.addRaw(valint);
+    }
+
+    var final_map = try SSOSortedArrayMap(MapVal).init(allocator);
+    defer final_map.deinit();
+    var map_iter = map.iterator();
+    result.uniqueKeys = 0;
+    while (map_iter.next()) |kvp| {
+        _ = final_map.add(kvp.key_ptr.*, kvp.value_ptr);
+        allocator.free(kvp.key_ptr.*);
+        result.uniqueKeys += 1;
+    }
+
+    if (print_result) {
+        const stdout = std.io.getStdOut().writer();
+        for (0..final_map.count) |i| {
+            const k = &final_map.keys[i];
+            keystr = k.toString();
+            const v: *MapVal = &final_map.values[i];
+            try stdout.print("{s};{d:.1};{d:.1};{d:.1}\n", .{
+                keystr,
+                v.getMin(f64),
+                v.getMean(f64),
+                v.getMax(f64),
+            });
+        }
+    }
+
+    return result;
+}
+
 pub fn parse(path: []const u8, comptime print_result: bool) !ParseResult {
     // return try parse_delimReader(path, print_result);
 
     // return try parse_readAll(path, print_result);
     // return try parse_mappedFile(path, print_result);
-    return try parse_brcmap(path, print_result);
+    // return try parse_brcmap(path, print_result);
+    return try parse_stdmap(path, print_result);
 }
 
 pub fn parseParallel_readAll(path: []const u8, comptime print_result: bool) !ParseResult {
