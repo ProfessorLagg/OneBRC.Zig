@@ -1,3 +1,0 @@
-=== 1brc.gen manual ===
-
-usage: 1brc.gen <NUM_LINES> <OUTPUT_FILEPATH>
