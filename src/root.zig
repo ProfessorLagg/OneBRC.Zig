@@ -3,3 +3,7 @@ test sso {
     _ = sso;
 }
 
+pub const BRCParser = @import("BRCParser.zig");
+test BRCParser {
+    _ = BRCParser;
+}

@@ -10,19 +10,49 @@ pub const std_options: std.Options = .{
         .ReleaseSmall => .warn,
         .ReleaseFast => .warn,
     },
-    .log_scope_levels = &[_]std.log.ScopeLevel{
-        .{ .scope = .SortedArrayMap, .level = .warn },
-        .{ .scope = .DelimReader, .level = .err },
-        .{ .scope = .Lines, .level = .err },
-        .{ .scope = .SSO, .level = .err },
-    },
 };
 
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\simple.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\verysmall.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\small.txt";
-// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\medium.txt";
-var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1GB.txt";
+var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\medium.txt";
+// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1GB.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\large.txt";
 
-pub fn main() !void {}
+const allocator: std.mem.Allocator = b: {
+    if (builtin.is_test) break :b std.testing.allocator;
+    if (!builtin.single_threaded) break :b std.heap.smp_allocator;
+    if (builtin.link_libc) break :b std.heap.c_allocator;
+    @compileError("Requires either single-threading to be disabled or lib-c to be linked");
+};
+
+pub fn main() !void {
+    try run();
+}
+
+pub fn debug() !void {
+    const stdout = std.io.getStdOut().writer();
+    var timer = std.time.Timer.start() catch unreachable;
+    var parser = try lib.BRCParser.init(allocator, debugfilepath);
+    var parsed = try parser.parse();
+    const linecount = parser.linecount;
+    const keycount = parsed.keys.len;
+    parser.deinit();
+    parsed.deinit();
+
+    const duration_ns: u64 = timer.read();
+    const ns_per_line: u64 = duration_ns / linecount;
+    try std.fmt.format(stdout, "\n==========\nParsed {d} lines | {d} keys| in {} ({} /line)", .{ linecount, keycount, std.fmt.fmtDuration(duration_ns), std.fmt.fmtDuration(ns_per_line) });
+}
+
+pub fn run() !void {
+    var parser = try lib.BRCParser.init(allocator, debugfilepath);
+    defer parser.deinit();
+    var parsed = try parser.parse();
+    defer parsed.deinit();
+    for (parsed.keys, parsed.vals) |k, v| {
+        const valflt: f64 = v.mean();
+        const stdout = std.io.getStdOut().writer();
+        try std.fmt.format(stdout, "{s};{d:.1}\n", .{ k.toSliceC(), valflt });
+    }
+}
