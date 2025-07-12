@@ -1,8 +1,8 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
-const SortedStringMap = @import("sso.zig").SortedStringMap;
-const SSM = SortedStringMap(MapVal);
+const BRCMap = @import("brcmap.zig");
+const MapVal = BRCMap.MapVal;
 
 fn fastIntParse(comptime T: type, noalias numstr: []const u8) T {
     comptime {
@@ -32,22 +32,6 @@ fn fastIntParse(comptime T: type, noalias numstr: []const u8) T {
     return result * sign;
 }
 
-const MapVal = struct {
-    sum: i32 = 0,
-    count: i32 = 0,
-
-    pub inline fn add(self: *MapVal, v: i32) void {
-        self.sum += v;
-        self.count += 1;
-    }
-
-    pub inline fn mean(self: *const MapVal) f64 {
-        const sum_f: f64 = @floatFromInt(self.sum);
-        const cnt_f: f64 = @floatFromInt(self.count);
-        return sum_f / cnt_f;
-    }
-};
-
 pub const BRCParser = @This();
 
 allocator: std.mem.Allocator,
@@ -70,9 +54,8 @@ pub fn deinit(self: *BRCParser) void {
     self.file.close();
 }
 
-pub fn parse(self: *BRCParser) !SortedStringMap(MapVal) {
-    var result: SSM = SSM.init(self.allocator);
-    _ = &result;
+pub fn parse(self: *BRCParser) !BRCMap {
+    var result: BRCMap = try BRCMap.init(self.allocator);
     const backing_buffer: []u8 = try self.allocator.alloc(u8, std.heap.pageSize());
     var buffer = backing_buffer[0..];
     buffer.len = try self.file.read(backing_buffer);
@@ -97,7 +80,7 @@ pub fn parse(self: *BRCParser) !SortedStringMap(MapVal) {
             const valstr: []const u8 = line[split + 1 ..];
 
             const valint: i32 = fastIntParse(i32, valstr);
-            const valptr: *MapVal = try result.findOrInsert(keystr, MapVal{ .count = 0, .sum = 0 });
+            const valptr: *MapVal = try result.findOrInsert(keystr);
             valptr.add(valint);
             //valptr.* = .{ .sum = valptr.sum + valint, .count = valptr.count + 1 };
 

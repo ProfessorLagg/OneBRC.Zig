@@ -8,24 +8,26 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
 
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
-    exe_mod.addImport("zig_lib", lib_mod);
+    exe_mod.addImport("brc_lib", lib_mod);
 
     const lib = b.addLibrary(.{
         .linkage = .static,
-        .name = "zig",
+        .name = "brc",
         .root_module = lib_mod,
     });
     b.installArtifact(lib);
 
     const exe = b.addExecutable(.{
-        .name = "zig",
+        .name = "brc",
         .root_module = exe_mod,
     });
     b.installArtifact(exe);

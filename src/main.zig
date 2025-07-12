@@ -1,6 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std");
-const lib = @import("zig_lib");
+const lib = @import("brc_lib");
 
 pub const std_options: std.Options = .{
     // Set the log level to info to .debug. use the scope levels instead
@@ -27,22 +27,23 @@ const allocator: std.mem.Allocator = b: {
 };
 
 pub fn main() !void {
-    try run();
+    try bench();
+    //try run();
 }
 
-pub fn debug() !void {
+pub fn bench() !void {
     const stdout = std.io.getStdOut().writer();
     var timer = std.time.Timer.start() catch unreachable;
     var parser = try lib.BRCParser.init(allocator, debugfilepath);
     var parsed = try parser.parse();
     const linecount = parser.linecount;
-    const keycount = parsed.keys.len;
+    const keycount = parsed.keys.items.len;
     parser.deinit();
     parsed.deinit();
 
     const duration_ns: u64 = timer.read();
     const ns_per_line: u64 = duration_ns / linecount;
-    try std.fmt.format(stdout, "\n==========\nParsed {d} lines | {d} keys| in {} ({} /line)", .{ linecount, keycount, std.fmt.fmtDuration(duration_ns), std.fmt.fmtDuration(ns_per_line) });
+    try std.fmt.format(stdout, "\n==========\nParsed {d} lines | {d} keys | in {} ({} /line)", .{ linecount, keycount, std.fmt.fmtDuration(duration_ns), std.fmt.fmtDuration(ns_per_line) });
 }
 
 pub fn run() !void {
@@ -50,9 +51,11 @@ pub fn run() !void {
     defer parser.deinit();
     var parsed = try parser.parse();
     defer parsed.deinit();
-    for (parsed.keys, parsed.vals) |k, v| {
-        const valflt: f64 = v.mean();
-        const stdout = std.io.getStdOut().writer();
-        try std.fmt.format(stdout, "{s};{d:.1}\n", .{ k.toSliceC(), valflt });
+
+    var iter = parsed.iterator();
+    const stdout = std.io.getStdOut().writer();
+    while (iter.next()) |kvp| {
+        const valflt: f64 = kvp.val.mean() / 10.0;
+        try std.fmt.format(stdout, "{s};{d:.1}\n", .{ kvp.key, valflt });
     }
 }
