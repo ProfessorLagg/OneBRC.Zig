@@ -2,20 +2,20 @@ const builtin = @import("builtin");
 const std = @import("std");
 const DynamicBuffer = @import("DynamicBuffer.zig");
 
+fn compare_from_bools(lt: bool, gt: bool) i8 {
+    const lti: i8 = @intFromBool(lt); // 11 if true, 0 if false
+    const gti: i8 = @intFromBool(gt); // 1 if true, 0 if false
+    return (0 - gti) + lti;
+}
+
 fn compare_strings(a: []const u8, b: []const u8) i8 {
+    var cmp: i8 = compare_from_bools(a.len < b.len, a.len > b.len);
     const l: usize = @min(a.len, b.len);
-
-    // TODO Use usize cmp when strings are long enough
-    // TODO Vectorize this when they strings are long enough
     var i: usize = 0;
-    var c: i8 = 0;
-    while (i < l and c != 0) : (i += 1) {
-        const lt: i8 = @intFromBool(a[i] < b[i]) * @as(i8, -1);
-        const gt: i8 = @intFromBool(a[i] > b[i]);
-        c = lt + gt;
+    while (i < l and cmp == 0) : (i += 1) {
+        cmp = compare_from_bools(a[i] < b[i], a[i] > b[i]);
     }
-
-    return std.math.sign(c);
+    return cmp;
 }
 
 fn compare_strings_order(a: []const u8, b: []const u8) std.math.Order {
@@ -106,37 +106,26 @@ inline fn getKeyString(self: *const BRCMap, offset: KeyOffset) []const u8 {
     return self.stringBuffer.used[L..R];
 }
 
-fn sort(self: *BRCMap) void {
-    const Ks = self.keys.items;
-    const Vs = self.vals.items;
-    std.debug.assert(Ks.len == Vs.len);
-
-    var i: usize = 1;
-    while (i < Ks.len) : (i += 1) {
-        const ko: KeyOffset = Ks[i];
-        const ks: []const u8 = self.getKeyString(ko);
-        const v: MapVal = Vs[i];
-        var j: usize = i;
-        while (j > 0 and (compare_strings(self.getKeyString(Ks[j - 1]), ks) == 1)) : (j -= 1) {
-            Ks[j] = Ks[j - 1];
-            Vs[j] = Vs[j - 1];
-        }
-        Ks[j] = ko;
-        Vs[j] = v;
-    }
+fn insert(self: *BRCMap, idx: usize, key: []const u8, val: MapVal) !void {
+    const new_string = try self.stringBuffer.write(key);
+    const new_left: usize = @intCast(@intFromPtr(new_string.ptr) - @intFromPtr(self.stringBuffer.raw.ptr));
+    const new_offset = KeyOffset.init(
+        @truncate(new_string.len),
+        @truncate(new_left),
+    );
+    try self.keys.insert(idx, new_offset);
+    try self.vals.insert(idx, val);
 }
 
-fn add(self: *BRCMap, key: []const u8, val: MapVal) !void {
-    std.debug.assert(self.indexOf(key) == null);
-    const keystr = try self.stringBuffer.write(key);
-    const offset: usize = @intFromPtr(keystr.ptr) - @intFromPtr(self.stringBuffer.raw.ptr);
-    try self.keys.append(KeyOffset.init(@truncate(keystr.len), @truncate(offset)));
+fn append(self: *BRCMap, key: []const u8, val: MapVal) !void {
+    const new_string = try self.stringBuffer.write(key);
+    const new_left: usize = @intCast(@intFromPtr(new_string.ptr) - @intFromPtr(self.stringBuffer.raw.ptr));
+    const new_offset = KeyOffset.init(
+        @truncate(new_string.len),
+        @truncate(new_left),
+    );
+    try self.keys.append(new_offset);
     try self.vals.append(val);
-    self.sort();
-}
-
-inline fn addKey(self: *BRCMap, key: []const u8) !void {
-    try self.add(key, MapVal.Zero);
 }
 
 fn indexOf(self: *const BRCMap, key: []const u8) ?usize {
@@ -151,13 +140,50 @@ fn indexOf(self: *const BRCMap, key: []const u8) ?usize {
 }
 
 pub fn findOrInsert(self: *BRCMap, key: []const u8) !*MapVal {
-    if (self.indexOf(key)) |idx| {
-        return &self.vals.items[idx];
-    } else {
-        try self.addKey(key);
-        const idx = self.indexOf(key) orelse unreachable;
-        return &self.vals.items[idx];
+    if (self.keys.items.len == 0) {
+        try self.insert(0, key, MapVal.Zero);
+        return &self.vals.items[0];
     }
+
+    var low: usize = 0;
+    var high: usize = self.keys.items.len;
+    var mid: usize = undefined;
+    var cmp: i8 = 0;
+    while (low < high) {
+        // Avoid overflowing in the midpoint calculation
+        mid = low + (high - low) / 2;
+        const keystr: []const u8 = self.getKeyString(self.keys.items[mid]);
+        cmp = compare_strings(key, keystr);
+        switch (cmp) {
+            0 => return &self.vals.items[mid],
+            1 => low = mid + 1,
+            -1 => high = mid,
+            else => unreachable,
+        }
+    }
+    std.debug.assert(cmp != 0);
+
+    if (cmp == -1) {
+        while (cmp == -1 and mid < self.keys.items.len - 1) {
+            mid += 1;
+            const keystr: []const u8 = self.getKeyString(self.keys.items[mid]);
+            cmp = compare_strings(key, keystr);
+        }
+    } else if (cmp == 1) {
+        while (cmp == 1 and mid > 1) {
+            mid -= 1;
+            const keystr: []const u8 = self.getKeyString(self.keys.items[mid]);
+            cmp = compare_strings(key, keystr);
+        }
+    }
+
+    if (mid == self.keys.items.len) {
+        try self.append(key, MapVal.Zero);
+        return &self.vals.items[self.vals.items.len - 1];
+    }
+
+    try self.insert(mid, key, MapVal.Zero);
+    return &self.vals.items[mid];
 }
 
 pub const MapEntry = struct {
