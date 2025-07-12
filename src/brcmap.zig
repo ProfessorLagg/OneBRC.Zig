@@ -10,6 +10,8 @@ fn compare_from_bools(lt: bool, gt: bool) i8 {
 
 fn compare_strings(a: []const u8, b: []const u8) i8 {
     var cmp: i8 = compare_from_bools(a.len < b.len, a.len > b.len);
+    if (cmp != 0) return cmp;
+
     const l: usize = @min(a.len, b.len);
     var i: usize = 0;
     while (i < l and cmp == 0) : (i += 1) {
@@ -139,51 +141,65 @@ fn indexOf(self: *const BRCMap, key: []const u8) ?usize {
     return null;
 }
 
-pub fn findOrInsert(self: *BRCMap, key: []const u8) !*MapVal {
-    if (self.keys.items.len == 0) {
-        try self.insert(0, key, MapVal.Zero);
-        return &self.vals.items[0];
+fn linearSearch(self: *const BRCMap, key: []const u8) ?usize {
+    for (0..self.keys.items.len) |i| {
+        const keystr = self.getKeyString(self.keys.items[i]);
+        if (std.mem.eql(u8, key, keystr)) return i;
     }
+    return null;
+}
 
-    var low: usize = 0;
-    var high: usize = self.keys.items.len;
-    var mid: usize = undefined;
-    var cmp: i8 = 0;
-    while (low < high) {
+fn countInstances(self: *const BRCMap, key: []const u8) usize {
+    var r: usize = 0;
+    for (0..self.keys.items.len) |i| {
+        const keystr = self.getKeyString(self.keys.items[i]);
+        r += @intFromBool(std.mem.eql(u8, key, keystr));
+    }
+    return r;
+}
+
+pub fn findOrInsert(self: *BRCMap, key: []const u8) !*MapVal {
+    // if (self.keys.items.len == 0) {
+    //     try self.insert(0, key, MapVal.Zero);
+    //     return &self.vals.items[0];
+    // }
+
+    // const stdout = std.io.getStdOut().writer();
+    // std.fmt.format(stdout, "findOrInsert key:\"{s}\"\n", .{key}) catch unreachable;
+
+    var slice: []const KeyOffset = self.keys.items[0..];
+    var cmp: i8 = 1;
+    var idx: usize = 0;
+    while (slice.len > 1) {
         // Avoid overflowing in the midpoint calculation
-        mid = low + (high - low) / 2;
-        const keystr: []const u8 = self.getKeyString(self.keys.items[mid]);
+        const mid = slice.len / 2;
+        const keystr: []const u8 = self.getKeyString(slice[mid]);
         cmp = compare_strings(key, keystr);
+        idx = @intFromPtr(&slice[mid]) - @intFromPtr(self.keys.items.ptr);
+        // std.fmt.format(stdout, "\tslice.len: {d}, idx: {d}, mid: {d}, cmp: {d}\n", .{ slice.len, idx, mid, cmp }) catch unreachable;
+
         switch (cmp) {
-            0 => return &self.vals.items[mid],
-            1 => low = mid + 1,
-            -1 => high = mid,
+            0 => break,
+            1 => slice = slice[mid + 1 ..],
+            -1 => slice = slice[0..mid],
             else => unreachable,
         }
     }
-    std.debug.assert(cmp != 0);
-
-    if (cmp == -1) {
-        while (cmp == -1 and mid < self.keys.items.len - 1) {
-            mid += 1;
-            const keystr: []const u8 = self.getKeyString(self.keys.items[mid]);
-            cmp = compare_strings(key, keystr);
+    if (cmp != 0) {
+        if (idx < self.keys.items.len) {
+            try self.insert(idx, key, MapVal.Zero);
+        } else {
+            try self.append(key, MapVal.Zero);
+            idx = self.keys.items.len - 1;
         }
-    } else if (cmp == 1) {
-        while (cmp == 1 and mid > 1) {
-            mid -= 1;
-            const keystr: []const u8 = self.getKeyString(self.keys.items[mid]);
-            cmp = compare_strings(key, keystr);
-        }
+        // std.fmt.format(stdout, "\tinserted key at: {d}\n", .{idx}) catch unreachable;
+    } else {
+        // std.fmt.format(stdout, "\tfound key at: {d}\n", .{idx}) catch unreachable;
     }
 
-    if (mid == self.keys.items.len) {
-        try self.append(key, MapVal.Zero);
-        return &self.vals.items[self.vals.items.len - 1];
-    }
-
-    try self.insert(mid, key, MapVal.Zero);
-    return &self.vals.items[mid];
+    std.debug.assert(self.countInstances(key) == 1);
+    std.debug.assert(std.mem.eql(u8, key, self.getKeyString(self.keys.items[idx])));
+    return &self.vals.items[idx];
 }
 
 pub const MapEntry = struct {
