@@ -131,13 +131,21 @@ fn append(self: *BRCMap, key: []const u8, val: MapVal) !void {
 }
 
 fn indexOf(self: *const BRCMap, key: []const u8) ?usize {
-    // TODO Use Binary search here
-    const Ks = self.keys.items[0..];
-    for (Ks, 0..Ks.len) |ko, i| {
-        const ks: []const u8 = self.getKeyString(ko);
-        if (std.mem.eql(u8, key, ks)) return i;
+    var left: usize = 0;
+    var right: usize = self.keys.items.len;
+    var mid: usize = 0;
+    var cmp: i8 = 1;
+    while (cmp != 0 and left != right) {
+        mid = left + @divFloor(right - left, 2);
+        const keystr: []const u8 = self.getKeyString(self.keys.items[mid]);
+        cmp = compare_strings(key, keystr);
+        switch (cmp) {
+            0 => mid,
+            -1 => right = mid,
+            1 => left = mid + 1,
+            else => unreachable,
+        }
     }
-
     return null;
 }
 
@@ -159,47 +167,42 @@ fn countInstances(self: *const BRCMap, key: []const u8) usize {
 }
 
 pub fn findOrInsert(self: *BRCMap, key: []const u8) !*MapVal {
-    // if (self.keys.items.len == 0) {
-    //     try self.insert(0, key, MapVal.Zero);
-    //     return &self.vals.items[0];
-    // }
+    if (self.keys.items.len == 0) {
+        try self.insert(0, key, MapVal.Zero);
+        return &self.vals.items[0];
+    }
 
-    // const stdout = std.io.getStdOut().writer();
-    // std.fmt.format(stdout, "findOrInsert key:\"{s}\"\n", .{key}) catch unreachable;
-
-    var slice: []const KeyOffset = self.keys.items[0..];
+    var left: usize = 0;
+    var right: usize = self.keys.items.len;
+    var mid: usize = 0;
     var cmp: i8 = 1;
-    var idx: usize = 0;
-    while (slice.len > 1) {
-        // Avoid overflowing in the midpoint calculation
-        const mid = slice.len / 2;
-        const keystr: []const u8 = self.getKeyString(slice[mid]);
+    while (cmp != 0 and left != right) {
+        mid = left + @divFloor(right - left, 2);
+        const keystr: []const u8 = self.getKeyString(self.keys.items[mid]);
         cmp = compare_strings(key, keystr);
-        idx = @intFromPtr(&slice[mid]) - @intFromPtr(self.keys.items.ptr);
-        // std.fmt.format(stdout, "\tslice.len: {d}, idx: {d}, mid: {d}, cmp: {d}\n", .{ slice.len, idx, mid, cmp }) catch unreachable;
-
         switch (cmp) {
-            0 => break,
-            1 => slice = slice[mid + 1 ..],
-            -1 => slice = slice[0..mid],
+            0 => return &self.vals.items[mid],
+            -1 => right = mid,
+            1 => left = mid + 1,
             else => unreachable,
         }
     }
+
     if (cmp != 0) {
-        if (idx < self.keys.items.len) {
-            try self.insert(idx, key, MapVal.Zero);
+        if (mid < self.keys.items.len) {
+            try self.insert(mid, key, MapVal.Zero);
         } else {
             try self.append(key, MapVal.Zero);
-            idx = self.keys.items.len - 1;
+            mid = self.keys.items.len - 1;
         }
-        // std.fmt.format(stdout, "\tinserted key at: {d}\n", .{idx}) catch unreachable;
+        //std.fmt.format(stdout, "\tinserted key at: {d}\n", .{mid}) catch unreachable;
     } else {
-        // std.fmt.format(stdout, "\tfound key at: {d}\n", .{idx}) catch unreachable;
+        //std.fmt.format(stdout, "\tfound key at: {d}\n", .{mid}) catch unreachable;
     }
 
-    std.debug.assert(self.countInstances(key) == 1);
-    std.debug.assert(std.mem.eql(u8, key, self.getKeyString(self.keys.items[idx])));
-    return &self.vals.items[idx];
+    //std.debug.assert(self.countInstances(key) == 1);
+    std.debug.assert(std.mem.eql(u8, key, self.getKeyString(self.keys.items[mid])));
+    return &self.vals.items[mid];
 }
 
 pub const MapEntry = struct {
