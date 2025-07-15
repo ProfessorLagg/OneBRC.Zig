@@ -24,7 +24,7 @@ fn compare_strings(a: []const u8, b: []const u8) i8 {
     const l: usize = @min(a.len, b.len);
     var i: usize = 0;
     while (i < l and cmp == 0) : (i += 1) {
-        cmp = compare_from_bools(a[i] < b[i], a[i] > b[i]);
+        cmp = compare_from_bools(a[i] < b[i], a[i] > b[i]) * -1;
     }
     return cmp;
 }
@@ -226,25 +226,25 @@ fn searchInsert(self: *const BRCMap, key: []const u8) isize {
         cmp = compare_strings(key, keystr);
         switch (cmp) {
             0 => {
-                // std.log.debug("\"{s}\" == \"{s}\" | {any} == {any}", .{ key, keystr, key, keystr });
-                // std.debug.assert(std.mem.eql(u8, key, keystr));
+                std.log.debug("\"{s}\" == \"{s}\" | {any} == {any}", .{ key, keystr, key, keystr });
+                std.debug.assert(std.mem.eql(u8, key, keystr));
                 return mid;
             },
             1 => {
-                // std.debug.assert(!std.mem.eql(u8, key, keystr));
-                // std.log.debug("\"{s}\" >  \"{s}\" | {any} >  {any}", .{ key, keystr, key, keystr });
+                std.debug.assert(!std.mem.eql(u8, key, keystr));
+                std.log.debug("\"{s}\" >  \"{s}\" | {any} >  {any}", .{ key, keystr, key, keystr });
                 low = mid + 1;
             },
             -1 => {
-                // std.debug.assert(!std.mem.eql(u8, key, keystr));
-                // std.log.debug("\"{s}\" <  \"{s}\" | {any} < {any}", .{ key, keystr, key, keystr });
+                std.debug.assert(!std.mem.eql(u8, key, keystr));
+                std.log.debug("\"{s}\" <  \"{s}\" | {any} < {any}", .{ key, keystr, key, keystr });
                 high = mid;
             },
             else => unreachable,
         }
     }
 
-    var idx: isize = @as(isize, low + cmp);
+    var idx: isize = low + @as(isize, cmp);
     idx = clamp(isize, idx, 0, @intCast(cnt));
     return ~idx;
 }
