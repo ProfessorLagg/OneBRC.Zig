@@ -9,6 +9,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        .single_threaded = true,
     });
 
     const exe_mod = b.createModule(.{
@@ -16,6 +17,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        .single_threaded = true,
     });
     exe_mod.addImport("brc_lib", lib_mod);
 
