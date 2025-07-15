@@ -4,14 +4,20 @@ const Order = std.math.Order;
 const DynamicBuffer = @import("DynamicBuffer.zig");
 const log = std.log.scoped(.BRCMap);
 
-
 inline fn clamp(comptime T: type, val: T, min: T, max: T) T {
     return @max(max, @min(min, val));
 }
-fn compare_from_bools(lt: bool, gt: bool) i8 {
-    const lti: i8 = @intFromBool(lt); // 11 if true, 0 if false
-    const gti: i8 = @intFromBool(gt); // 1 if true, 0 if false
-    return (0 - gti) + lti;
+inline fn indexOfDiff(a: []const u8, b: []const u8) ?usize {
+    const l: usize = @min(a.len, b.len);
+    for (0..l) |i| {
+        if (a[i] != b[i]) return i;
+    }
+    return null;
+}
+fn compare_from_bools(lessThan: bool, greaterThan: bool) i8 {
+    const lt: i8 = @intFromBool(lessThan) * @as(i8, -1); // -1 if true, 0 if false
+    const gt: i8 = @intFromBool(greaterThan); // 1 if true, 0 if false
+    return std.math.sign(lt + gt);
 }
 fn compare_from_bools_order(lt: bool, gt: bool) Order {
     return switch (compare_from_bools(lt, gt)) {
@@ -21,17 +27,35 @@ fn compare_from_bools_order(lt: bool, gt: bool) Order {
         else => unreachable,
     };
 }
-fn compare_strings(a: []const u8, b: []const u8) i8 {
+fn compare_string_v0(a: []const u8, b: []const u8) i8 {
     var cmp: i8 = compare_from_bools(a.len < b.len, a.len > b.len);
     const l: usize = @min(a.len, b.len);
     var i: usize = 0;
     while (i < l and cmp == 0) : (i += 1) {
-        cmp = compare_from_bools(a[i] < b[i], a[i] > b[i]) * -1;
+        cmp = compare_from_bools(a[i] < b[i], a[i] > b[i]);
     }
     return cmp;
 }
-fn compare_strings_order(a: []const u8, b: []const u8) Order {
-    return switch (compare_strings(a, b)) {
+fn compare_string_v1(a: []const u8, b: []const u8) i8 {
+    var cmp: i8 = compare_from_bools(a.len < b.len, a.len > b.len);
+    if (cmp == 0) return cmp;
+
+    for (0..a.len) |i| {
+        cmp = compare_from_bools(a[i] < b[i], a[i] > b[i]);
+        if (cmp != 0) return cmp;
+    }
+    return 0;
+}
+fn compare_string(a: []const u8, b: []const u8) i8 {
+    const l: usize = @min(a.len, b.len);
+    for (0..l) |i| {
+        if (a[i] < b[i]) return -1;
+        if (a[i] > b[i]) return 1;
+    }
+    return 0;
+}
+fn compare_string_order(a: []const u8, b: []const u8) Order {
+    return switch (compare_string(a, b)) {
         -1 => .lt,
         0 => .eq,
         1 => .gt,
@@ -83,17 +107,11 @@ const OffsetList = std.ArrayList(KeyOffset);
 pub const MapVal = struct {
     const Zero: MapVal = .{ .sum = 0, .count = 0 };
 
-    // TODO i32 cannot actually fit the maximum value it needs to
     sum: i48 = 0,
     count: i32 = 0,
 
-    pub inline fn add(self: *MapVal, v: anytype) void {
-        comptime {
-            const T: type = @TypeOf(v);
-            const ti: std.builtin.Type = @typeInfo(T);
-            if (ti != .int or ti.int.signedness != .signed) @compileError("Expected signed integer type, but found " ++ @typeName(T));
-        }
-        self.sum += @intCast(v);
+    pub inline fn add(self: *MapVal, v: i48) void {
+        self.sum += v;
         self.count += 1;
     }
 
@@ -141,7 +159,7 @@ fn getKeyString(self: *const BRCMap, offset: KeyOffset) []const u8 {
 fn compare_key(self: *const BRCMap, key: []const u8, offset: KeyOffset) Order {
     std.debug.assert(offset.right() <= self.stringBuffer.used.len);
     const str: []const u8 = self.getKeyString(offset);
-    return compare_strings_order(key, str);
+    return compare_string_order(key, str);
 }
 fn compare_idx(self: *const BRCMap, key: []const u8, idx: usize) Order {
     std.debug.assert(idx < self.count());
@@ -160,7 +178,7 @@ fn insert(self: *BRCMap, idx: usize, key: []const u8, val: MapVal) !void {
     try self.keys.insert(idx, new_offset);
     try self.vals.insert(idx, val);
 
-    log.debug("inserted key \"{s}\" | {any} into position: {d}", .{ self.getKeyString(new_offset), self.getKeyString(new_offset), idx });
+    log.info("inserted key \"{s}\" | {any} into position: {d}", .{ self.getKeyString(new_offset), self.getKeyString(new_offset), idx });
 }
 
 fn append(self: *BRCMap, key: []const u8, val: MapVal) !void {
@@ -182,7 +200,7 @@ fn indexOf(self: *const BRCMap, key: []const u8) ?usize {
     while (cmp != 0 and left != right) {
         mid = left + @divFloor(right - left, 2);
         const keystr: []const u8 = self.getKeyString(self.keys.items[mid]);
-        cmp = compare_strings(key, keystr);
+        cmp = compare_string(key, keystr);
         switch (cmp) {
             0 => return mid,
             -1 => right = mid,
@@ -205,7 +223,7 @@ fn searchInsert(self: *const BRCMap, key: []const u8) isize {
         std.debug.assert(mid >= 0);
         std.debug.assert(mid < cnt);
         const keystr = self.getKeyString(self.keys.items[@intCast(mid)]);
-        cmp = compare_strings(key, keystr);
+        cmp = compare_string(key, keystr);
         switch (cmp) {
             0 => {
                 log.debug("\"{s}\" == \"{s}\" | {any} == {any}", .{ key, keystr, key, keystr });
@@ -213,13 +231,13 @@ fn searchInsert(self: *const BRCMap, key: []const u8) isize {
                 return mid;
             },
             1 => {
-                std.debug.assert(!std.mem.eql(u8, key, keystr));
                 log.debug("\"{s}\" >  \"{s}\" | {any} >  {any}", .{ key, keystr, key, keystr });
+                std.debug.assert(!std.mem.eql(u8, key, keystr));
                 low = mid + 1;
             },
             -1 => {
-                std.debug.assert(!std.mem.eql(u8, key, keystr));
                 log.debug("\"{s}\" <  \"{s}\" | {any} < {any}", .{ key, keystr, key, keystr });
+                std.debug.assert(!std.mem.eql(u8, key, keystr));
                 high = mid;
             },
             else => unreachable,

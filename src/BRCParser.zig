@@ -2,9 +2,11 @@ const builtin = @import("builtin");
 const std = @import("std");
 
 const DelimReader = @import("delimReader.zig").DelimReader;
-const LineReader = DelimReader(std.fs.File.Reader, '\n', 1024 * 128);
+const LineReader = DelimReader(std.fs.File.Reader, '\n', 4096);
 const BRCMap = @import("brcmap.zig");
 const MapVal = BRCMap.MapVal;
+
+const linelog = std.log.scoped(.Lines);
 
 fn fastIntParse(comptime T: type, noalias numstr: []const u8) T {
     comptime {
@@ -69,7 +71,7 @@ pub fn parse(self: *BRCParser) !BRCMap {
 
         const keystr: []const u8 = line[0..splitIndex];
         const valstr: []const u8 = line[(splitIndex + 1)..];
-        std.log.debug("line{d}: {s}, k: {s}, v: {s}", .{ self.linecount, line, keystr, valstr });
+        linelog.debug("line{d}: {s}, k: {s}, v: {s}", .{ self.linecount, line, keystr, valstr });
 
         std.debug.assert(keystr.len >= 1);
         std.debug.assert(keystr.len <= 100);
@@ -79,7 +81,7 @@ pub fn parse(self: *BRCParser) !BRCMap {
         std.debug.assert(valstr[valstr.len - 2] == '.');
         std.debug.assert(valstr[0] != ';');
 
-        const valint: i32 = fastIntParse(i32, valstr);
+        const valint: i48 = fastIntParse(i48, valstr);
         const valptr: *MapVal = try result.findOrInsert(keystr);
         valptr.add(valint);
         self.linecount += 1;
