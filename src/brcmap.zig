@@ -121,7 +121,7 @@ pub fn deinit(self: *BRCMap) void {
     self.keys.deinit();
 }
 
-fn count(self: *const BRCMap) usize {
+pub inline fn count(self: *const BRCMap) usize {
     std.debug.assert(self.keys.items.len == self.vals.items.len);
     return self.keys.items.len;
 }

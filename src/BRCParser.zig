@@ -55,13 +55,19 @@ pub fn deinit(self: *BRCParser) void {
 }
 
 pub fn parse(self: *BRCParser) !BRCMap {
+    const blocksize = std.heap.pageSize() * 16;
     var result: BRCMap = try BRCMap.init(self.allocator);
-    const backing_buffer: []u8 = try self.allocator.alloc(u8, std.heap.pageSize());
+    const backing_buffer: []u8 = try self.allocator.alloc(u8, blocksize);
     var buffer = backing_buffer[0..];
     buffer.len = try self.file.read(backing_buffer);
+    const filesize: u64 = (try self.file.stat()).size;
 
+    var totalReadSize: u64 = buffer.len;
+
+    var outerTimer = std.time.Timer.start() catch unreachable;
     self.linecount = 0;
     while (buffer.len > 0) {
+        var innerTimer = std.time.Timer.start() catch unreachable;
         inner: while (buffer.len > 0) {
             const split = std.mem.indexOfScalar(u8, buffer, ';') orelse {
                 // TODO make sure we can exit when trailing whitespace or malformed file
@@ -82,16 +88,25 @@ pub fn parse(self: *BRCParser) !BRCMap {
             const valint: i32 = fastIntParse(i32, valstr);
             const valptr: *MapVal = try result.findOrInsert(keystr);
             valptr.add(valint);
-            //valptr.* = .{ .sum = valptr.sum + valint, .count = valptr.count + 1 };
 
             self.linecount += 1;
         }
-
+        const ns = innerTimer.read();
+        const seconds: f64 = (@as(f64, @floatFromInt(outerTimer.read())) / @as(f64, std.time.ns_per_s)) + 0.000001;
+        const throughput: u64 = @intFromFloat(@as(f64, @floatFromInt(totalReadSize)) / seconds);
         // read more data into the buffer
         const l = buffer.len;
         std.mem.copyForwards(u8, backing_buffer, buffer);
-        //@memcpy(backing_buffer[0..l], buffer);
         const readcount = try self.file.read(backing_buffer[l..]);
+        totalReadSize += readcount;
+
+        std.log.info("read progress: {d:>3.0} / {d:>3.0} | Keycount: {d:>5} | Block parse time: {} | Throughput: {d:.0}/s", .{
+            std.fmt.fmtIntSizeBin(totalReadSize),
+            std.fmt.fmtIntSizeBin(filesize),
+            result.count(),
+            std.fmt.fmtDuration(ns),
+            std.fmt.fmtIntSizeBin(throughput),
+        });
         buffer = backing_buffer[0 .. l + readcount];
         while (buffer.len > 0 and buffer[0] == '\n') : (buffer = buffer[1..]) {}
     }
