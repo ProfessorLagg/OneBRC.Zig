@@ -2,6 +2,8 @@ const builtin = @import("builtin");
 const std = @import("std");
 const Order = std.math.Order;
 const DynamicBuffer = @import("DynamicBuffer.zig");
+const log = std.log.scoped(.BRCMap);
+
 
 inline fn clamp(comptime T: type, val: T, min: T, max: T) T {
     return @max(max, @min(min, val));
@@ -82,11 +84,16 @@ pub const MapVal = struct {
     const Zero: MapVal = .{ .sum = 0, .count = 0 };
 
     // TODO i32 cannot actually fit the maximum value it needs to
-    sum: i32 = 0,
+    sum: i48 = 0,
     count: i32 = 0,
 
-    pub inline fn add(self: *MapVal, v: i32) void {
-        self.sum += v;
+    pub inline fn add(self: *MapVal, v: anytype) void {
+        comptime {
+            const T: type = @TypeOf(v);
+            const ti: std.builtin.Type = @typeInfo(T);
+            if (ti != .int or ti.int.signedness != .signed) @compileError("Expected signed integer type, but found " ++ @typeName(T));
+        }
+        self.sum += @intCast(v);
         self.count += 1;
     }
 
@@ -153,8 +160,7 @@ fn insert(self: *BRCMap, idx: usize, key: []const u8, val: MapVal) !void {
     try self.keys.insert(idx, new_offset);
     try self.vals.insert(idx, val);
 
-    std.log.debug("inserted key \"{s}\" | {any} into position: {d}", .{ self.getKeyString(new_offset), self.getKeyString(new_offset), idx });
-    std.debug.assert(self.countDuplicateKeys() == 0);
+    log.debug("inserted key \"{s}\" | {any} into position: {d}", .{ self.getKeyString(new_offset), self.getKeyString(new_offset), idx });
 }
 
 fn append(self: *BRCMap, key: []const u8, val: MapVal) !void {
@@ -187,30 +193,6 @@ fn indexOf(self: *const BRCMap, key: []const u8) ?usize {
     return null;
 }
 
-fn linearSearch(self: *const BRCMap, key: []const u8) ?usize {
-    for (0..self.keys.items.len) |i| {
-        const keystr = self.getKeyString(self.keys.items[i]);
-        if (std.mem.eql(u8, key, keystr)) return i;
-    }
-    return null;
-}
-
-fn countDuplicateKeys(self: *const BRCMap) usize {
-    var r: usize = 0;
-    const cnt: usize = self.count();
-    for (1..cnt) |i| {
-        for (0..i) |j| {
-            const off_i = self.keys.items[i];
-            const off_j = self.keys.items[j];
-            const str_i = self.getKeyString(off_i);
-            const str_j = self.getKeyString(off_j);
-            const eql = std.mem.eql(u8, str_i, str_j);
-            r += @intFromBool(eql);
-        }
-    }
-    return r;
-}
-
 fn searchInsert(self: *const BRCMap, key: []const u8) isize {
     const cnt: usize = self.count();
     var low: isize = 0;
@@ -226,18 +208,18 @@ fn searchInsert(self: *const BRCMap, key: []const u8) isize {
         cmp = compare_strings(key, keystr);
         switch (cmp) {
             0 => {
-                std.log.debug("\"{s}\" == \"{s}\" | {any} == {any}", .{ key, keystr, key, keystr });
+                log.debug("\"{s}\" == \"{s}\" | {any} == {any}", .{ key, keystr, key, keystr });
                 std.debug.assert(std.mem.eql(u8, key, keystr));
                 return mid;
             },
             1 => {
                 std.debug.assert(!std.mem.eql(u8, key, keystr));
-                std.log.debug("\"{s}\" >  \"{s}\" | {any} >  {any}", .{ key, keystr, key, keystr });
+                log.debug("\"{s}\" >  \"{s}\" | {any} >  {any}", .{ key, keystr, key, keystr });
                 low = mid + 1;
             },
             -1 => {
                 std.debug.assert(!std.mem.eql(u8, key, keystr));
-                std.log.debug("\"{s}\" <  \"{s}\" | {any} < {any}", .{ key, keystr, key, keystr });
+                log.debug("\"{s}\" <  \"{s}\" | {any} < {any}", .{ key, keystr, key, keystr });
                 high = mid;
             },
             else => unreachable,

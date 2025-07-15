@@ -1,6 +1,8 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
+const DelimReader = @import("delimReader.zig").DelimReader;
+const LineReader = DelimReader(std.fs.File.Reader, '\n', 1024 * 128);
 const BRCMap = @import("brcmap.zig");
 const MapVal = BRCMap.MapVal;
 
@@ -55,61 +57,44 @@ pub fn deinit(self: *BRCParser) void {
 }
 
 pub fn parse(self: *BRCParser) !BRCMap {
-    const blocksize = std.heap.pageSize() * 16;
     var result: BRCMap = try BRCMap.init(self.allocator);
-    const backing_buffer: []u8 = try self.allocator.alloc(u8, blocksize);
-    var buffer = backing_buffer[0..];
-    buffer.len = try self.file.read(backing_buffer);
-    const filesize: u64 = (try self.file.stat()).size;
-
-    var totalReadSize: u64 = buffer.len;
-
-    var outerTimer = std.time.Timer.start() catch unreachable;
+    const fileReader = self.file.reader();
+    var lineReader: LineReader = try LineReader.init(self.allocator, fileReader);
     self.linecount = 0;
-    while (buffer.len > 0) {
-        var innerTimer = std.time.Timer.start() catch unreachable;
-        inner: while (buffer.len > 0) {
-            const split = std.mem.indexOfScalar(u8, buffer, ';') orelse {
-                // TODO make sure we can exit when trailing whitespace or malformed file
-                break :inner;
-            };
-            var end: usize = split + 1;
-            while (end < buffer.len and buffer[end] != '.') : (end += 1) {}
-            end += 1;
-            if (end >= buffer.len) break :inner;
-            const line = buffer[0 .. end + 1];
+    while (try lineReader.next()) |line| {
+        std.debug.assert(line.len >= 5);
+        var splitIndex: usize = line.len - 4;
+        while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
+        std.debug.assert(line[splitIndex] == ';');
 
-            const new_buffer_start = line.len + @intFromBool(line.len < buffer.len);
-            buffer = buffer[new_buffer_start..];
+        const keystr: []const u8 = line[0..splitIndex];
+        const valstr: []const u8 = line[(splitIndex + 1)..];
+        std.log.debug("line{d}: {s}, k: {s}, v: {s}", .{ self.linecount, line, keystr, valstr });
 
-            const keystr: []const u8 = line[0..split];
-            const valstr: []const u8 = line[split + 1 ..];
+        std.debug.assert(keystr.len >= 1);
+        std.debug.assert(keystr.len <= 100);
+        std.debug.assert(keystr[keystr.len - 1] != ';');
+        std.debug.assert(valstr.len >= 3);
+        std.debug.assert(valstr.len <= 5);
+        std.debug.assert(valstr[valstr.len - 2] == '.');
+        std.debug.assert(valstr[0] != ';');
 
-            const valint: i32 = fastIntParse(i32, valstr);
-            const valptr: *MapVal = try result.findOrInsert(keystr);
-            valptr.add(valint);
-
-            self.linecount += 1;
-        }
-        const ns = innerTimer.read();
-        const seconds: f64 = (@as(f64, @floatFromInt(outerTimer.read())) / @as(f64, std.time.ns_per_s)) + 0.000001;
-        const throughput: u64 = @intFromFloat(@as(f64, @floatFromInt(totalReadSize)) / seconds);
-        // read more data into the buffer
-        const l = buffer.len;
-        std.mem.copyForwards(u8, backing_buffer, buffer);
-        const readcount = try self.file.read(backing_buffer[l..]);
-        totalReadSize += readcount;
-
-        std.log.info("read progress: {d:>3.0} / {d:>3.0} | Keycount: {d:>5} | Block parse time: {} | Throughput: {d:.0}/s", .{
-            std.fmt.fmtIntSizeBin(totalReadSize),
-            std.fmt.fmtIntSizeBin(filesize),
-            result.count(),
-            std.fmt.fmtDuration(ns),
-            std.fmt.fmtIntSizeBin(throughput),
-        });
-        buffer = backing_buffer[0 .. l + readcount];
-        while (buffer.len > 0 and buffer[0] == '\n') : (buffer = buffer[1..]) {}
+        const valint: i32 = fastIntParse(i32, valstr);
+        const valptr: *MapVal = try result.findOrInsert(keystr);
+        valptr.add(valint);
+        self.linecount += 1;
     }
+    return result;
+}
 
+pub fn read(self: *BRCParser) !BRCMap {
+    const result: BRCMap = try BRCMap.init(self.allocator);
+    const fileReader = self.file.reader();
+    var lineReader: LineReader = try LineReader.init(self.allocator, fileReader);
+    self.linecount = 0;
+    while (try lineReader.next()) |line| {
+        std.debug.assert(line.len >= 5);
+        self.linecount += 1;
+    }
     return result;
 }

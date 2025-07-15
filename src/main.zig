@@ -8,7 +8,11 @@ pub const std_options: std.Options = .{
         .Debug => .debug,
         .ReleaseSafe => .info,
         .ReleaseSmall => .warn,
-        .ReleaseFast => .info,
+        .ReleaseFast => .warn,
+    },
+    .log_scope_levels = &[_]std.log.ScopeLevel{
+        .{ .scope = .DelimReader, .level = .err },
+        .{ .scope = .BRCMap, .level = .err },
     },
 };
 
@@ -18,9 +22,9 @@ pub const std_options: std.Options = .{
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\verysmall.txt";
 
 // following files has more than 1 instance of each key, and 41343 keys in total
-var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\small.txt";
+// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\small.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\medium.txt";
-// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1GB.txt";
+var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1GB.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\large.txt";
 
 const allocator: std.mem.Allocator = b: {
@@ -31,11 +35,12 @@ const allocator: std.mem.Allocator = b: {
 };
 
 pub fn main() !void {
-    try bench();
+    //try bench_parse();
+    try bench_read();
     //try run();
 }
 
-pub fn bench() !void {
+pub fn bench_parse() !void {
     const stdout = std.io.getStdOut().writer();
     var timer = std.time.Timer.start() catch unreachable;
     var parser = try lib.BRCParser.init(allocator, debugfilepath);
@@ -48,6 +53,32 @@ pub fn bench() !void {
     const duration_ns: u64 = timer.read();
     const ns_per_line: u64 = duration_ns / linecount;
     try std.fmt.format(stdout, "\n==========\nParsed {d} lines | {d} keys | in {} ({} /line)", .{ linecount, keycount, std.fmt.fmtDuration(duration_ns), std.fmt.fmtDuration(ns_per_line) });
+}
+
+pub fn bench_read() !void {
+    const stdout = std.io.getStdOut().writer();
+    var timer = std.time.Timer.start() catch unreachable;
+    var parser = try lib.BRCParser.init(allocator, debugfilepath);
+    var parsed = try parser.read();
+    const linecount = parser.linecount;
+    const keycount = parsed.keys.items.len;
+    const filesize: u64 = (try parser.file.stat()).size;
+    parser.deinit();
+    parsed.deinit();
+
+    const duration_ns: u64 = timer.read();
+    const ns_per_line: u64 = @intFromFloat(@as(f64, @floatFromInt(duration_ns)) / @as(f64, @floatFromInt(linecount)));
+
+    const seconds_f: f64 = @as(f64, @floatFromInt(duration_ns)) / @as(f64, std.time.ns_per_s);
+    const bytes_per_sec_f: f64 = @as(f64, @floatFromInt(filesize)) / seconds_f;
+    const bytes_per_sec: u64 = @intFromFloat(std.math.round(bytes_per_sec_f));
+    try std.fmt.format(stdout, "\n==========\nRead {d} lines ({d} keys) in {} ({} /line) | {d:0.2}/s", .{
+        linecount,
+        keycount,
+        std.fmt.fmtDuration(duration_ns),
+        std.fmt.fmtDuration(ns_per_line),
+        std.fmt.fmtIntSizeDec(bytes_per_sec),
+    });
 }
 
 pub fn run() !void {
