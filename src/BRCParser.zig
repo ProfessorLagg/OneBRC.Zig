@@ -3,7 +3,7 @@ const std = @import("std");
 
 const DelimReader = @import("delimReader.zig").DelimReader;
 const LineReader = DelimReader(std.fs.File.Reader, '\n', 4096);
-const BRCMap = @import("brcmap.zig");
+const BRCMap = @import("BRCmap.zig");
 const MapVal = BRCMap.MapVal;
 
 const linelog = std.log.scoped(.Lines);

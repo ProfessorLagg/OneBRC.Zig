@@ -12,7 +12,7 @@ pub const std_options: std.Options = .{
     },
     .log_scope_levels = &[_]std.log.ScopeLevel{
         .{ .scope = .DelimReader, .level = .err },
-        .{ .scope = .BRCMap, .level = .debug },
+        .{ .scope = .BRCMap, .level = .err },
         .{ .scope = .Lines, .level = .err },
     },
 };

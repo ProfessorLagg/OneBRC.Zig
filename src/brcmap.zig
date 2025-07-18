@@ -2,6 +2,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const Order = std.math.Order;
 const DynamicBuffer = @import("DynamicBuffer.zig");
+const DynamicArray = @import("DynamicArray.zig").DynamicArray;
 const log = std.log.scoped(.BRCMap);
 
 inline fn indexOfDiff(a: []const u8, b: []const u8) ?usize {
@@ -101,7 +102,8 @@ const KeyOffset = struct {
         return @as(usize, self.getOffset()) + @as(usize, self.getLen());
     }
 };
-const OffsetList = std.ArrayList(KeyOffset);
+// const OffsetList = std.ArrayList(KeyOffset);
+const OffsetList = DynamicArray(KeyOffset);
 
 pub const MapVal = struct {
     const Zero: MapVal = .{ .sum = 0, .count = 0 };
@@ -120,7 +122,7 @@ pub const MapVal = struct {
         return sum_f / cnt_f;
     }
 };
-const MapValList = std.ArrayList(MapVal);
+const MapValList = DynamicArray(MapVal);
 
 const BRCMap = @This();
 

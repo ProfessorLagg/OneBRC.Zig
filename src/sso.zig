@@ -1,5 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std");
+const ut = @import("utils.zig");
 const Int = std.meta.Int;
 
 const structSize: comptime_int = @sizeOf(usize) + @sizeOf([*]u8);
@@ -331,7 +332,7 @@ pub fn SortedStringMap(comptime T: type) type {
         }
 
         /// Returns the number of currently stored items
-        pub inline fn len(self: *const TSelf) usize {
+        pub inline fn count(self: *const TSelf) usize {
             std.debug.assert(self.keys.len == self.vals.len);
             return self.keys.len;
         }
@@ -340,33 +341,6 @@ pub fn SortedStringMap(comptime T: type) type {
         pub inline fn capacity(self: *const TSelf) usize {
             std.debug.assert(self.key_buffer.len == self.val_buffer.len);
             return self.key_buffer.len;
-        }
-
-        fn ensureCapacity_old(self: *TSelf, new_capacity: usize) !void {
-            const old_size = self.capacity();
-            if (old_size >= new_capacity) return;
-
-            if (old_size == 0) {
-                self.key_buffer = try self.allocator.alloc(String, 1);
-                self.val_buffer = try self.allocator.alloc(T, 1);
-                self.keys = self.key_buffer[0..self.keys.len];
-                self.vals = self.val_buffer[0..self.vals.len];
-                try self.ensureCapacity(new_capacity);
-                return;
-            }
-
-            const new_size = try std.math.ceilPowerOfTwo(usize, new_capacity);
-            const new_key_buffer: []String = try self.allocator.alloc(String, new_size);
-            const new_val_buffer: []T = try self.allocator.alloc(T, new_size);
-
-            @memcpy(new_key_buffer[0..self.keys.len], self.keys[0..]);
-            @memcpy(new_val_buffer[0..self.vals.len], self.vals[0..]);
-            self.allocator.free(self.key_buffer);
-            self.allocator.free(self.val_buffer);
-            self.key_buffer = new_key_buffer;
-            self.val_buffer = new_val_buffer;
-            self.keys = self.key_buffer[0..self.keys.len];
-            self.vals = self.val_buffer[0..self.vals.len];
         }
 
         fn ensureCapacity(self: *TSelf, new_capacity: usize) !void {
@@ -382,7 +356,7 @@ pub fn SortedStringMap(comptime T: type) type {
                 return;
             }
 
-            const new_size = try std.math.ceilPowerOfTwo(usize, new_capacity);
+            const new_size = ut.math.ceilPowerOfTwo(usize, new_capacity);
 
             if (self.allocator.resize(self.key_buffer, new_size)) self.key_buffer.len = new_size else self.key_buffer = try self.allocator.realloc(self.key_buffer, new_size);
             if (self.allocator.resize(self.val_buffer, new_size)) self.val_buffer.len = new_size else self.val_buffer = try self.allocator.realloc(self.val_buffer, new_size);
@@ -392,7 +366,7 @@ pub fn SortedStringMap(comptime T: type) type {
 
         fn binarySearch(self: *const TSelf, key: *const String) ?usize {
             var low: usize = 0;
-            var high: usize = self.len();
+            var high: usize = self.count();
             while (low < high) {
                 const mid = low + (high - low) / 2;
                 const cmp = key.compare(&self.key_buffer[mid]);
@@ -406,10 +380,58 @@ pub fn SortedStringMap(comptime T: type) type {
             return null;
         }
 
+        fn searchInsert(self: *const TSelf, key: String) isize {
+            const cnt: usize = self.count();
+            var low: isize = 0;
+            var high: isize = @intCast(cnt);
+            var mid: isize = undefined;
+            var cmp: i8 = undefined;
+            while (low < high) {
+                // Avoid overflowing in the midpoint calculation
+                mid = low + @divFloor(high - low, 2);
+                std.debug.assert(mid >= 0);
+                std.debug.assert(mid < cnt);
+                cmp = key.compare(&self.key_buffer[@intCast(mid)]);
+                switch (cmp) {
+                    0 => {
+                        std.debug.assert(key.eql(&self.key_buffer[@intCast(mid)]));
+                        return mid;
+                    },
+                    1 => {
+                        std.debug.assert(!key.eql(&self.key_buffer[@intCast(mid)]));
+                        low = mid + 1;
+                    },
+                    -1 => {
+                        std.debug.assert(!key.eql(&self.key_buffer[@intCast(mid)]));
+                        high = mid;
+                    },
+                    else => unreachable,
+                }
+            }
+            std.debug.assert(cmp != 0);
+            var idx: isize = low + @as(isize, cmp);
+            idx = std.math.clamp(idx, 0, @as(isize, @intCast(cnt)));
+            return ~idx;
+        }
+
+        fn insert(self: *TSelf, index: usize, key: String, val: T) !void {
+            if (index > self.count()) return error.IndexOutOfRange;
+            try self.ensureCapacity(self.count() + 1);
+
+            self.keys.len += 1;
+            self.vals.len += 1;
+
+            for (self.keys.len..index + 1) |i| self.keys[i] = self.keys[i - 1];
+            for (self.vals.len..index + 1) |i| self.vals[i] = self.vals[i - 1];
+
+            self.keys[index] = key;
+            self.vals[index] = val;
+        }
+
         pub fn put(self: *TSelf, key: []const u8, val: T) !void {
             var k = String.initClone(key);
             defer k.deinit();
-            const old_len = self.len();
+            const old_len = self.count();
             for (0..old_len) |i| {
                 const cmp = k.compare(&self.keys[i]);
                 //if (self.keys[i].eql(&k)) {
@@ -418,7 +440,7 @@ pub fn SortedStringMap(comptime T: type) type {
                     return;
                 }
             }
-            const ptr: *T = try self.findOrInsert(key, null);
+            const ptr: *T = try self.findOrInsert(key);
             ptr.* = val;
         }
 
@@ -434,66 +456,25 @@ pub fn SortedStringMap(comptime T: type) type {
         /// Returns a pointer to the value associated with `key`.
         /// If `key` is not found in the map, inserts it and returns a pointer to the new value.
         /// Warning! Incase the buffers need to be resized to fit the new key/value pair, all old key/value pointers are invalidated.
-        pub fn findOrInsert(self: *TSelf, key: []const u8, comptime defaultValue: ?T) !*T {
+        pub fn findOrInsert(self: *TSelf, key: []const u8) !*T {
             var k = String.initClone(key);
 
-            const old_len = self.len();
-            if (old_len == 0) {
-                try self.ensureCapacity(1);
-                self.key_buffer[0] = k;
-                self.val_buffer[0] = defaultValue orelse undefined;
-                self.keys = self.key_buffer[0..1];
-                self.vals = self.val_buffer[0..1];
-                return &self.vals[0];
-            }
+            const signed = self.searchInsert(k);
+            const idx: usize = b: switch (std.math.sign(signed)) {
+                0, 1 => {
+                    k.deinit();
+                    break :b @abs(signed);
+                },
+                -1 => {
+                    const i: usize = @intCast(~signed);
+                    std.debug.assert(i <= self.count());
+                    try self.insert(i, k, std.mem.zeroes(T));
+                    break :b i;
+                },
+                else => unreachable,
+            };
 
-            var low: usize = 0;
-            var high: usize = old_len;
-            var mid: usize = undefined;
-            var cmp: i8 = undefined;
-            while (low < high) {
-                mid = low + (high - low) / 2;
-                cmp = k.compare(&self.keys[mid]);
-                switch (cmp) {
-                    0 => {
-                        // Key was found
-                        k.deinit();
-                        return &self.vals[mid];
-                    },
-                    1 => low = mid + 1,
-                    -1 => high = mid,
-                    else => unreachable,
-                }
-            }
-
-            // Key was not found
-
-            try self.ensureCapacity(old_len + 1);
-            if (cmp == -1) {
-                while (cmp < 0 and mid > 0) {
-                    mid -= 1;
-                    cmp = k.compare(&self.keys[mid]);
-                }
-            } else if (cmp == 1) {
-                while (cmp > 0 and mid < old_len - 1) {
-                    mid += 1;
-                    cmp = k.compare(&self.keys[mid]);
-                }
-            } else {
-                std.log.err("Expected 1 or -1, but found {d}", .{cmp});
-                unreachable;
-            }
-
-            var i: usize = old_len;
-            while (i > mid) : (i -= 1) {
-                self.key_buffer[i] = self.key_buffer[i - 1];
-                self.val_buffer[i] = self.val_buffer[i - 1];
-            }
-            self.key_buffer[mid] = k;
-            self.val_buffer[mid] = defaultValue orelse undefined;
-            self.keys.len += 1;
-            self.vals.len += 1;
-            return &self.vals[mid];
+            return &self.vals[idx];
         }
 
         test put {

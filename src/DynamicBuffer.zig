@@ -65,7 +65,7 @@ pub fn write(self: *DynamicBuffer, bytes: []const u8) ![]u8 {
     const unused = self.getUnused();
     std.debug.assert(unused.len >= bytes.len);
 
-    const clen: usize = memutils.copy(bytes, unused);
+    const clen: usize = memutils.copyBytes(bytes, unused);
     std.debug.assert(clen == bytes.len);
 
     self.used.len += clen;

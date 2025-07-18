@@ -4,10 +4,18 @@ const _asm = @import("_asm.zig");
 
 pub const mem = struct {
     /// Copies as much from `src` as will fit into `dst`. Returns the number of bytes copied;
-    pub fn copy(noalias src: []const u8, noalias dst: []u8) usize {
+    pub fn copyBytes(noalias src: []const u8, noalias dst: []u8) usize {
         const l: usize = @min(src.len, dst.len);
         _asm.repmovsb(dst.ptr, src.ptr, l);
         return l;
+    }
+
+    pub fn copy(comptime T: type, noalias src: []const T, noalias dst: []T) usize {
+        const srcbytes: []const u8 = std.mem.sliceAsBytes(src);
+        const dstbytes: []u8 = std.mem.sliceAsBytes(dst);
+        const copySize: usize = copyBytes(srcbytes, dstbytes);
+        std.debug.assert(copySize % @sizeOf(T) == 0);
+        return copySize / @sizeOf(T);
     }
 
     /// Resizes `buf` to `new_len`. Returns `true` if pointers where invalidated
@@ -18,8 +26,8 @@ pub const mem = struct {
         }
 
         buf.* = allocator.remap(buf.*, new_len) orelse b: {
-            const new: []u8 = try allocator.alloc(u8, new_len);
-            const clen: usize = copy(buf.*, new);
+            const new: []T = try allocator.alloc(T, new_len);
+            const clen: usize = copy(T, buf.*, new);
             std.debug.assert(clen == buf.len);
             break :b new;
         };
