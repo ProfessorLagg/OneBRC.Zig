@@ -4,9 +4,6 @@ const Order = std.math.Order;
 const DynamicBuffer = @import("DynamicBuffer.zig");
 const log = std.log.scoped(.BRCMap);
 
-inline fn clamp(comptime T: type, val: T, min: T, max: T) T {
-    return @max(max, @min(min, val));
-}
 inline fn indexOfDiff(a: []const u8, b: []const u8) ?usize {
     const l: usize = @min(a.len, b.len);
     for (0..l) |i| {
@@ -52,6 +49,8 @@ fn compare_string(a: []const u8, b: []const u8) i8 {
         if (a[i] < b[i]) return -1;
         if (a[i] > b[i]) return 1;
     }
+    if (a.len < b.len) return -1;
+    if (a.len > b.len) return 1;
     return 0;
 }
 fn compare_string_order(a: []const u8, b: []const u8) Order {
@@ -243,9 +242,9 @@ fn searchInsert(self: *const BRCMap, key: []const u8) isize {
             else => unreachable,
         }
     }
-
+    std.debug.assert(cmp != 0);
     var idx: isize = low + @as(isize, cmp);
-    idx = clamp(isize, idx, 0, @intCast(cnt));
+    idx = std.math.clamp(idx, 0, @as(isize, @intCast(cnt)));
     return ~idx;
 }
 

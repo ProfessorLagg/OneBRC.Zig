@@ -35,7 +35,28 @@ const allocator: std.mem.Allocator = b: {
     @compileError("Requires either single-threading to be disabled or lib-c to be linked");
 };
 
+inline fn ceilPowerOfTwo(comptime T: type, v: T) T {
+    comptime {
+        const ti: std.builtin.Type = @typeInfo(T);
+        if (ti != .int or ti.int.signedness != .unsigned) @compileError("Expected unsigned integer, but found " + @typeName(T));
+    }
+    const isPowerOf2: bool = @popCount(v) == 1; // true if v is a power of 2 greater than 0
+    const retMax: bool = v > (std.math.maxInt(T) / 2 + 1); // true if the function should return int max for input type
+    const shiftBy = @bitSizeOf(T) - @clz(v - @intFromBool(isPowerOf2));
+    const r0: T = (@as(T, 1) << @truncate(shiftBy)) * @as(T, @intFromBool(!retMax));
+    const r1: T = @as(T, std.math.maxInt(T)) * @as(T, @intFromBool(retMax));
+    return r0 + r1;
+}
+
 pub fn main() !void {
+    // const stdout = std.io.getStdOut().writer();
+
+    // var capacity: u8 = 0;
+    // while (capacity < std.math.maxInt(u8)) : (capacity += 1) {
+    //     const new_capacity: u8 = ceilPowerOfTwo(u8, capacity);
+    //     std.fmt.format(stdout, "clz(capacity): {d}, capacity: {d}, new_capacity: {d}\n", .{ @clz(capacity), capacity, new_capacity }) catch unreachable;
+    // }
+
     try bench_parse();
     //try bench_read();
     //try run();

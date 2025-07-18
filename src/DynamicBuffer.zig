@@ -1,29 +1,5 @@
 const std = @import("std");
-const _asm = @import("_asm.zig");
-
-/// Copies as much from `src` as will fit into `dst`. Returns the number of bytes copied;
-fn copy(noalias src: []const u8, noalias dst: []u8) usize {
-    const l: usize = @min(src.len, dst.len);
-    _asm.repmovsb(dst.ptr, src.ptr, l);
-    return l;
-}
-
-/// Resizes `buf` to `new_len`. Returns `true` if pointers where invalidated
-fn resize(allocator: std.mem.Allocator, noalias buf: *[]u8, new_len: usize) !bool {
-    if (allocator.resize(buf.*, new_len)) {
-        buf.len = new_len;
-        return false;
-    }
-
-    buf.* = allocator.remap(buf.*, new_len) orelse b: {
-        const new: []u8 = try allocator.alloc(u8, new_len);
-        const clen: usize = copy(buf.*, new);
-        std.debug.assert(clen == buf.len);
-        break :b new;
-    };
-
-    return false;
-}
+const memutils = @import("utils.zig").mem;
 
 const DynamicBuffer = @This();
 
@@ -65,7 +41,7 @@ fn ensureCapacity(self: *DynamicBuffer, size: usize) !void {
     }
 
     // if (try resize(self.allocator, &self.raw, new_len)) self.used = self.raw[0..self.used.len];
-    _ = try resize(self.allocator, &self.raw, new_len);
+    _ = try memutils.resize(u8, self.allocator, &self.raw, new_len);
     self.used = self.raw[0..self.used.len];
     std.debug.assert(self.raw.len >= size);
     std.debug.assert(self.raw.ptr == self.used.ptr);
@@ -89,7 +65,7 @@ pub fn write(self: *DynamicBuffer, bytes: []const u8) ![]u8 {
     const unused = self.getUnused();
     std.debug.assert(unused.len >= bytes.len);
 
-    const clen: usize = copy(bytes, unused);
+    const clen: usize = memutils.copy(bytes, unused);
     std.debug.assert(clen == bytes.len);
 
     self.used.len += clen;

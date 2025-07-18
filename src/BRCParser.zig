@@ -8,33 +8,7 @@ const MapVal = BRCMap.MapVal;
 
 const linelog = std.log.scoped(.Lines);
 
-fn fastIntParse(comptime T: type, noalias numstr: []const u8) T {
-    comptime {
-        const ti: std.builtin.Type = @typeInfo(T);
-        if (ti != .int) @compileError("Expected signed integer, but found " ++ @typeName(T));
-        if (ti.int.signedness != .signed) @compileError("Expected signed integer, but found " ++ @typeName(T));
-    }
-
-    std.debug.assert(numstr.len > 0);
-    const isNegative: bool = numstr[0] == '-';
-    const isNegativeInt: T = @intFromBool(isNegative);
-
-    var result: T = 0;
-    var m: T = 1;
-
-    var i: isize = @as(isize, @intCast(numstr.len)) - 1;
-    while (i >= isNegativeInt) : (i -= 1) {
-        const ci: T = @intCast(numstr[@as(usize, @bitCast(i))]);
-        const valid: bool = ci >= 48 and ci <= 57;
-        const validInt: T = @intFromBool(valid);
-        const invalidInt: T = @intFromBool(!valid);
-        result += validInt * ((ci - 48) * m); // '0' = 48
-        m = (m * 10 * validInt) + (m * invalidInt);
-    }
-
-    const sign: T = (-1 * isNegativeInt) + @as(T, @intFromBool(!isNegative));
-    return result * sign;
-}
+const ut = @import("utils.zig");
 
 pub const BRCParser = @This();
 
@@ -81,7 +55,7 @@ pub fn parse(self: *BRCParser) !BRCMap {
         std.debug.assert(valstr[valstr.len - 2] == '.');
         std.debug.assert(valstr[0] != ';');
 
-        const valint: i48 = fastIntParse(i48, valstr);
+        const valint: i48 = ut.math.fastIntParse(i48, valstr);
         const valptr: *MapVal = try result.findOrInsert(keystr);
         valptr.add(valint);
         self.linecount += 1;
