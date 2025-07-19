@@ -93,21 +93,35 @@ const KeyOffset = struct {
 const OffsetList = DynamicArray(KeyOffset);
 
 pub const MapVal = struct {
-    pub const Zero: MapVal = .{ .sum = 0, .count = 0 };
+    pub const FinalMapVal = struct {
+        mean: f64 = 0,
+        min: f64 = 0,
+        max: f64 = 0,
+    };
+    pub const None: MapVal = .{};
 
-    // TODO MISSING MIN AND MAX
-    sum: i48 = 0,
-    count: i32 = 0,
-
-    pub inline fn add(self: *MapVal, v: i48) void {
+    sum: i64 = 0,
+    count: u32 = 0,
+    min: i16 = std.math.maxInt(i16),
+    max: i16 = std.math.minInt(i16),
+    pub inline fn add(self: *MapVal, v: i64) void {
         self.sum += v;
         self.count += 1;
+        const v16: i16 = @intCast(v);
+        self.min = @min(self.min, v16);
+        self.max = @max(self.max, v16);
     }
 
-    pub inline fn mean(self: *const MapVal) f64 {
+    pub inline fn finalize(self: *const MapVal) FinalMapVal {
         const sum_f: f64 = @floatFromInt(self.sum);
-        const cnt_f: f64 = @floatFromInt(self.count);
-        return sum_f / cnt_f;
+        const count_f: f64 = @floatFromInt(self.count);
+        const min_f: f64 = @floatFromInt(self.min);
+        const max_f: f64 = @floatFromInt(self.max);
+        return .{
+            .mean = sum_f / (count_f * 10.0),
+            .min = min_f / 10.0,
+            .max = max_f / 10.0,
+        };
     }
 };
 const MapValList = DynamicArray(MapVal);
@@ -289,7 +303,7 @@ fn searchInsert(self: *const BRCMap, item: []const u8) isize {
 pub fn findOrInsert(self: *BRCMap, key: []const u8) !*MapVal {
     const cnt = self.count();
     if (cnt == 0) {
-        try self.append(key, MapVal.Zero);
+        try self.append(key, MapVal.None);
         return &self.vals.items[0];
     }
     // const bsr = self.binarySearch(key);
@@ -328,7 +342,7 @@ pub fn findOrInsert(self: *BRCMap, key: []const u8) !*MapVal {
             const i: usize = @intCast(~signed);
             std.debug.assert(i <= c);
             std.debug.assert(i == c or !ut.mem.eqlBytes(key, self.getKeyString(self.keys.items[i])));
-            try self.insert(i, key, MapVal.Zero);
+            try self.insert(i, key, MapVal.None);
             break :b i;
         },
         else => unreachable,

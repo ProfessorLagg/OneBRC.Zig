@@ -31,6 +31,6 @@ test DynamicArray {
 }
 
 pub const sso = @import("sso.zig");
-// test sso {
-//     _ = sso;
-// }
+test sso {
+    _ = sso;
+}
