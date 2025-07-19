@@ -29,8 +29,3 @@ pub const DynamicArray = @import("DynamicArray.zig");
 test DynamicArray {
     _ = DynamicArray;
 }
-
-pub const sso = @import("sso.zig");
-test sso {
-    _ = sso;
-}

@@ -57,60 +57,37 @@ test repmovsb {
     try std.testing.expectEqualSlices(u8, src_page, dst_page);
 }
 
-// pub noinline fn repecmpsb(noalias dst: *anyopaque, noalias src: *const anyopaque, len: usize) usize {
-//     // https://www.felixcloutier.com/x86/rep:repe:repz:repne:repnz
+// pub inline fn compare_u8(a: u8, b: u8) i8 {
 //     return asm volatile (
-//         \\repe cmpsb
-//         : [ret] "={rcx}" (-> usize),
-//         : [src] "{rsi}" (src),
-//           [dst] "{rdi}" (dst),
-//           [len] "{rcx}" (len),
+//         \\mov $0, %ax
+//         \\cmp %[b], %[a]
+//         \\seta %al
+//         \\setb %bl
+//         \\sub %al, %bl
+//         : [ret] "={al}" (-> i8),
+//         : [a] "{al}" (a),
+//           [b] "{bl}" (b),
 //     );
 // }
 
-// fn cmpstr(a: [*]u8, b: [*]u8, l: usize) i8 {
-//     const inverse_index = repecmpsb(a, b, l);
-
-//     // TODO Could just be a seta / setb inside the asm
-//     const idx: usize = l - inverse_index;
-//     const lt: i8 = @intFromBool(a[idx] < b[idx]) * @as(i8, -1);
-//     const gt: i8 = @intFromBool(a[idx] > b[idx]);
-//     return lt + gt;
+// fn compare_u8_safe(a: u8, b: u8) i8 {
+//     if (a < b) return -1;
+//     if (a > b) return 1;
+//     return 0;
 // }
 
-// fn cmpstr_check(a: [*]u8, b: [*]u8, l: usize) i8 {
-//     @setRuntimeSafety(false);
-//     var cmp: i8 = undefined;
-//     var i: usize = 0;
-//     while (i < l) {
-//         const lt: i8 = @intFromBool(a[i] < b[i]);
-//         const gt: i8 = @intFromBool(a[i] > b[i]);
-//         cmp -= lt;
-//         cmp += gt;
-//         if (cmp == 0) break;
-//         i += 1 + (l * @intFromBool(cmp != 0));
-//     }
-//     return cmp;
-// }
-
-// test cmpstr {
-//     const seed: u64 = 2025_07_11;
-//     var prng = std.Random.DefaultPrng.init(seed);
-//     const rand: std.Random = prng.random();
-
-//     for (0..17) |_| {
-//         const l: usize = rand.intRangeAtMost(usize, 0, 100);
-//         const a: []u8 = try std.testing.allocator.alloc(u8, l);
-//         defer std.testing.allocator.free(a);
-//         const b: []u8 = try std.testing.allocator.alloc(u8, l);
-//         defer std.testing.allocator.free(b);
-//         for (0..l) |j| {
-//             a[j] = rand.intRangeAtMost(u8, 33, 126);
-//             b[j] = rand.intRangeAtMost(u8, 33, 126);
+// test compare_u8 {
+//     const max_u8: u8 = std.math.maxInt(u8);
+//     var a: u8 = 0;
+//     while (a < max_u8) : (a += 1) {
+//         var b: u8 = 0;
+//         while (b < max_u8) : (b += 1) {
+//             const safe = compare_u8_safe(a, b);
+//             const _asm = compare_u8(a, b);
+//             std.testing.expectEqual(safe, _asm) catch |e| {
+//                 std.log.err("expected compare({d},{d}) == {d}, but found {d}", .{ a, b, safe, _asm });
+//                 return e;
+//             };
 //         }
-
-//         const cmp_e = cmpstr_check(a.ptr, b.ptr, l);
-//         const cmp_f = cmpstr(a.ptr, b.ptr, l);
-//         try std.testing.expectEqual(cmp_e, cmp_f);
 //     }
 // }

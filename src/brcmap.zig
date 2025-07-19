@@ -16,12 +16,18 @@ inline fn indexOfDiff(a: []const u8, b: []const u8) ?usize {
 }
 inline fn compare_from_bools(lessThan: bool, greaterThan: bool) i8 {
     std.debug.assert((lessThan and greaterThan) != true);
-    const lt: i8 = @intFromBool(lessThan); // 1 if true, 0 if false
-    const gt: i8 = @intFromBool(greaterThan); // 1 if true, 0 if false
     // case gt = 0, lt = 1 => 0 - 1 == -1
     // case gt = 1, lt = 0 => 1 - 0 == 1
     // case gt = 0, lt = 0 => 0 - 0 == 0
-    return gt - lt;
+    return @as(i8, @intFromBool(greaterThan)) - @as(i8, @intFromBool(lessThan));
+}
+inline fn compare_string(a: []const u8, b: []const u8) i8 {
+    const l: usize = @min(a.len, b.len);
+    var i: usize = 0;
+    var c: i8 = 0;
+    while (i < l and c == 0) : (i += 1) c = compare_from_bools(a[i] < b[i], a[i] > b[i]);
+    if (c != 0) return c;
+    return compare_from_bools(a.len < b.len, a.len > b.len);
 }
 fn compare_from_bools_order(lt: bool, gt: bool) Order {
     return switch (compare_from_bools(lt, gt)) {
@@ -30,16 +36,6 @@ fn compare_from_bools_order(lt: bool, gt: bool) Order {
         1 => .gt,
         else => unreachable,
     };
-}
-fn compare_string(a: []const u8, b: []const u8) i8 {
-    const l: usize = @min(a.len, b.len);
-    var i: usize = 0;
-    var c: i8 = 0;
-    while (i < l and c == 0) : (i += 1) {
-        c = compare_from_bools(a[i] < b[i], a[i] > b[i]);
-    }
-    if (c != 0) return c;
-    return compare_from_bools(a.len < b.len, a.len > b.len);
 }
 fn compare_string_order(a: []const u8, b: []const u8) Order {
     return switch (compare_string(a, b)) {
@@ -250,7 +246,7 @@ fn binarySearch(self: *const BRCMap, item: []const u8) ?usize {
     return null;
 }
 
-fn searchInsert(self: *const BRCMap, item: []const u8) isize {
+fn searchInsert_v0(self: *const BRCMap, item: []const u8) isize {
     ut.debug.print("\nbinary searching for key: \"{s}\"\n", .{item});
 
     var L: isize = 0;
@@ -265,13 +261,13 @@ fn searchInsert(self: *const BRCMap, item: []const u8) isize {
                 ut.debug.print("\tk{d}: \"{s}\" == key: \"{s}\"\n", .{ m, k, item });
                 return m;
             },
-            1 => {
-                ut.debug.print("\tk{d}: \"{s}\" <  key: \"{s}\"\n", .{ m, k, item });
-                L = m + 1;
-            },
             -1 => {
-                ut.debug.print("\tk{d}: \"{s}\" >  key: \"{s}\"\n", .{ m, k, item });
+                ut.debug.print("\tk{d}: \"{s}\" <  key: \"{s}\"\n", .{ m, k, item });
                 R = m - 1;
+            },
+            1 => {
+                ut.debug.print("\tk{d}: \"{s}\" >  key: \"{s}\"\n", .{ m, k, item });
+                L = m + 1;
             },
             else => unreachable,
         }
@@ -283,13 +279,74 @@ fn searchInsert(self: *const BRCMap, item: []const u8) isize {
         const cmp = compare_string(item, k);
         switch (cmp) {
             0 => {
-                ut.debug.print("Keys:\n", .{});
-                for (0..self.count()) |j| {
-                    const keystr = self.getKeyString(self.keys.items[j]);
-                    ut.debug.print("\t{d:>5}: \"{s}\"\n", .{ j, keystr });
-                }
-                std.debug.panic("Binary Search Failed to find key \"{s}\" at index {d}", .{ item, m });
-                @panic("Binary Search Failed to find key!");
+                if (builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
+                    ut.debug.print("Keys:\n", .{});
+                    for (0..self.count()) |j| {
+                        const keystr = self.getKeyString(self.keys.items[j]);
+                        ut.debug.print("\t{d:>5}: \"{s}\"\n", .{ j, keystr });
+                    }
+                    std.debug.panic("Binary Search Failed to find key \"{s}\" at index {d}", .{ item, m });
+                } else @panic("Binary Search Failed to find key!");
+            },
+            1 => break,
+            -1 => continue,
+            else => unreachable,
+        }
+    }
+
+    return ~m;
+}
+
+fn searchInsert(self: *const BRCMap, item: []const u8) isize {
+    ut.debug.print("\nbinary searching for key: \"{s}\"\n", .{item});
+
+    std.debug.assert(self.count() > 0);
+
+    var L: isize = 0;
+    var R: isize = @as(isize, @intCast(self.count())) - 1;
+
+    var m: isize = L + @divFloor(R - L, 2);
+    var k: []const u8 = self.getKeyString(self.keys.items[@abs(m)]);
+    var c: i8 = compare_string(k, item);
+    loop: switch (c) {
+        0 => return m,
+        -1 => {
+            ut.debug.print("\tk{d}: \"{s}\" <  key: \"{s}\"\n", .{ m, k, item });
+            R = m - 1;
+            if (L > R) break :loop;
+
+            m = L + @divFloor(R - L, 2);
+            k = self.getKeyString(self.keys.items[@abs(m)]);
+            c = compare_string(k, item);
+            continue :loop c;
+        },
+        1 => {
+            ut.debug.print("\tk{d}: \"{s}\" >  key: \"{s}\"\n", .{ m, k, item });
+            L = m + 1;
+            if (L > R) break :loop;
+
+            m = L + @divFloor(R - L, 2);
+            k = self.getKeyString(self.keys.items[@abs(m)]);
+            c = compare_string(k, item);
+            continue :loop c;
+        },
+        else => unreachable,
+    }
+
+    m = L;
+    while (m < self.count()) : (m += 1) {
+        k = self.getKeyString(self.keys.items[@abs(m)]);
+        c = compare_string(item, k);
+        switch (c) {
+            0 => {
+                if (builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
+                    ut.debug.print("Keys:\n", .{});
+                    for (0..self.count()) |j| {
+                        const keystr = self.getKeyString(self.keys.items[j]);
+                        ut.debug.print("\t{d:>5}: \"{s}\"\n", .{ j, keystr });
+                    }
+                    std.debug.panic("Binary Search Failed to find key \"{s}\" at index {d}", .{ item, m });
+                } else @panic("Binary Search Failed to find key!");
             },
             1 => break,
             -1 => continue,
