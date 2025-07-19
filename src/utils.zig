@@ -34,9 +34,28 @@ pub const mem = struct {
 
         return false;
     }
+
+    pub fn eqlBytes(a: []const u8, b: []const u8) bool {
+        if (a.len != b.len) return false;
+        for (0..a.len) |i| if (a[i] != b[i]) return false;
+        return true;
+    }
+
+    pub fn clone(comptime T: type, allocator: std.mem.Allocator, arr: []const T) ![]T {
+        const out: []T = try allocator.alloc(T, arr.len);
+        @memcpy(out, arr);
+        return out;
+    }
 };
 
 pub const math = struct {
+    pub fn divCeil(x: isize, y: isize) isize {
+        const xf: f64 = @floatFromInt(x);
+        const yf: f64 = @floatFromInt(y);
+        const rf: f64 = @ceil(xf / yf);
+        return @intFromFloat(rf);
+    }
+
     pub fn fastIntParse(comptime T: type, noalias numstr: []const u8) T {
         comptime {
             const ti: std.builtin.Type = @typeInfo(T);
@@ -76,5 +95,26 @@ pub const math = struct {
         const r0: T = (@as(T, 1) << @truncate(shiftBy)) * @as(T, @intFromBool(!retMax));
         const r1: T = @as(T, std.math.maxInt(T)) * @as(T, @intFromBool(retMax));
         return r0 + r1;
+    }
+};
+
+pub const debug = struct {
+    pub const print: @TypeOf(std.debug.print) = switch (builtin.mode) {
+        .Debug, .ReleaseSafe => _print,
+        else => _print_nop,
+    };
+    var _print_writer: ?std.io.BufferedWriter(std.math.maxInt(u16), std.fs.File.Writer) = null;
+    fn _print(comptime fmt: []const u8, args: anytype) void {
+        std.debug.assert(!@inComptime());
+        if (_print_writer == null) _print_writer = .{ .unbuffered_writer = std.io.getStdErr().writer() };
+        std.fmt.format(_print_writer.?.writer(), fmt, args) catch unreachable;
+    }
+    fn _print_nop(comptime fmt: []const u8, args: anytype) void {
+        _ = &fmt;
+        _ = &args;
+    }
+
+    pub fn flush() void {
+        if (_print_writer != null) _print_writer.?.flush() catch unreachable;
     }
 };

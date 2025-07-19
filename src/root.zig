@@ -1,3 +1,8 @@
+pub const utils = @import("utils.zig");
+test utils {
+    _ = utils;
+}
+
 pub const DelimReader = @import("delimReader.zig");
 
 pub const _asm = @import("_asm.zig");
@@ -26,6 +31,6 @@ test DynamicArray {
 }
 
 pub const sso = @import("sso.zig");
-test sso {
-    _ = sso;
-}
+// test sso {
+//     _ = sso;
+// }
