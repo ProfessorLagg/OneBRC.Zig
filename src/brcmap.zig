@@ -21,7 +21,7 @@ inline fn compare_from_bools(lessThan: bool, greaterThan: bool) i8 {
     // case gt = 0, lt = 0 => 0 - 0 == 0
     return @as(i8, @intFromBool(greaterThan)) - @as(i8, @intFromBool(lessThan));
 }
-inline fn compare_string(a: []const u8, b: []const u8) i8 {
+inline fn compare_string_v0(a: []const u8, b: []const u8) i8 {
     const l: usize = @min(a.len, b.len);
     var i: usize = 0;
     var c: i8 = 0;
@@ -29,21 +29,57 @@ inline fn compare_string(a: []const u8, b: []const u8) i8 {
     if (c != 0) return c;
     return compare_from_bools(a.len < b.len, a.len > b.len);
 }
-fn compare_from_bools_order(lt: bool, gt: bool) Order {
-    return switch (compare_from_bools(lt, gt)) {
-        -1 => .lt,
-        0 => .eq,
-        1 => .gt,
-        else => unreachable,
-    };
+
+fn index_of_diff(a: [*]const u8, b: [*]const u8, l: usize) ?usize {
+    var s: usize = 0; // Index of where not yet compared bytes start
+    ol: while (s < l) {
+        // TODO Use Log2 floor + switch instead of if statements
+        const rem: usize = (l - 1) - s; // Remaining length
+        if (rem >= @sizeOf(u64)) {
+            const aptr: *const [@sizeOf(u64)]u8 = @ptrCast(&a[s]);
+            const bptr: *const [@sizeOf(u64)]u8 = @ptrCast(&b[s]);
+            const d64: u64 = @as(u64, @bitCast(aptr.*)) ^ @as(u64, @bitCast(bptr.*));
+            const d: [@sizeOf(u64)]u8 = std.mem.toBytes(d64);
+            ut.debug.print("index_of_diff u64 \"{s}\", \"{s}\" = {any}\n", .{ a[s .. s + @sizeOf(u64)], b[s .. s + @sizeOf(u64)], d });
+            for (0..@sizeOf(u64)) |i| if (d[i] != 0) return i + s;
+            s += @sizeOf(u64);
+            continue :ol;
+        }
+        if (rem >= @sizeOf(u32)) {
+            // u32 compare
+            const aptr: *const [@sizeOf(u32)]u8 = @ptrCast(&a[s]);
+            const bptr: *const [@sizeOf(u32)]u8 = @ptrCast(&b[s]);
+            const d32: u32 = @as(u32, @bitCast(aptr.*)) ^ @as(u32, @bitCast(bptr.*));
+            const d: [@sizeOf(u32)]u8 = std.mem.toBytes(d32);
+            ut.debug.print("index_of_diff u32 \"{s}\", \"{s}\" = {any}\n", .{ a[s .. s + @sizeOf(u32)], b[s .. s + @sizeOf(u32)], d });
+            for (0..@sizeOf(u32)) |i| if (d[i] != 0) return i + s;
+            s += @sizeOf(u32);
+            continue :ol;
+        }
+        if (rem >= @sizeOf(u16)) {
+            // u16 compare
+            const aptr: *const [@sizeOf(u16)]u8 = @ptrCast(&a[s]);
+            const bptr: *const [@sizeOf(u16)]u8 = @ptrCast(&b[s]);
+            const d16: u16 = @as(u16, @bitCast(aptr.*)) ^ @as(u16, @bitCast(bptr.*));
+            const d: [@sizeOf(u16)]u8 = std.mem.toBytes(d16);
+            ut.debug.print("index_of_diff u16 \"{s}\", \"{s}\" = {any}\n", .{ a[s .. s + @sizeOf(u16)], b[s .. s + @sizeOf(u16)], d });
+            for (0..@sizeOf(u16)) |i| if (d[i] != 0) return i + s;
+            s += @sizeOf(u16);
+            continue :ol;
+        }
+
+        if (a[s] != b[s]) return s;
+        s += 1;
+    }
+    return null;
 }
-fn compare_string_order(a: []const u8, b: []const u8) Order {
-    return switch (compare_string(a, b)) {
-        -1 => .lt,
-        0 => .eq,
-        1 => .gt,
-        else => unreachable,
-    };
+
+fn compare_string(a: []const u8, b: []const u8) i8 {
+    if (index_of_diff(a.ptr, b.ptr, @min(a.len, b.len))) |idx| {
+        ut.debug.print("found diff between \"{s}\" <-> \"{s}\" at index {d} = '{c}'(\\x{x}) != '{c}' (\\x{x}) \n", .{ a, b, idx, a[idx], a[idx], b[idx], b[idx] });
+        return compare_from_bools(a[idx] < b[idx], a[idx] > b[idx]);
+    }
+    return compare_from_bools(a.len < b.len, a.len > b.len);
 }
 
 fn contains(a: []const u8, b: []const u8) bool {
@@ -163,15 +199,6 @@ fn getKeyString(self: *const BRCMap, offset: KeyOffset) []const u8 {
     std.debug.assert(R <= self.stringBuffer.used.len);
     return self.stringBuffer.used[L..R];
 }
-fn compare_key(self: *const BRCMap, key: []const u8, offset: KeyOffset) Order {
-    std.debug.assert(offset.right() <= self.stringBuffer.used.len);
-    const str: []const u8 = self.getKeyString(offset);
-    return compare_string_order(key, str);
-}
-fn compare_idx(self: *const BRCMap, key: []const u8, idx: usize) Order {
-    std.debug.assert(idx < self.count());
-    return self.compare_key(key, self.keys.items[idx]);
-}
 
 fn insert(self: *BRCMap, idx: usize, key: []const u8, val: MapVal) !void {
     std.debug.assert(idx <= self.count());
@@ -246,7 +273,7 @@ fn binarySearch(self: *const BRCMap, item: []const u8) ?usize {
     return null;
 }
 
-fn searchInsert_v0(self: *const BRCMap, item: []const u8) isize {
+fn searchInsert(self: *const BRCMap, item: []const u8) isize {
     ut.debug.print("\nbinary searching for key: \"{s}\"\n", .{item});
 
     var L: isize = 0;
@@ -297,7 +324,7 @@ fn searchInsert_v0(self: *const BRCMap, item: []const u8) isize {
     return ~m;
 }
 
-fn searchInsert(self: *const BRCMap, item: []const u8) isize {
+fn searchInsert_v1(self: *const BRCMap, item: []const u8) isize {
     ut.debug.print("\nbinary searching for key: \"{s}\"\n", .{item});
 
     std.debug.assert(self.count() > 0);
@@ -357,40 +384,12 @@ fn searchInsert(self: *const BRCMap, item: []const u8) isize {
     return ~m;
 }
 
-pub fn findOrInsert(self: *BRCMap, key: []const u8) !*MapVal {
+fn findOrInsert_real(self: *BRCMap, key: []const u8) !*MapVal {
     const cnt = self.count();
     if (cnt == 0) {
         try self.append(key, MapVal.None);
         return &self.vals.items[0];
     }
-    // const bsr = self.binarySearch(key);
-    // if (bsr != null) {
-    //     return &self.vals.items[bsr.?];
-    // }
-
-    // // TODO REMOVE THIS LINEAR SEARCH. IT IS ONLY HERE FOR DEBUG
-    // var i: usize = 0;
-    // while (i < cnt) : (i += 1) {
-    //     const cmp = compare_string(key, self.getKeyString(self.keys.items[i]));
-    //     switch (cmp) {
-    //         0 => {
-    //             ut.debug.print("Keys:\n", .{});
-    //             for (0..self.count()) |j| {
-    //                 const keystr = self.getKeyString(self.keys.items[j]);
-    //                 ut.debug.print("\t{d:>5}: \"{s}\"\n", .{ j, keystr });
-    //             }
-    //             std.debug.panic("Binary Search Failed to find key \"{s}\" at index {d}", .{ key, i });
-    //             @panic("Binary Search Failed to find key!");
-    //         },
-    //         1 => break,
-    //         -1 => continue,
-    //         else => unreachable,
-    //     }
-    // }
-    // std.debug.assert(i <= self.count());
-    // try self.insert(i, key, MapVal.Zero);
-    // return &self.vals.items[i];
-
     const signed = self.searchInsert(key);
     const idx: usize = b: switch (std.math.sign(signed)) {
         0, 1 => @abs(signed),
@@ -405,6 +404,45 @@ pub fn findOrInsert(self: *BRCMap, key: []const u8) !*MapVal {
         else => unreachable,
     };
     return &self.vals.items[idx];
+}
+
+fn findOrInsert_debug(self: *BRCMap, key: []const u8) !*MapVal {
+    const cnt = self.count();
+    if (cnt == 0) {
+        try self.append(key, MapVal.None);
+        return &self.vals.items[0];
+    }
+    const bsr = self.binarySearch(key);
+    if (bsr != null) {
+        return &self.vals.items[bsr.?];
+    }
+
+    // TODO REMOVE THIS LINEAR SEARCH. IT IS ONLY HERE FOR DEBUG
+    var i: usize = 0;
+    while (i < cnt) : (i += 1) {
+        const cmp = compare_string(key, self.getKeyString(self.keys.items[i]));
+        switch (cmp) {
+            0 => {
+                ut.debug.print("Keys:\n", .{});
+                for (0..self.count()) |j| {
+                    const keystr = self.getKeyString(self.keys.items[j]);
+                    ut.debug.print("\t{d:>5}: \"{s}\"\n", .{ j, keystr });
+                }
+                std.debug.panic("Binary Search Failed to find key \"{s}\" at index {d}", .{ key, i });
+                @panic("Binary Search Failed to find key!");
+            },
+            1 => break,
+            -1 => continue,
+            else => unreachable,
+        }
+    }
+    std.debug.assert(i <= self.count());
+    try self.insert(i, key, MapVal.None);
+    return &self.vals.items[i];
+}
+
+pub fn findOrInsert(self: *BRCMap, key: []const u8) !*MapVal {
+    return self.findOrInsert_debug(key);
 }
 
 pub const MapEntry = struct {

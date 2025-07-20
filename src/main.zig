@@ -1,6 +1,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const lib = @import("brc_lib");
+const ut = lib.utils;
 const ParseResult = lib.BRCParser.BRCParseResult;
 
 pub const std_options: std.Options = .{
@@ -24,9 +25,9 @@ pub const std_options: std.Options = .{
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\verysmall.txt";
 
 // following files has more than 1 instance of each key, and 41343 keys in total
-// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\small.txt";
+var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\small.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\medium.txt";
-var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1GB.txt";
+// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1GB.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\large.txt";
 
 const allocator: std.mem.Allocator = b: {
@@ -38,10 +39,27 @@ const allocator: std.mem.Allocator = b: {
 
 pub fn main() !void {
     defer lib.utils.debug.flush();
-
+    //try temp();
     try bench_parse();
     //try bench_read();
     //try run();
+}
+
+fn temp() !void {
+    // const p64a: *u64 = try allocator.create(u64);
+    // defer allocator.destroy(p64a);
+    // const p64b: *u64 = try allocator.create(u64);
+    // defer allocator.destroy(p64b);
+
+    // p64a.* = 2025_07_20;
+    // p64b.* = 20_07_2025;
+
+    // const bp64a: *const [@divExact(@bitSizeOf(u64), 8)]u8 = @ptrCast(p64a);
+    // const bp64b: *const [@divExact(@bitSizeOf(u64), 8)]u8 = @ptrCast(p64b);
+
+    // const v64a: u64 = std.mem.readInt(u64, bp64a, .little);
+    // const v64b: u64 = std.mem.readInt(u64, bp64b, .little);
+    // ut.debug.print("ap: {d}, bp: {d}\n a: {d},  b: {d}\n", .{ p64a.*, p64b.*, v64a, v64b });
 }
 
 pub fn bench_parse() !void {
