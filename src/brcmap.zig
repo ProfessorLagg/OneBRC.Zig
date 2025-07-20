@@ -21,7 +21,7 @@ inline fn compare_from_bools(lessThan: bool, greaterThan: bool) i8 {
     // case gt = 0, lt = 0 => 0 - 0 == 0
     return @as(i8, @intFromBool(greaterThan)) - @as(i8, @intFromBool(lessThan));
 }
-inline fn compare_string_v0(a: []const u8, b: []const u8) i8 {
+inline fn compare_string(a: []const u8, b: []const u8) i8 {
     const l: usize = @min(a.len, b.len);
     var i: usize = 0;
     var c: i8 = 0;
@@ -35,46 +35,76 @@ fn index_of_diff(a: [*]const u8, b: [*]const u8, l: usize) ?usize {
     ol: while (s < l) {
         // TODO Use Log2 floor + switch instead of if statements
         const rem: usize = (l - 1) - s; // Remaining length
-        if (rem >= @sizeOf(u64)) {
-            const aptr: *const [@sizeOf(u64)]u8 = @ptrCast(&a[s]);
-            const bptr: *const [@sizeOf(u64)]u8 = @ptrCast(&b[s]);
-            const d64: u64 = @as(u64, @bitCast(aptr.*)) ^ @as(u64, @bitCast(bptr.*));
-            const d: [@sizeOf(u64)]u8 = std.mem.toBytes(d64);
-            ut.debug.print("index_of_diff u64 \"{s}\", \"{s}\" = {any}\n", .{ a[s .. s + @sizeOf(u64)], b[s .. s + @sizeOf(u64)], d });
-            for (0..@sizeOf(u64)) |i| if (d[i] != 0) return i + s;
-            s += @sizeOf(u64);
-            continue :ol;
+        const remfp2 = std.math.floorPowerOfTwo(usize, rem);
+        switch (remfp2) {
+            @sizeOf(@Vector(64, u8)) => {
+                const aptr: *const [@sizeOf(@Vector(64, u8))]u8 = @ptrCast(&a[s]);
+                const bptr: *const [@sizeOf(@Vector(64, u8))]u8 = @ptrCast(&b[s]);
+                const d: [@sizeOf(@Vector(64, u8))]bool = @as(@Vector(64, u8), aptr.*) == @as(@Vector(64, u8), bptr.*);
+                ut.debug.print("index_of_diff @Vector(64, u8) \"{s}\", \"{s}\" = {any}\n", .{ a[s .. s + @sizeOf(@Vector(64, u8))], b[s .. s + @sizeOf(@Vector(64, u8))], d });
+                inline for (0..@sizeOf(@Vector(64, u8))) |i| if (!d[i]) return i + s;
+                s += @sizeOf(@Vector(64, u8));
+                continue :ol;
+            },
+            @sizeOf(@Vector(32, u8)) => {
+                const aptr: *const [@sizeOf(@Vector(32, u8))]u8 = @ptrCast(&a[s]);
+                const bptr: *const [@sizeOf(@Vector(32, u8))]u8 = @ptrCast(&b[s]);
+                const d: [@sizeOf(@Vector(32, u8))]bool = @as(@Vector(32, u8), aptr.*) == @as(@Vector(32, u8), bptr.*);
+                ut.debug.print("index_of_diff @Vector(32, u8) \"{s}\", \"{s}\" = {any}\n", .{ a[s .. s + @sizeOf(@Vector(32, u8))], b[s .. s + @sizeOf(@Vector(32, u8))], d });
+                inline for (0..@sizeOf(@Vector(32, u8))) |i| if (!d[i]) return i + s;
+                s += @sizeOf(@Vector(32, u8));
+                continue :ol;
+            },
+            @sizeOf(@Vector(16, u8)) => {
+                const aptr: *const [@sizeOf(@Vector(16, u8))]u8 = @ptrCast(&a[s]);
+                const bptr: *const [@sizeOf(@Vector(16, u8))]u8 = @ptrCast(&b[s]);
+                const d: [@sizeOf(@Vector(16, u8))]bool = @as(@Vector(16, u8), aptr.*) == @as(@Vector(16, u8), bptr.*);
+                ut.debug.print("index_of_diff @Vector(16, u8) \"{s}\", \"{s}\" = {any}\n", .{ a[s .. s + @sizeOf(@Vector(16, u8))], b[s .. s + @sizeOf(@Vector(16, u8))], d });
+                inline for (0..@sizeOf(@Vector(16, u8))) |i| if (!d[i]) return i + s;
+                s += @sizeOf(@Vector(16, u8));
+                continue :ol;
+            },
+            @sizeOf(u64) => {
+                const aptr: *const [@sizeOf(u64)]u8 = @ptrCast(&a[s]);
+                const bptr: *const [@sizeOf(u64)]u8 = @ptrCast(&b[s]);
+                const d64: u64 = @as(u64, @bitCast(aptr.*)) ^ @as(u64, @bitCast(bptr.*));
+                const d: [@sizeOf(u64)]u8 = std.mem.toBytes(d64);
+                ut.debug.print("index_of_diff u64 \"{s}\", \"{s}\" = {any}\n", .{ a[s .. s + @sizeOf(u64)], b[s .. s + @sizeOf(u64)], d });
+                inline for (0..@sizeOf(u64)) |i| if (d[i] != 0) return i + s;
+                s += @sizeOf(u64);
+                continue :ol;
+            },
+            @sizeOf(u32) => {
+                // u32 compare
+                const aptr: *const [@sizeOf(u32)]u8 = @ptrCast(&a[s]);
+                const bptr: *const [@sizeOf(u32)]u8 = @ptrCast(&b[s]);
+                const d32: u32 = @as(u32, @bitCast(aptr.*)) ^ @as(u32, @bitCast(bptr.*));
+                const d: [@sizeOf(u32)]u8 = std.mem.toBytes(d32);
+                ut.debug.print("index_of_diff u32 \"{s}\", \"{s}\" = {any}\n", .{ a[s .. s + @sizeOf(u32)], b[s .. s + @sizeOf(u32)], d });
+                inline for (0..@sizeOf(u32)) |i| if (d[i] != 0) return i + s;
+                s += @sizeOf(u32);
+                continue :ol;
+            },
+            @sizeOf(u16) => {
+                // u16 compare
+                const aptr: *const [@sizeOf(u16)]u8 = @ptrCast(&a[s]);
+                const bptr: *const [@sizeOf(u16)]u8 = @ptrCast(&b[s]);
+                const d16: u16 = @as(u16, @bitCast(aptr.*)) ^ @as(u16, @bitCast(bptr.*));
+                const d: [@sizeOf(u16)]u8 = std.mem.toBytes(d16);
+                ut.debug.print("index_of_diff u16 \"{s}\", \"{s}\" = {any}\n", .{ a[s .. s + @sizeOf(u16)], b[s .. s + @sizeOf(u16)], d });
+                inline for (0..@sizeOf(u16)) |i| if (d[i] != 0) return i + s;
+                s += @sizeOf(u16);
+                continue :ol;
+            },
+            else => {
+                if (a[s] != b[s]) return s;
+                s += 1;
+            },
         }
-        if (rem >= @sizeOf(u32)) {
-            // u32 compare
-            const aptr: *const [@sizeOf(u32)]u8 = @ptrCast(&a[s]);
-            const bptr: *const [@sizeOf(u32)]u8 = @ptrCast(&b[s]);
-            const d32: u32 = @as(u32, @bitCast(aptr.*)) ^ @as(u32, @bitCast(bptr.*));
-            const d: [@sizeOf(u32)]u8 = std.mem.toBytes(d32);
-            ut.debug.print("index_of_diff u32 \"{s}\", \"{s}\" = {any}\n", .{ a[s .. s + @sizeOf(u32)], b[s .. s + @sizeOf(u32)], d });
-            for (0..@sizeOf(u32)) |i| if (d[i] != 0) return i + s;
-            s += @sizeOf(u32);
-            continue :ol;
-        }
-        if (rem >= @sizeOf(u16)) {
-            // u16 compare
-            const aptr: *const [@sizeOf(u16)]u8 = @ptrCast(&a[s]);
-            const bptr: *const [@sizeOf(u16)]u8 = @ptrCast(&b[s]);
-            const d16: u16 = @as(u16, @bitCast(aptr.*)) ^ @as(u16, @bitCast(bptr.*));
-            const d: [@sizeOf(u16)]u8 = std.mem.toBytes(d16);
-            ut.debug.print("index_of_diff u16 \"{s}\", \"{s}\" = {any}\n", .{ a[s .. s + @sizeOf(u16)], b[s .. s + @sizeOf(u16)], d });
-            for (0..@sizeOf(u16)) |i| if (d[i] != 0) return i + s;
-            s += @sizeOf(u16);
-            continue :ol;
-        }
-
-        if (a[s] != b[s]) return s;
-        s += 1;
     }
     return null;
 }
-
-fn compare_string(a: []const u8, b: []const u8) i8 {
+fn compare_string_v2(a: []const u8, b: []const u8) i8 {
     if (index_of_diff(a.ptr, b.ptr, @min(a.len, b.len))) |idx| {
         ut.debug.print("found diff between \"{s}\" <-> \"{s}\" at index {d} = '{c}'(\\x{x}) != '{c}' (\\x{x}) \n", .{ a, b, idx, a[idx], a[idx], b[idx], b[idx] });
         return compare_from_bools(a[idx] < b[idx], a[idx] > b[idx]);
@@ -274,57 +304,6 @@ fn binarySearch(self: *const BRCMap, item: []const u8) ?usize {
 }
 
 fn searchInsert(self: *const BRCMap, item: []const u8) isize {
-    ut.debug.print("\nbinary searching for key: \"{s}\"\n", .{item});
-
-    var L: isize = 0;
-    var R: isize = @as(isize, @intCast(self.count())) - 1;
-    var m: isize = 0;
-    while (L <= R) {
-        m = L + @divFloor(R - L, 2);
-        const k = self.getKeyString(self.keys.items[@abs(m)]);
-        const c: i8 = compare_string(k, item);
-        switch (c) {
-            0 => {
-                ut.debug.print("\tk{d}: \"{s}\" == key: \"{s}\"\n", .{ m, k, item });
-                return m;
-            },
-            -1 => {
-                ut.debug.print("\tk{d}: \"{s}\" <  key: \"{s}\"\n", .{ m, k, item });
-                R = m - 1;
-            },
-            1 => {
-                ut.debug.print("\tk{d}: \"{s}\" >  key: \"{s}\"\n", .{ m, k, item });
-                L = m + 1;
-            },
-            else => unreachable,
-        }
-    }
-
-    m = L;
-    while (m < self.count()) : (m += 1) {
-        const k = self.getKeyString(self.keys.items[@abs(m)]);
-        const cmp = compare_string(item, k);
-        switch (cmp) {
-            0 => {
-                if (builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
-                    ut.debug.print("Keys:\n", .{});
-                    for (0..self.count()) |j| {
-                        const keystr = self.getKeyString(self.keys.items[j]);
-                        ut.debug.print("\t{d:>5}: \"{s}\"\n", .{ j, keystr });
-                    }
-                    std.debug.panic("Binary Search Failed to find key \"{s}\" at index {d}", .{ item, m });
-                } else @panic("Binary Search Failed to find key!");
-            },
-            1 => break,
-            -1 => continue,
-            else => unreachable,
-        }
-    }
-
-    return ~m;
-}
-
-fn searchInsert_v1(self: *const BRCMap, item: []const u8) isize {
     ut.debug.print("\nbinary searching for key: \"{s}\"\n", .{item});
 
     std.debug.assert(self.count() > 0);
