@@ -46,6 +46,22 @@ pub const mem = struct {
         @memcpy(out, arr);
         return out;
     }
+
+    inline fn compare_from_bools(lessThan: bool, greaterThan: bool) i8 {
+        std.debug.assert((lessThan and greaterThan) != true);
+        // case gt = 0, lt = 1 => 0 - 1 == -1
+        // case gt = 1, lt = 0 => 1 - 0 == 1
+        // case gt = 0, lt = 0 => 0 - 0 == 0
+        return @as(i8, @intFromBool(greaterThan)) - @as(i8, @intFromBool(lessThan));
+    }
+    inline fn compare_string(a: []const u8, b: []const u8) i8 {
+        const l: usize = @min(a.len, b.len);
+        var i: usize = 0;
+        var c: i8 = 0;
+        while (i < l and c == 0) : (i += 1) c = compare_from_bools(a[i] < b[i], a[i] > b[i]);
+        if (c != 0) return c;
+        return compare_from_bools(a.len < b.len, a.len > b.len);
+    }
 };
 
 pub const math = struct {

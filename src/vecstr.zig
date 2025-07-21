@@ -3,14 +3,8 @@ const std = @import("std");
 
 fn Vecstr(comptime L: comptime_int) type {
     comptime {
-        switch (L) {
-            // 8 => if (!builtin.cpu.features.isEnabled(std.Target.x86.Feature.mmx)) @compileError("Invalid Vecstr len! Target does not support mmx"),
-            // 16 => if (!builtin.cpu.features.isEnabled(std.Target.x86.Feature.avx)) @compileError("Invalid Vecstr len! Target does not support avx"),
-            // 32 => if (!builtin.cpu.features.isEnabled(std.Target.x86.Feature.avx2)) @compileError("Invalid Vecstr len! Target does not support avx2"),
-            // 64 => if (!builtin.cpu.features.isEnabled(std.Target.x86.Feature.avx512vbmi)) @compileError("Invalid Vecstr len! Target does not support avx512"),
-            8, 16, 32, 64 => {},
-            else => @compileError("Invalid Vecstr len!"),
-        }
+        if (!std.math.isPowerOfTwo(L)) @compileError("Vecstr len must be a power of two");
+        if (L < 8) @compileError("Vecstr len must be >8");
     }
 
     return struct {
@@ -84,19 +78,23 @@ fn Vecstr(comptime L: comptime_int) type {
         }
     };
 }
-pub const Vecstr64 = Vecstr(64 / 8);
-pub const Vecstr128 = Vecstr(128 / 8);
-pub const Vecstr256 = Vecstr(256 / 8);
-pub const Vecstr512 = Vecstr(512 / 8);
+pub const Vecstr8 = Vecstr(8);
+pub const Vecstr16 = Vecstr(16);
+pub const Vecstr32 = Vecstr(32);
+pub const Vecstr64 = Vecstr(64);
+pub const Vecstr128 = Vecstr(128);
+test Vecstr8 {
+    _ = Vecstr8;
+}
+test Vecstr16 {
+    _ = Vecstr16;
+}
+test Vecstr32 {
+    _ = Vecstr32;
+}
 test Vecstr64 {
     _ = Vecstr64;
 }
 test Vecstr128 {
     _ = Vecstr128;
-}
-test Vecstr256 {
-    _ = Vecstr256;
-}
-test Vecstr512 {
-    _ = Vecstr512;
 }

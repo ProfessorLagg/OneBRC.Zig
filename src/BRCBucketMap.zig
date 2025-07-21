@@ -31,13 +31,7 @@ pub fn BRCBucketMap(comptime bucket_count: comptime_int) type {
         }
         pub fn init(allocator: std.mem.Allocator) !Self {
             var r: Self = initBase(allocator);
-            inline for (0..bucket_count) |i| r.buckets[i] = try BRCMap.init(allocator);
-            return r;
-        }
-        /// Initializes every bucket to `capacity`
-        pub fn initCapacity(allocator: std.mem.Allocator, capacity: usize) !Self {
-            var r: Self = initBase(allocator);
-            for (0..r.buckets.len) |i| r.buckets[i] = try BRCMap.initCapacity(allocator, capacity);
+            inline for (0..bucket_count) |i| r.buckets[i] = BRCMap.init(allocator);
             return r;
         }
         pub fn deinit(self: *Self) void {
@@ -56,10 +50,10 @@ pub fn BRCBucketMap(comptime bucket_count: comptime_int) type {
         /// Joins all the buckets into a single map, using the input allocator, and frees self
         pub fn finalize(self: *Self, allocator: std.mem.Allocator) !BRCMap {
             std.log.debug("Finalizing BRCBucketMap", .{});
-            var totalCount: usize = 0;
-            for (self.buckets) |bucket| totalCount += bucket.count();
+            // var totalCount: usize = 0;
+            // for (self.buckets) |bucket| totalCount += bucket.count();
 
-            var finalMap: BRCMap = try BRCMap.initCapacity(allocator, totalCount);
+            var finalMap: BRCMap = BRCMap.init(allocator);
             inline for (self.buckets) |bucket| finalMap.mergeWith(&bucket) catch @panic("merge failed");
             self.deinit();
             return finalMap;
