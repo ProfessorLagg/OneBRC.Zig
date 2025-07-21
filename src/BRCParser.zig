@@ -117,10 +117,9 @@ fn parse_BRCMap(self: *BRCParser) !BRCParseResult {
 }
 
 fn parse_BRCBucketMap(self: *BRCParser) !BRCParseResult {
-    const init_capacity: usize = std.math.divCeil(usize, (try self.file.stat()).size, 14 * 256) catch unreachable;
-    var bucketMap: BRCBucketMap(256) = try BRCBucketMap(256).initCapacity(self.allocator, init_capacity);
-
-    // var bucketMap: BRCBucketMap(256) = try BRCBucketMap(256).init(self.allocator);
+    const bucket_count: comptime_int = 512;
+    const init_capacity: usize = std.math.divCeil(usize, (try self.file.stat()).size, 14 * bucket_count) catch unreachable;
+    var bucketMap: BRCBucketMap(bucket_count) = try BRCBucketMap(bucket_count).initCapacity(self.allocator, init_capacity);
 
     const fileReader = self.file.reader();
     var lineReader: LineReader = try LineReader.init(self.allocator, fileReader);
