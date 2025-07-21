@@ -17,3 +17,4 @@ tmp.*
 stderr.txt
 stdout.txt
 dumptxt.exe
+*.bak
