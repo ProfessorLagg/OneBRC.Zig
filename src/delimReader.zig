@@ -23,7 +23,7 @@ pub fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersi
                 "\n\t" ++ "buffer size: {d}" ++ "\n", .{ @typeName(Treader), delim, delim, buffersize });
             var r = TSelf{ // NO FOLD
                 .allocator = allocator,
-                .buffer = try allocator.alloc(u8, buffersize),
+                .buffer = try allocator.alignedAlloc(u8, 4096, buffersize),
                 .reader = reader,
                 .slice = undefined,
             };
