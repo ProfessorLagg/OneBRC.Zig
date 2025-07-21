@@ -27,6 +27,7 @@ pub const BRCParseResult = struct {
     }
 
     fn init_BRCMap(linecount: usize, map: *const BRCMap) !BRCParseResult {
+        // TODO Ensure the sort is corect here
         const allocator: std.mem.Allocator = map.allocator;
         const entries: []ResultEntry = try allocator.alloc(ResultEntry, map.count());
         var iter = map.iterator();

@@ -50,9 +50,6 @@ pub fn BRCBucketMap(comptime bucket_count: comptime_int) type {
         /// Joins all the buckets into a single map, using the input allocator, and frees self
         pub fn finalize(self: *Self, allocator: std.mem.Allocator) !BRCMap {
             std.log.debug("Finalizing BRCBucketMap", .{});
-            // var totalCount: usize = 0;
-            // for (self.buckets) |bucket| totalCount += bucket.count();
-
             var finalMap: BRCMap = BRCMap.init(allocator);
             inline for (self.buckets) |bucket| finalMap.mergeWith(&bucket) catch @panic("merge failed");
             self.deinit();
