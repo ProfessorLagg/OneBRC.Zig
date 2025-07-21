@@ -4,6 +4,7 @@ const StringHashMap = std.StringHashMap;
 
 const DelimReader = @import("delimReader.zig").DelimReader;
 const LineReader = DelimReader(std.fs.File.Reader, '\n', 4096);
+const BRCBucketMap = @import("BRCBucketMap.zig").BRCBucketMap;
 const BRCMap = @import("BRCmap.zig");
 const MapVal = BRCMap.MapVal;
 const MapEntry = BRCMap.MapEntry;
@@ -25,7 +26,7 @@ pub const BRCParseResult = struct {
         self.allocator.free(self.entries);
     }
 
-    fn init_BRCMap(linecount: usize, map: *BRCMap) !BRCParseResult {
+    fn init_BRCMap(linecount: usize, map: *const BRCMap) !BRCParseResult {
         const allocator: std.mem.Allocator = map.allocator;
         const entries: []ResultEntry = try allocator.alloc(ResultEntry, map.count());
         var iter = map.iterator();
@@ -115,6 +116,46 @@ fn parse_BRCMap(self: *BRCParser) !BRCParseResult {
     return BRCParseResult.init_BRCMap(linecount, &map);
 }
 
+fn parse_BRCBucketMap(self: *BRCParser) !BRCParseResult {
+    const init_capacity: usize = std.math.divCeil(usize, (try self.file.stat()).size, 14 * 256) catch unreachable;
+    var bucketMap: BRCBucketMap(256) = try BRCBucketMap(256).initCapacity(self.allocator, init_capacity);
+
+    // var bucketMap: BRCBucketMap(256) = try BRCBucketMap(256).init(self.allocator);
+
+    const fileReader = self.file.reader();
+    var lineReader: LineReader = try LineReader.init(self.allocator, fileReader);
+    var linecount: usize = 0;
+    while (try lineReader.next()) |line| {
+        std.debug.assert(line.len >= 5);
+        var splitIndex: usize = line.len - 4;
+        while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
+        std.debug.assert(line[splitIndex] == ';');
+
+        const keystr: []const u8 = line[0..splitIndex];
+        std.debug.assert(keystr[keystr.len - 1] != '\n');
+        const valstr: []const u8 = line[(splitIndex + 1)..];
+        linelog.debug("line{d}: {s}, k: {s}, v: {s}", .{ linecount, line, keystr, valstr });
+
+        std.debug.assert(keystr.len >= 1);
+        std.debug.assert(keystr.len <= 100);
+        std.debug.assert(keystr[keystr.len - 1] != ';');
+        std.debug.assert(valstr.len >= 3);
+        std.debug.assert(valstr.len <= 5);
+        std.debug.assert(valstr[valstr.len - 2] == '.');
+        std.debug.assert(valstr[0] != ';');
+
+        const valint: i48 = ut.math.fastIntParse(i48, valstr);
+        //const map = bucketMap.findBucket(keystr);
+        //const valptr: *MapVal = try map.findOrInsert(keystr);
+        const valptr: *MapVal = try bucketMap.findOrInsert(keystr);
+        valptr.add(valint);
+        linecount += 1;
+    }
+
+    const finalMap: BRCMap = try bucketMap.finalize(self.allocator);
+    return BRCParseResult.init_BRCMap(linecount, &finalMap);
+}
+
 fn parse_StringHashMap(self: *BRCParser) !BRCParseResult {
     var map: StringHashMap(MapVal) = std.StringHashMap(MapVal).init(self.allocator);
     defer map.deinit();
@@ -157,7 +198,8 @@ fn parse_StringHashMap(self: *BRCParser) !BRCParseResult {
 }
 
 pub fn parse(self: *BRCParser) !BRCParseResult {
-    return self.parse_BRCMap();
+    // return self.parse_BRCMap();
+    return self.parse_BRCBucketMap();
     // return self.parse_StringHashMap();
 }
 

@@ -1,5 +1,5 @@
 const std = @import("std");
-const memutils = @import("utils.zig").mem;
+const ut = @import("utils.zig");
 
 const DynamicBuffer = @This();
 
@@ -41,7 +41,7 @@ fn ensureCapacity(self: *DynamicBuffer, size: usize) !void {
     }
 
     // if (try resize(self.allocator, &self.raw, new_len)) self.used = self.raw[0..self.used.len];
-    _ = try memutils.resize(u8, self.allocator, &self.raw, new_len);
+    _ = try ut.mem.resize(u8, self.allocator, &self.raw, new_len);
     self.used = self.raw[0..self.used.len];
     std.debug.assert(self.raw.len >= size);
     std.debug.assert(self.raw.ptr == self.used.ptr);
@@ -65,13 +65,22 @@ pub fn write(self: *DynamicBuffer, bytes: []const u8) ![]u8 {
     const unused = self.getUnused();
     std.debug.assert(unused.len >= bytes.len);
 
-    const clen: usize = memutils.copyBytes(bytes, unused);
+    const clen: usize = ut.mem.copyBytes(bytes, unused);
     std.debug.assert(clen == bytes.len);
 
     self.used.len += clen;
     const result: []u8 = self.used[(self.used.len - clen)..];
     std.debug.assert(std.mem.eql(u8, bytes, result));
     return result;
+}
+
+pub fn clone(self: *const DynamicBuffer, allocator: std.mem.Allocator) !DynamicBuffer {
+    const new_raw: []u8 = try ut.mem.clone(u8, allocator, self.raw);
+    return DynamicBuffer{
+        .allocator = allocator,
+        .raw = new_raw,
+        .used = new_raw[0..self.used.len],
+    };
 }
 
 test write {

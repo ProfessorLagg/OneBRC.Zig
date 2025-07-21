@@ -167,14 +167,23 @@ pub const MapVal = struct {
     min: i16 = std.math.maxInt(i16),
     max: i16 = std.math.minInt(i16),
     pub inline fn add(self: *MapVal, v: i64) void {
+        @setRuntimeSafety(false);
         self.sum += v;
         self.count += 1;
         const v16: i16 = @intCast(v);
         self.min = @min(self.min, v16);
         self.max = @max(self.max, v16);
     }
-
+    pub inline fn merge(self: *MapVal, other: *const MapVal) void {
+        @setRuntimeSafety(false);
+        self.sum += other.sum;
+        self.count += other.count;
+        self.min = @min(self.min, other.min);
+        self.max = @max(self.max, other.max);
+    }
     pub inline fn finalize(self: *const MapVal) FinalMapVal {
+        @setRuntimeSafety(false);
+        @setFloatMode(.optimized);
         const sum_f: f64 = @floatFromInt(self.sum);
         const count_f: f64 = @floatFromInt(self.count);
         const min_f: f64 = @floatFromInt(self.min);
@@ -189,9 +198,7 @@ pub const MapVal = struct {
 const MapValList = DynamicArray(MapVal);
 
 const BRCMap = @This();
-
 allocator: std.mem.Allocator,
-
 /// Stores the actual key strings
 stringBuffer: DynamicBuffer,
 /// Stores offsets into `key_buffer`, indicating where the actual key string is located
@@ -396,7 +403,6 @@ fn findOrInsert_debug(self: *BRCMap, key: []const u8) !*MapVal {
         return &self.vals.items[bsr.?];
     }
 
-    // TODO REMOVE THIS LINEAR SEARCH. IT IS ONLY HERE FOR DEBUG
     var i: usize = 0;
     while (i < cnt) : (i += 1) {
         const cmp = compare_string(key, self.getKeyString(self.keys.items[i]));
@@ -421,7 +427,8 @@ fn findOrInsert_debug(self: *BRCMap, key: []const u8) !*MapVal {
 }
 
 pub fn findOrInsert(self: *BRCMap, key: []const u8) !*MapVal {
-    return self.findOrInsert_debug(key);
+    // return self.findOrInsert_debug(key);
+    return self.findOrInsert_real(key);
 }
 
 pub const MapEntry = struct {
@@ -451,4 +458,24 @@ pub fn iterator(self: *const BRCMap) MapIterator {
         .map = self,
         .idx = 0,
     };
+}
+
+pub fn clone(self: *const BRCMap, allocator: std.mem.Allocator) !BRCMap {
+    return BRCMap{
+        .allocator = allocator,
+        .stringBuffer = try self.stringBuffer.clone(allocator),
+        .keys = try self.keys.clone(allocator),
+        .vals = try self.vals.clone(allocator),
+    };
+}
+
+/// Merges `other` into `self`
+pub fn mergeWith(self: *BRCMap, other: *const BRCMap) !void {
+    const other_count = other.count();
+    for (0..other_count) |i| {
+        const keystr: []const u8 = other.getKeyString(other.keys.items[i]);
+        const val: MapVal = other.vals.items[i];
+        const valptr: *MapVal = try self.findOrInsert(keystr);
+        valptr.merge(&val);
+    }
 }

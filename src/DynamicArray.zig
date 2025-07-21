@@ -58,5 +58,12 @@ pub fn DynamicArray(comptime T: type) type {
 
             self.items[index] = item;
         }
+        pub fn clone(self: *const Self, allocator: std.mem.Allocator) !Self {
+            return Self{
+                .allocator = allocator,
+                .capacity = self.capacity,
+                .items = try ut.mem.clone(T, allocator, self.items),
+            };
+        }
     };
 }

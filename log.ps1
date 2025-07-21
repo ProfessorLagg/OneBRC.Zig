@@ -10,11 +10,11 @@ $outDir = [DirectoryInfo]::new("zig-out")
 if($outDir.Exists){$outDir | Remove-Item -Recurse -Force}
 
 zig build --release=safe
+# zig build -Doptimize=Debug
 
 $exeFile = [FileInfo]::new('zig-out\bin\brc.exe')
 
 
-#$logDirPath = 'D:\Temp-SSD\1brc'
 $logDirPath = $PSScriptRoot
 $stdoutFilePath = Join-Path -Path $logDirPath -ChildPath "stdout.txt"
 $stderrFilePath = Join-Path -Path $logDirPath -ChildPath "stderr.txt"

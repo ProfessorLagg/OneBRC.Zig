@@ -96,6 +96,14 @@ pub const math = struct {
         const r1: T = @as(T, std.math.maxInt(T)) * @as(T, @intFromBool(retMax));
         return r0 + r1;
     }
+
+    pub fn sumBytes(bytes: []const u8) usize {
+        @setRuntimeSafety(false);
+        // TODO Vectorize this
+        var sum: usize = 0;
+        for (bytes) |byte| sum += byte;
+        return sum;
+    }
 };
 
 pub const debug = struct {

@@ -10,7 +10,7 @@ pub const std_options: std.Options = .{
         .Debug => .debug,
         .ReleaseSafe => .info,
         .ReleaseSmall => .warn,
-        .ReleaseFast => .warn,
+        .ReleaseFast => .err,
     },
     .log_scope_levels = &[_]std.log.ScopeLevel{
         .{ .scope = .DelimReader, .level = .err },
@@ -27,8 +27,8 @@ pub const std_options: std.Options = .{
 // following files has more than 1 instance of each key, and 41343 keys in total
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\small.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\medium.txt";
-var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1GB.txt";
-// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\large.txt";
+// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1GB.txt";
+var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\large.txt";
 
 const allocator: std.mem.Allocator = b: {
     if (builtin.is_test) break :b std.testing.allocator;
@@ -46,20 +46,11 @@ pub fn main() !void {
 }
 
 fn temp() !void {
-    // const p64a: *u64 = try allocator.create(u64);
-    // defer allocator.destroy(p64a);
-    // const p64b: *u64 = try allocator.create(u64);
-    // defer allocator.destroy(p64b);
-
-    // p64a.* = 2025_07_20;
-    // p64b.* = 20_07_2025;
-
-    // const bp64a: *const [@divExact(@bitSizeOf(u64), 8)]u8 = @ptrCast(p64a);
-    // const bp64b: *const [@divExact(@bitSizeOf(u64), 8)]u8 = @ptrCast(p64b);
-
-    // const v64a: u64 = std.mem.readInt(u64, bp64a, .little);
-    // const v64b: u64 = std.mem.readInt(u64, bp64b, .little);
-    // ut.debug.print("ap: {d}, bp: {d}\n a: {d},  b: {d}\n", .{ p64a.*, p64b.*, v64a, v64b });
+    var i: u8 = 0;
+    for (0..256) |_| {
+        ut.debug.print("{d}\n", .{i});
+        i +%= 1;
+    }
 }
 
 pub fn bench_parse() !void {
