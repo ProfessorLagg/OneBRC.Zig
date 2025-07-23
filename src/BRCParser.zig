@@ -151,7 +151,7 @@ fn parse_BRCBucketMap_MultiThread(self: *BRCParser) !BRCParseResult {
     var pool: std.Thread.Pool = undefined;
     try pool.init(.{
         .allocator = self.allocator,
-        // .n_jobs = std.Thread.getCpuCount() catch 2,
+        .n_jobs = std.Thread.getCpuCount() catch 2,
     });
     defer pool.deinit();
     var waitGroup: std.Thread.WaitGroup = .{};
@@ -176,7 +176,8 @@ fn parse_BRCBucketMap_MultiThread(self: *BRCParser) !BRCParseResult {
             std.debug.assert(valstr[0] != ';');
 
             const valint: i48 = ut.math.fastIntParse(i48, valstr);
-            const valptr: *MapVal = _bucketMap.findOrInsert(keystr) catch @panic("findOrInsert failed");
+            // TODO See if this is what' s causing the Multi-Threaded crashes
+            const valptr: *MapVal = _bucketMap.findOrInsert(keystr) catch unreachable;
             valptr.add(valint);
             parser.allocator.free(line);
         }
