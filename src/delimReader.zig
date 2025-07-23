@@ -1,8 +1,27 @@
 const std = @import("std");
-const log = std.log.scoped(.DelimReader);
 
 /// Iterator to read a file line by line
 pub fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersize: usize) type {
+    return struct {
+        const TSelf = @This();
+        allocator: std.mem.Allocator,
+        unmanaged: UnmanagedDelimReader(Treader, delim),
+
+        pub fn init(allocator: std.mem.Allocator, reader: Treader) !TSelf {
+            const buffer = try allocator.alignedAlloc(u8, 4096, buffersize);
+            return TSelf{ .allocator = allocator, .unmanaged = UnmanagedDelimReader(Treader, delim).init(reader, buffer) };
+        }
+        pub fn deinit(self: *TSelf) void {
+            self.allocator.free(self.unmanaged.buffer);
+        }
+        pub inline fn next(self: *TSelf) !?[]const u8 {
+            return self.unmanaged.next();
+        }
+    };
+}
+
+/// Iterator to read a file line by line, using an externally managed buffer
+pub fn UnmanagedDelimReader(comptime Treader: type, comptime delim: u8) type {
     comptime {
         if (!std.meta.hasMethod(Treader, "read")) {
             @compileError("Treader type " ++ @typeName(Treader) ++ " does not have a .read method");
@@ -11,32 +30,18 @@ pub fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersi
 
     return struct {
         const TSelf = @This();
-        allocator: std.mem.Allocator,
         reader: Treader,
         buffer: []u8,
         slice: []u8,
 
-        pub fn init(allocator: std.mem.Allocator, reader: Treader) !TSelf {
-            log.debug("DelimReader" ++
-                "\n\t" ++ "Treader: " ++ "{s}" ++
-                "\n\t" ++ "delim: {d} | 0x{X:0>2}" ++
-                "\n\t" ++ "buffer size: {d}" ++ "\n", .{ @typeName(Treader), delim, delim, buffersize });
-            var r = TSelf{ // NO FOLD
-                .allocator = allocator,
-                .buffer = try allocator.alignedAlloc(u8, 4096, buffersize),
+        pub fn init(reader: Treader, buffer: []u8) TSelf {
+            var r = TSelf{
+                .buffer = buffer,
                 .reader = reader,
                 .slice = undefined,
             };
-            r.slice = r.buffer[0..];
-            r.slice.len = r.reader.read(r.buffer) catch |err| {
-                allocator.free(r.buffer);
-                return err;
-            };
+            r.slice = r.buffer[0..0];
             return r;
-        }
-
-        pub fn deinit(self: *TSelf) void {
-            self.allocator.free(self.buffer);
         }
 
         /// Finds index of self.slice[0] in self.buffer
@@ -58,7 +63,6 @@ pub fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersi
             goto: while (true) {
                 if (self.slice.len == 0) {
                     // contains no line
-                    log.debug("DelimReader: NONE", .{});
                     self.slice = self.buffer[0..];
                     self.slice.len = try self.reader.read(self.buffer[0..]);
                     if (self.slice.len == 0) {
@@ -67,8 +71,6 @@ pub fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersi
                 }
                 const delim_index: usize = self.nextDelimIndex() orelse 0;
                 if (delim_index == 0) {
-                    // Contains partial line
-                    log.debug("DelimReader: PART", .{});
                     // rotate buffer
                     std.mem.copyForwards(u8, self.buffer[0..], self.slice);
 
@@ -87,11 +89,30 @@ pub fn DelimReader(comptime Treader: type, comptime delim: u8, comptime buffersi
                 }
 
                 // Found full line
-                log.debug("DelimReader: FULL", .{});
                 const result: []const u8 = self.slice[0..delim_index];
                 self.slice = self.slice[delim_index + 1 ..];
                 return result;
             }
+        }
+    };
+}
+
+pub fn VirtualAllocDelimReader(comptime Treader: type, comptime delim: u8) type {
+    const VirtualAlloc = @import("VirtualAlloc.zig");
+    return struct {
+        const TSelf = @This();
+        allocator: std.mem.Allocator,
+        unmanaged: UnmanagedDelimReader(Treader, delim),
+
+        pub fn init(allocator: std.mem.Allocator, reader: Treader) !TSelf {
+            const buffer = try VirtualAlloc.allocBlock();
+            return TSelf{ .allocator = allocator, .unmanaged = UnmanagedDelimReader(Treader, delim).init(reader, buffer) };
+        }
+        pub fn deinit(self: *TSelf) void {
+            VirtualAlloc.freeBlock(self.unmanaged.buffer);
+        }
+        pub inline fn next(self: *TSelf) !?[]const u8 {
+            return self.unmanaged.next();
         }
     };
 }

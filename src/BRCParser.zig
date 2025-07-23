@@ -2,9 +2,11 @@ const builtin = @import("builtin");
 const std = @import("std");
 const StringHashMap = std.StringHashMap;
 
-const DelimReader = @import("delimReader.zig").DelimReader;
 // const LineReader = DelimReader(std.fs.File.Reader, '\n', 4096);
-const LineReader = DelimReader(std.fs.File.Reader, '\n', 1_073_741_824);
+const LineReader = switch (builtin.os.tag) {
+    .windows => @import("delimReader.zig").VirtualAllocDelimReader(std.fs.File.Reader, '\n'),
+    else => @import("delimReader.zig").DelimReader(std.fs.File.Reader, '\n', 1_073_741_824),
+};
 const BRCBucketMap = @import("BRCBucketMap.zig").BRCBucketMap;
 const BRCMap = @import("BRCmap.zig");
 const MapVal = BRCMap.MapVal;
