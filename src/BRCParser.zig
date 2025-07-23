@@ -104,7 +104,7 @@ fn parse_BRCMap(self: *BRCParser) !BRCParseResult {
     return BRCParseResult.init(linecount, &map);
 }
 
-fn parse_BRCBucketMap(self: *BRCParser) !BRCParseResult {
+fn parse_BRCBucketMap_SingleThread(self: *BRCParser) !BRCParseResult {
     const bucket_count: comptime_int = 512;
     var bucketMap: BRCBucketMap(bucket_count) = try BRCBucketMap(bucket_count).init(self.allocator);
 
@@ -131,8 +131,6 @@ fn parse_BRCBucketMap(self: *BRCParser) !BRCParseResult {
         std.debug.assert(valstr[0] != ';');
 
         const valint: i48 = ut.math.fastIntParse(i48, valstr);
-        //const map = bucketMap.findBucket(keystr);
-        //const valptr: *MapVal = try map.findOrInsert(keystr);
         const valptr: *MapVal = try bucketMap.findOrInsert(keystr);
         valptr.add(valint);
         linecount += 1;
@@ -141,6 +139,65 @@ fn parse_BRCBucketMap(self: *BRCParser) !BRCParseResult {
     const finalMap: BRCMap = try bucketMap.finalize(self.allocator);
     return BRCParseResult.init(linecount, &finalMap);
 }
+
+fn parse_BRCBucketMap_MultiThread(self: *BRCParser) !BRCParseResult {
+    const bucket_count: comptime_int = 512;
+    var bucketMap: BRCBucketMap(bucket_count) = try BRCBucketMap(bucket_count).init(self.allocator);
+
+    const fileReader = self.file.reader();
+    var lineReader: LineReader = try LineReader.init(self.allocator, fileReader);
+    var linecount: usize = 0;
+
+    var pool: std.Thread.Pool = undefined;
+    try pool.init(.{
+        .allocator = self.allocator,
+        // .n_jobs = std.Thread.getCpuCount() catch 2,
+    });
+    defer pool.deinit();
+    var waitGroup: std.Thread.WaitGroup = .{};
+
+    const threadFn = struct {
+        pub fn func(line: []const u8, _bucketMap: *@TypeOf(bucketMap), parser: *BRCParser) void {
+            var splitIndex: usize = line.len - 4;
+            while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
+            std.debug.assert(line[splitIndex] == ';');
+
+            const keystr: []const u8 = line[0..splitIndex];
+            std.debug.assert(keystr[keystr.len - 1] != '\n');
+            const valstr: []const u8 = line[(splitIndex + 1)..];
+            linelog.debug("line{??): {s}, k: {s}, v: {s}", .{ line, keystr, valstr });
+
+            std.debug.assert(keystr.len >= 1);
+            std.debug.assert(keystr.len <= 100);
+            std.debug.assert(keystr[keystr.len - 1] != ';');
+            std.debug.assert(valstr.len >= 3);
+            std.debug.assert(valstr.len <= 5);
+            std.debug.assert(valstr[valstr.len - 2] == '.');
+            std.debug.assert(valstr[0] != ';');
+
+            const valint: i48 = ut.math.fastIntParse(i48, valstr);
+            const valptr: *MapVal = _bucketMap.findOrInsert(keystr) catch @panic("findOrInsert failed");
+            valptr.add(valint);
+            parser.allocator.free(line);
+        }
+    }.func;
+
+    while (try lineReader.next()) |line| {
+        std.debug.assert(line.len >= 5);
+        const lineclone = try ut.mem.clone(u8, self.allocator, line);
+        pool.spawnWg(&waitGroup, threadFn, .{ lineclone, &bucketMap, self });
+        linecount += 1;
+    }
+    waitGroup.wait();
+
+    const finalMap: BRCMap = try bucketMap.finalize(self.allocator);
+    return BRCParseResult.init(linecount, &finalMap);
+}
+
+const parse_BRCBucketMap = switch (builtin.single_threaded) {
+    true => parse_BRCBucketMap_SingleThread,
+    false => parse_BRCBucketMap_MultiThread,
+};
 
 pub fn parse(self: *BRCParser) !BRCParseResult {
     // return self.parse_BRCMap();

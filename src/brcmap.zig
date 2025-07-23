@@ -67,6 +67,7 @@ fn SubMap(comptime StringLength: comptime_int) type {
         };
         const Self = @This();
         allocator: std.mem.Allocator,
+        mutex: std.Thread.Mutex = .{},
         keybuf: []Vecstr,
         valbuf: []MapVal,
         keys: []Vecstr,
@@ -82,6 +83,9 @@ fn SubMap(comptime StringLength: comptime_int) type {
             };
         }
         fn deinit(self: *Self) void {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
             self.allocator.free(self.keybuf);
             self.allocator.free(self.valbuf);
         }
@@ -193,6 +197,9 @@ fn SubMap(comptime StringLength: comptime_int) type {
         }
 
         fn findOrInsert(self: *Self, key: Vecstr) !*MapVal {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
             const cnt = self.count();
             if (cnt == 0) {
                 try self.append(key, MapVal.None);

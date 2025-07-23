@@ -101,12 +101,16 @@ pub fn VirtualAllocDelimReader(comptime Treader: type, comptime delim: u8) type 
     const VirtualAlloc = @import("VirtualAlloc.zig");
     return struct {
         const TSelf = @This();
-        allocator: std.mem.Allocator,
         unmanaged: UnmanagedDelimReader(Treader, delim),
 
-        pub fn init(allocator: std.mem.Allocator, reader: Treader) !TSelf {
+        /// `allocator` is only here to keep the API the same as DelimReader
+        pub fn init(allocator: ?std.mem.Allocator, reader: Treader) !TSelf {
+            _ = &allocator;
+            return @call(.always_inline, initReal, .{reader});
+        }
+        pub fn initReal(reader: Treader) !TSelf {
             const buffer = try VirtualAlloc.allocBlock();
-            return TSelf{ .allocator = allocator, .unmanaged = UnmanagedDelimReader(Treader, delim).init(reader, buffer) };
+            return TSelf{ .unmanaged = UnmanagedDelimReader(Treader, delim).init(reader, buffer) };
         }
         pub fn deinit(self: *TSelf) void {
             VirtualAlloc.freeBlock(self.unmanaged.buffer);
