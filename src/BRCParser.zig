@@ -46,7 +46,6 @@ pub const BRCParseResult = struct {
     }
 
     fn sortEntries(entries: []ResultEntry) void {
-        // std.mem.sort(ResultEntry, entries, .{}, ResultEntry.lessThan);
         var i: usize = 1;
         while(i < entries.len): (i += 1){
             const x: ResultEntry = entries[i];
@@ -59,7 +58,6 @@ pub const BRCParseResult = struct {
     }
 
     fn init(linecount: usize, map: *const BRCMap) !BRCParseResult {
-        // TODO Ensure the sort is corect here
         const allocator: std.mem.Allocator = map.allocator;
         const entryCount = map.sub8.count() + map.sub16.count() + map.sub32.count() + map.sub64.count() + map.sub128.count();
         const entries: []ResultEntry = try allocator.alloc(ResultEntry, entryCount);
