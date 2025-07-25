@@ -17,6 +17,23 @@ pub const BRCParseResult = struct {
     pub const ResultEntry = struct {
         key: []const u8,
         val: MapVal,
+
+        pub fn compare_order(a: *const ResultEntry, b: *const ResultEntry) std.math.Order {
+            const aK: []const u8 = a.key;
+            const bK: []const u8 = b.key;
+            const l: usize = @min(aK.len, bK.len);
+            for (0..l) |i| {
+                if (aK[i] < bK[i]) return .gt;
+                if (aK[i] > bK[i]) return .lt;
+            }
+            if (aK.len < bK.len) return .lt;
+            if (aK.len > bK.len) return .gt;
+            return .eq;
+        }
+        pub fn lessThan(ctx: @TypeOf(.{}), a: ResultEntry, b: ResultEntry) bool {
+            _ = ctx;
+            return compare_order(&a, &b) == .lt;
+        }
     };
     allocator: std.mem.Allocator = undefined,
     linecount: usize = 0,
@@ -26,6 +43,19 @@ pub const BRCParseResult = struct {
     pub fn deinit(self: *BRCParseResult) void {
         for (self.entries) |e| self.allocator.free(e.key);
         self.allocator.free(self.entries);
+    }
+
+    fn sortEntries(entries: []ResultEntry) void {
+        // std.mem.sort(ResultEntry, entries, .{}, ResultEntry.lessThan);
+        var i: usize = 1;
+        while(i < entries.len): (i += 1){
+            const x: ResultEntry = entries[i];
+            var j: usize = i;
+            while(j > 0 and (ResultEntry.compare_order(&entries[j - 1], &x)) == .gt):(j -= 1){
+                entries[j] = entries[j - 1];
+            }
+            entries[j] = x;
+        }
     }
 
     fn init(linecount: usize, map: *const BRCMap) !BRCParseResult {
@@ -59,6 +89,8 @@ pub const BRCParseResult = struct {
             entries[entryIndex].key = try ut.mem.clone(u8, allocator, map.sub128.keys[i].asSlice());
             entryIndex += 1;
         }
+        sortEntries(entries);
+        
 
         return BRCParseResult{
             .allocator = allocator,

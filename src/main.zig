@@ -117,10 +117,13 @@ pub fn bench_read() !void {
 }
 
 pub fn run() !void {
-    var parser = try lib.BRCParser.init(allocator, debugfilepath);
-    defer parser.deinit();
-    var parsed = try parser.parse();
+    const BRCParser = lib.BRCParser;
+    const BRCParseResult = BRCParser.BRCParseResult;
+
+    var parser: BRCParser = try lib.BRCParser.init(allocator, debugfilepath);
+    var parsed: BRCParseResult = try parser.parse();
     defer parsed.deinit();
+    parser.deinit();
 
     const stdout = std.io.getStdOut().writer();
     var bufwri = std.io.bufferedWriter(stdout);
