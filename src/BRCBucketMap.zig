@@ -46,6 +46,9 @@ pub fn BRCBucketMap(comptime bucket_count: comptime_int) type {
         pub fn findOrInsert(self: *Self, key: []const u8) !*MapVal {
             return try self.buckets[calcBucketIndex(key)].findOrInsert(key);
         }
+        pub fn findOrAdd(self: *Self, key: []const u8, valint: i64) !void {
+            return try self.buckets[calcBucketIndex(key)].findOrAdd(key, valint);
+        }
 
         /// Joins all the buckets into a single map, using the input allocator, and frees self
         pub fn finalize(self: *Self, allocator: std.mem.Allocator) !BRCMap {

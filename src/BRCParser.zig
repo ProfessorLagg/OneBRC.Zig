@@ -31,12 +31,33 @@ pub const BRCParseResult = struct {
     fn init(linecount: usize, map: *const BRCMap) !BRCParseResult {
         // TODO Ensure the sort is corect here
         const allocator: std.mem.Allocator = map.allocator;
-        const entries: []ResultEntry = try allocator.alloc(ResultEntry, map.count());
-        var iter = map.iterator();
-        var i: usize = 0;
-        while (iter.next()) |entry| : (i += 1) {
-            entries[i].val = entry.val.*;
-            entries[i].key = try ut.mem.clone(u8, allocator, entry.key);
+        const entryCount = map.sub8.count() + map.sub16.count() + map.sub32.count() + map.sub64.count() + map.sub128.count();
+        const entries: []ResultEntry = try allocator.alloc(ResultEntry, entryCount);
+        var entryIndex: usize = 0;
+        for (0..map.sub8.count()) |i| {
+            entries[entryIndex].val = map.sub8.vals[i];
+            entries[entryIndex].key = try ut.mem.clone(u8, allocator, map.sub8.keys[i].asSlice());
+            entryIndex += 1;
+        }
+        for (0..map.sub16.count()) |i| {
+            entries[entryIndex].val = map.sub16.vals[i];
+            entries[entryIndex].key = try ut.mem.clone(u8, allocator, map.sub16.keys[i].asSlice());
+            entryIndex += 1;
+        }
+        for (0..map.sub32.count()) |i| {
+            entries[entryIndex].val = map.sub32.vals[i];
+            entries[entryIndex].key = try ut.mem.clone(u8, allocator, map.sub32.keys[i].asSlice());
+            entryIndex += 1;
+        }
+        for (0..map.sub64.count()) |i| {
+            entries[entryIndex].val = map.sub64.vals[i];
+            entries[entryIndex].key = try ut.mem.clone(u8, allocator, map.sub64.keys[i].asSlice());
+            entryIndex += 1;
+        }
+        for (0..map.sub128.count()) |i| {
+            entries[entryIndex].val = map.sub128.vals[i];
+            entries[entryIndex].key = try ut.mem.clone(u8, allocator, map.sub128.keys[i].asSlice());
+            entryIndex += 1;
         }
 
         return BRCParseResult{
@@ -105,7 +126,8 @@ fn parse_BRCMap(self: *BRCParser) !BRCParseResult {
 
 fn parse_BRCBucketMap_SingleThread(self: *BRCParser) !BRCParseResult {
     const bucket_count: comptime_int = 512;
-    var bucketMap: BRCBucketMap(bucket_count) = try BRCBucketMap(bucket_count).init(self.allocator);
+    const BucketMap = BRCBucketMap(bucket_count);
+    var bucketMap: BucketMap = try BucketMap.init(self.allocator);
 
     const fileReader = self.file.reader();
     var lineReader: LineReader = try LineReader.init(self.allocator, fileReader);
@@ -140,58 +162,136 @@ fn parse_BRCBucketMap_SingleThread(self: *BRCParser) !BRCParseResult {
 }
 
 fn parse_BRCBucketMap_MultiThread(self: *BRCParser) !BRCParseResult {
+    const ThreadPool = std.Thread.Pool;
+    const WaitGroup = std.Thread.WaitGroup;
+    const Mutex = std.Thread.Mutex;
+    const ArenaAllocator = std.heap.ArenaAllocator;
     const bucket_count: comptime_int = 512;
-    var bucketMap: BRCBucketMap(bucket_count) = try BRCBucketMap(bucket_count).init(self.allocator);
+    const BucketMap = BRCBucketMap(bucket_count);
 
-    const fileReader = self.file.reader();
-    var lineReader: LineReader = try LineReader.init(self.allocator, fileReader);
-    var linecount: usize = 0;
+    const buffer: []u8 = try self.allocator.alignedAlloc(u8, 4096, 65535);
+    defer self.allocator.free(buffer);
 
-    var pool: std.Thread.Pool = undefined;
-    try pool.init(.{
-        .allocator = self.allocator,
-        .n_jobs = std.Thread.getCpuCount() catch 2,
-    });
-    defer pool.deinit();
-    var waitGroup: std.Thread.WaitGroup = .{};
-
-    const threadFn = struct {
-        pub fn func(line: []const u8, _bucketMap: *@TypeOf(bucketMap), parser: *BRCParser) void {
-            var splitIndex: usize = line.len - 4;
-            while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
-            std.debug.assert(line[splitIndex] == ';');
-
-            const keystr: []const u8 = line[0..splitIndex];
-            std.debug.assert(keystr[keystr.len - 1] != '\n');
-            const valstr: []const u8 = line[(splitIndex + 1)..];
-            linelog.debug("line{??): {s}, k: {s}, v: {s}", .{ line, keystr, valstr });
-
-            std.debug.assert(keystr.len >= 1);
-            std.debug.assert(keystr.len <= 100);
-            std.debug.assert(keystr[keystr.len - 1] != ';');
-            std.debug.assert(valstr.len >= 3);
-            std.debug.assert(valstr.len <= 5);
-            std.debug.assert(valstr[valstr.len - 2] == '.');
-            std.debug.assert(valstr[0] != ';');
-
-            const valint: i48 = ut.math.fastIntParse(i48, valstr);
-            // TODO See if this is what' s causing the Multi-Threaded crashes
-            const valptr: *MapVal = _bucketMap.findOrInsert(keystr) catch unreachable;
-            valptr.add(valint);
-            parser.allocator.free(line);
-        }
-    }.func;
-
-    while (try lineReader.next()) |line| {
-        std.debug.assert(line.len >= 5);
-        const lineclone = try ut.mem.clone(u8, self.allocator, line);
-        pool.spawnWg(&waitGroup, threadFn, .{ lineclone, &bucketMap, self });
-        linecount += 1;
+    var pool: ThreadPool = undefined;
+    {
+        try pool.init(.{ .allocator = self.allocator });
     }
-    waitGroup.wait();
 
-    const finalMap: BRCMap = try bucketMap.finalize(self.allocator);
-    return BRCParseResult.init(linecount, &finalMap);
+    // shared context
+    const SharedContext = struct {
+        const Tsctx = @This();
+        allocator: std.mem.Allocator = undefined,
+        linecount: usize = 0,
+        map: BucketMap = undefined,
+        linecount_lock: Mutex = .{},
+        waitGroup: WaitGroup = .{},
+
+        fn init(allocator: std.mem.Allocator) !*Tsctx {
+            const r: *Tsctx = try allocator.create(Tsctx);
+            r.*.allocator = allocator;
+            r.*.linecount = 0;
+            r.*.map = try BucketMap.init(allocator);
+
+            r.*.linecount_lock = .{};
+            r.*.waitGroup = .{};
+            return r;
+        }
+        fn deinit(sctx: *Tsctx) void {
+            sctx.map.deinit();
+            sctx.allocator.destroy(sctx);
+        }
+    };
+    // Gotta put anything that touches a thread on the heap
+    const sharedContext: *SharedContext = try SharedContext.init(self.allocator); //self.allocator.create();
+    defer sharedContext.deinit();
+
+    const TaskContext = struct {
+        const Tctx = @This();
+        shared: *SharedContext,
+        arena: ArenaAllocator,
+        block: []const u8,
+        blockId: usize,
+
+        fn run(ctx: *Tctx) void {
+            defer ctx.deinit();
+            var lineIter = std.mem.splitScalar(u8, ctx.block, '\n');
+            var localCount: usize = 0;
+            while (lineIter.next()) |line| {
+                std.debug.assert(line.len >= 5);
+                var splitIndex: usize = line.len - 4;
+                while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
+                std.debug.assert(line[splitIndex] == ';');
+
+                const keystr: []const u8 = line[0..splitIndex];
+                std.debug.assert(keystr[keystr.len - 1] != '\n');
+                const valstr: []const u8 = line[(splitIndex + 1)..];
+
+                std.debug.assert(keystr.len >= 1);
+                std.debug.assert(keystr.len <= 100);
+                std.debug.assert(keystr[keystr.len - 1] != ';');
+                std.debug.assert(valstr.len >= 3);
+                std.debug.assert(valstr.len <= 5);
+                std.debug.assert(valstr[valstr.len - 2] == '.');
+                std.debug.assert(valstr[0] != ';');
+
+                const valint: i48 = ut.math.fastIntParse(i48, valstr);
+                ctx.shared.map.findOrAdd(keystr, valint) catch |e| {
+                    ut.debug.print("\n{any}\n{any}\n", .{ e, @errorReturnTrace() });
+                    @panic("BucketMap.findOrAdd failed");
+                };
+                localCount += 1;
+            }
+
+            ctx.shared.linecount_lock.lock();
+            ctx.shared.linecount += localCount;
+            ctx.shared.linecount_lock.unlock();
+        }
+
+        fn deinit(ctx: *Tctx) void {
+            ctx.arena.deinit();
+        }
+
+        fn spawn(shared: *SharedContext, threadPool: *ThreadPool, rawBytes: []const u8, id: usize) !void {
+            var arena = ArenaAllocator.init(shared.allocator);
+            const allocator = arena.allocator();
+
+            const ctx: *Tctx = try allocator.create(Tctx);
+            ctx.*.shared = shared;
+            ctx.*.arena = arena;
+            ctx.*.block = try ut.mem.clone(u8, allocator, rawBytes);
+            ctx.blockId = id;
+            threadPool.spawnWg(&shared.waitGroup, run, .{ctx});
+        }
+    };
+
+    var readSize: usize = try self.file.read(buffer);
+    var bytes: []const u8 = buffer[0..readSize];
+    var blockCount: usize = 0;
+    while (readSize > 0) {
+        blockCount += 1;
+
+        // Find end of the last line in the buffer
+        const endIndex = lastLineEndIndex(bytes);
+        var remain = buffer[@min(buffer.len, endIndex + 2)..];
+        while (remain.len > 0 and remain[0] == '\n') : (remain = remain[1..]) {}
+        while (remain.len > 0 and remain[remain.len - 1] == '\n') : (remain.len -= 1) {}
+        bytes = bytes[0 .. endIndex + 1];
+
+        // ut.debug.print("=== BUFFER\n\"{s}\"\n=== BYTES\n\"{s}\"\n=== REMAIN\n\"{s}\"\n===      \n", .{ buffer, bytes, remain });
+
+        // Schedule a thread to parse the buffer
+        try TaskContext.spawn(sharedContext, &pool, bytes, blockCount);
+
+        // once the task is spawned i can mock about with bytes again to read more data from the file
+        std.mem.copyForwards(u8, buffer, remain);
+        readSize = try self.file.read(buffer[remain.len..]);
+        bytes = buffer[@intFromBool(buffer[0] == '\n') .. readSize + remain.len];
+    }
+
+    sharedContext.waitGroup.wait();
+
+    const finalMap: BRCMap = try sharedContext.map.finalize(self.allocator);
+    return BRCParseResult.init(sharedContext.linecount, &finalMap);
 }
 
 pub fn parse(self: *BRCParser) !BRCParseResult {
@@ -252,12 +352,6 @@ fn read_MultiThread(self: *BRCParser) !BRCParseResult {
             var localCount: usize = 0;
             while (lineIter.next()) |line| {
                 _ = &line;
-                // if (line.len < 5) {
-                //     ut.debug.print("[FAIL]\tblock{d}, line{d}: \"{s}\" | {any}\n", .{ ctx.blockId, localCount, line, line });
-                // } else {
-                //     ut.debug.print("[PASS]\tblock{d}, line{d}: \"{s}\" | {any}\n", .{ ctx.blockId, localCount, line, line });
-                // }
-                // ut.debug.assertPanic(line.len >= 5, "expected line.len >= 5, but found: {d}", .{line.len});
                 localCount += 1;
             }
 
@@ -330,8 +424,6 @@ fn lastLineEndIndex(bytes: []const u8) usize {
         i -= 1;
         if (bytes[i] == '\n') return i - 1;
         if (bytes[i] == '.' and bytes[i + 1] >= '0' and bytes[i + 1] <= '9') {
-            //ut.debug.assertPanic(bytes[i + 1] >= '0', "expected digit but found \"{s}[{c}]\" | 0x{X}", .{ bytes[i - l .. i + 1], bytes[i + 1], bytes[i + 1] });
-            //ut.debug.assertPanic(bytes[i + 1] <= '9', "expected digit but found \"{s}[{c}]\" | 0x{X}", .{ bytes[i - l .. i + 1], bytes[i + 1], bytes[i + 1] });
             return i + 1;
         }
     }

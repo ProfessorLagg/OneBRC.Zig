@@ -25,7 +25,7 @@ if($cacheDir.Exists){$cacheDir | Remove-Item -Recurse -Force}
 $outDir = [DirectoryInfo]::new("zig-out")
 if($outDir.Exists){$outDir | Remove-Item -Recurse -Force}
 
-zig build "-Doptimize=$($Mode)"
+zig build -freference-trace "-Doptimize=$($Mode)"
 
 $exeFile = [FileInfo]::new('zig-out\bin\brc.exe')
 $logDirPath = $PSScriptRoot

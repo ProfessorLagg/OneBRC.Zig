@@ -7,9 +7,9 @@ const ParseResult = lib.BRCParser.BRCParseResult;
 pub const std_options: std.Options = .{
     // Set the log level to info to .debug. use the scope levels instead
     .log_level = switch (builtin.mode) {
-        .Debug => .debug,
-        .ReleaseSafe => .info,
-        .ReleaseSmall => .warn,
+        .Debug => .err,
+        .ReleaseSafe => .err,
+        .ReleaseSmall => .err,
         .ReleaseFast => .err,
     },
     .log_scope_levels = &[_]std.log.ScopeLevel{
@@ -26,9 +26,9 @@ pub const std_options: std.Options = .{
 
 // following files has more than 1 instance of each key, and 41343 keys in total
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\small.txt";
-var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\medium.txt";
+// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\medium.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1GB.txt";
-// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\large.txt";
+var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\large.txt";
 
 const allocator: std.mem.Allocator = b: {
     if (builtin.is_test) break :b std.testing.allocator;
@@ -40,14 +40,16 @@ const allocator: std.mem.Allocator = b: {
 pub fn main() !void {
     defer lib.utils.debug.flush();
     // try temp();
-    //try bench_parse();
-    try bench_read();
+    try bench_parse();
+    // try bench_read();
     //try run();
 }
 
 fn temp() !void {
-    const slc: *const ParseResult = ut.meta.zeroedSlice(ParseResult);
-    ut.debug.print("@intFromPtr(&null) = {d}", .{slc});
+    ut.debug.print("{d: <6.3}\n{d: <6.3}", .{
+        std.fmt.fmtDuration(1230 * std.time.ns_per_ms),
+        std.fmt.fmtDuration(1234 * std.time.ns_per_ms),
+    });
 }
 
 pub fn bench_parse() !void {
@@ -68,7 +70,18 @@ pub fn bench_parse() !void {
     const ns_per_line: u64 = duration_ns / linecount;
 
     const bytes_per_second: u64 = @intFromFloat(@as(f64, @floatFromInt(filesize)) / (@as(f64, @floatFromInt(duration_ns)) / @as(f64, std.time.ns_per_s)));
-    try std.fmt.format(stdout, "\n==========\nParsed {d} lines | {d} keys | in {} ({}/line | {d:.3}/s)", .{ linecount, keycount, std.fmt.fmtDuration(duration_ns), std.fmt.fmtDuration(ns_per_line), std.fmt.fmtIntSizeBin(bytes_per_second) });
+    const threadTagStr = comptime switch (builtin.single_threaded) {
+        true => "Single Thread",
+        false => "Multi Thread ",
+    };
+    try std.fmt.format(stdout, "{s} | Parsed {d} lines | {d} keys | in {d:.3} ({d:.3}/line | {d:.3}/s)", .{
+        threadTagStr,
+        linecount,
+        keycount,
+        std.fmt.fmtDuration(duration_ns),
+        std.fmt.fmtDuration(ns_per_line),
+        std.fmt.fmtIntSizeBin(bytes_per_second),
+    });
 }
 
 pub fn bench_read() !void {
@@ -93,7 +106,7 @@ pub fn bench_read() !void {
         true => "Single Thread",
         false => "Multi Thread ",
     };
-    try std.fmt.format(stdout, "\n==========\n{s} | Parsed {d} lines | {d} keys | in {} ({}/line | {d:.3}/s)", .{
+    try std.fmt.format(stdout, "{s} | Parsed {d} lines | {d} keys | in {d:.3} ({d:.3}/line | {d:.3}/s)", .{
         threadTagStr,
         linecount,
         keycount,

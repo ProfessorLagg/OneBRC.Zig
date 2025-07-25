@@ -76,10 +76,10 @@ fn SubMap(comptime StringLength: comptime_int) type {
         fn init(parent: *const BRCMap) Self {
             return Self{
                 .allocator = parent.allocator,
-                .keybuf = std.mem.zeroes([]Vecstr),
-                .keys = std.mem.zeroes([]Vecstr),
-                .valbuf = std.mem.zeroes([]MapVal),
-                .vals = std.mem.zeroes([]MapVal),
+                .keybuf = ut.meta.zeroedSlice(Vecstr),
+                .keys = ut.meta.zeroedSlice(Vecstr),
+                .valbuf = ut.meta.zeroedSlice(MapVal),
+                .vals = ut.meta.zeroedSlice(MapVal),
             };
         }
         fn deinit(self: *Self) void {
@@ -90,7 +90,7 @@ fn SubMap(comptime StringLength: comptime_int) type {
             self.allocator.free(self.valbuf);
         }
 
-        inline fn count(self: *const Self) usize {
+        pub inline fn count(self: *const Self) usize {
             std.debug.assert(self.keys.len == self.vals.len);
             return self.keys.len;
         }
@@ -130,7 +130,7 @@ fn SubMap(comptime StringLength: comptime_int) type {
             self.vals.len += 1;
             i = self.vals.len - 1;
             while (i > index) : (i -= 1) self.vals[i] = self.vals[i - 1];
-            self.vals[index] = val;
+            self.vals[index] = val;            
         }
 
         inline fn append(self: *Self, key: Vecstr, val: MapVal) !void {
@@ -138,8 +138,9 @@ fn SubMap(comptime StringLength: comptime_int) type {
         }
 
         fn searchInsert(self: *const Self, item: Vecstr) isize {
-            ut.debug.print("\nbinary searching for key: \"{s}\"\n", .{item.asSlice()});
+            //ut.debug.print("\nbinary searching for key: \"{s}\" in {d} keys\n", .{ item.asSlice(), self.count() });
             std.debug.assert(self.count() > 0);
+            std.debug.assert(self.count() < std.math.maxInt(isize));
 
             var L: isize = 0;
             var R: isize = @as(isize, @intCast(self.count())) - 1;
@@ -150,7 +151,7 @@ fn SubMap(comptime StringLength: comptime_int) type {
             loop: switch (c) {
                 0 => return m,
                 -1 => {
-                    ut.debug.print("\tk{d}: \"{s}\" <  key: \"{s}\"\n", .{ m, k.asSlice(), item.asSlice() });
+                    //ut.debug.print("\tk{d}: \"{s}\" <  key: \"{s}\"\n", .{ m, k.asSlice(), item.asSlice() });
                     R = m - 1;
                     if (L > R) break :loop;
 
@@ -160,7 +161,7 @@ fn SubMap(comptime StringLength: comptime_int) type {
                     continue :loop c;
                 },
                 1 => {
-                    ut.debug.print("\tk{d}: \"{s}\" >  key: \"{s}\"\n", .{ m, k.asSlice(), item.asSlice() });
+                    //ut.debug.print("\tk{d}: \"{s}\" >  key: \"{s}\"\n", .{ m, k.asSlice(), item.asSlice() });
                     L = m + 1;
                     if (L > R) break :loop;
 
@@ -177,16 +178,17 @@ fn SubMap(comptime StringLength: comptime_int) type {
                 k = self.keys[@abs(m)];
                 c = Vecstr.compare(&item, &k);
                 switch (c) {
-                    0 => {
-                        if (builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
-                            ut.debug.print("Keys:\n", .{});
-                            for (0..self.count()) |j| {
-                                const keyvec: Vecstr = self.keys[j];
-                                ut.debug.print("\t{d:>5}: \"{s}\"\n", .{ j, keyvec.asSlice() });
-                            }
-                            std.debug.panic("Binary Search Failed to find key \"{s}\" at index {d}", .{ item.asSlice(), m });
-                        } else @panic("Binary Search Failed to find key!");
-                    },
+                    // 0 => {
+                    //     if (builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
+                    //         ut.debug.print("Keys:\n", .{});
+                    //         for (0..self.count()) |j| {
+                    //             const keyvec: Vecstr = self.keys[j];
+                    //             ut.debug.print("\t{d:>5}: \"{s}\"\n", .{ j, keyvec.asSlice() });
+                    //         }
+                    //         std.debug.panic("Binary Search Failed to find key \"{s}\" at index {d}", .{ item.asSlice(), m });
+                    //     } else @panic("Binary Search Failed to find key!");
+                    // },
+                    0 => @panic("Binary Search Failed to find key!"),
                     1 => break,
                     -1 => continue,
                     else => unreachable,
@@ -219,6 +221,32 @@ fn SubMap(comptime StringLength: comptime_int) type {
                 else => unreachable,
             };
             return &self.vals[idx];
+        }
+
+        fn findOrAdd(self: *Self, key: Vecstr, valint: i64) !void {
+            (self.*).mutex.lock();
+            defer (self.*).mutex.unlock();
+
+            const cnt = self.count();
+            if (cnt == 0) {
+                try self.append(key, MapVal.None);
+                self.vals[0].add(valint);
+                return;
+            }
+            const signed = self.searchInsert(key);
+            const idx: usize = b: switch (std.math.sign(signed)) {
+                0, 1 => @abs(signed),
+                -1 => {
+                    const c = self.count();
+                    const i: usize = @intCast(~signed);
+                    std.debug.assert(i <= c);
+                    std.debug.assert(i == c or !ut.mem.eqlBytes(key.asSlice(), self.keys[i].asSlice()));
+                    try self.insert(i, key, MapVal.None);
+                    break :b i;
+                },
+                else => unreachable,
+            };
+            self.vals[idx].add(valint);
         }
     };
 }
@@ -264,11 +292,19 @@ pub inline fn count(self: *const BRCMap) usize {
 }
 
 pub fn findOrInsert(self: *BRCMap, key: []const u8) !*MapVal {
-    if (key.len <= 8) return self.sub8.findOrInsert(Vecstr8.create(key));
-    if (key.len <= 16) return self.sub16.findOrInsert(Vecstr16.create(key));
-    if (key.len <= 32) return self.sub32.findOrInsert(Vecstr32.create(key));
-    if (key.len <= 64) return self.sub64.findOrInsert(Vecstr64.create(key));
-    if (key.len <= 128) return self.sub128.findOrInsert(Vecstr128.create(key));
+    if (key.len <= 8) return try self.sub8.findOrInsert(Vecstr8.create(key));
+    if (key.len <= 16) return try self.sub16.findOrInsert(Vecstr16.create(key));
+    if (key.len <= 32) return try self.sub32.findOrInsert(Vecstr32.create(key));
+    if (key.len <= 64) return try self.sub64.findOrInsert(Vecstr64.create(key));
+    if (key.len <= 128) return try self.sub128.findOrInsert(Vecstr128.create(key));
+    unreachable;
+}
+pub fn findOrAdd(self: *BRCMap, key: []const u8, valint: i64) !void {
+    if (key.len <= 8) return try self.sub8.findOrAdd(Vecstr8.create(key), valint);
+    if (key.len <= 16) return try self.sub16.findOrAdd(Vecstr16.create(key), valint);
+    if (key.len <= 32) return try self.sub32.findOrAdd(Vecstr32.create(key), valint);
+    if (key.len <= 64) return try self.sub64.findOrAdd(Vecstr64.create(key), valint);
+    if (key.len <= 128) return try self.sub128.findOrAdd(Vecstr128.create(key), valint);
     unreachable;
 }
 
