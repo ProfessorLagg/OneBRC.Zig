@@ -47,10 +47,10 @@ pub const BRCParseResult = struct {
 
     fn sortEntries(entries: []ResultEntry) void {
         var i: usize = 1;
-        while(i < entries.len): (i += 1){
+        while (i < entries.len) : (i += 1) {
             const x: ResultEntry = entries[i];
             var j: usize = i;
-            while(j > 0 and (ResultEntry.compare_order(&entries[j - 1], &x)) == .gt):(j -= 1){
+            while (j > 0 and (ResultEntry.compare_order(&entries[j - 1], &x)) == .gt) : (j -= 1) {
                 entries[j] = entries[j - 1];
             }
             entries[j] = x;
@@ -88,7 +88,6 @@ pub const BRCParseResult = struct {
             entryIndex += 1;
         }
         sortEntries(entries);
-        
 
         return BRCParseResult{
             .allocator = allocator,
@@ -119,42 +118,7 @@ pub fn deinit(self: *BRCParser) void {
     self.file.close();
 }
 
-fn parse_BRCMap(self: *BRCParser) !BRCParseResult {
-    const init_capacity: usize = std.math.divCeil(usize, (try self.file.stat()).size, 14) catch unreachable;
-    var map: BRCMap = try BRCMap.initCapacity(self.allocator, init_capacity);
-    defer map.deinit();
-    const fileReader = self.file.reader();
-    var lineReader: LineReader = try LineReader.init(self.allocator, fileReader);
-    var linecount: usize = 0;
-    while (try lineReader.next()) |line| {
-        std.debug.assert(line.len >= 5);
-        var splitIndex: usize = line.len - 4;
-        while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
-        std.debug.assert(line[splitIndex] == ';');
-
-        const keystr: []const u8 = line[0..splitIndex];
-        std.debug.assert(keystr[keystr.len - 1] != '\n');
-        const valstr: []const u8 = line[(splitIndex + 1)..];
-        linelog.debug("line{d}: {s}, k: {s}, v: {s}", .{ linecount, line, keystr, valstr });
-
-        std.debug.assert(keystr.len >= 1);
-        std.debug.assert(keystr.len <= 100);
-        std.debug.assert(keystr[keystr.len - 1] != ';');
-        std.debug.assert(valstr.len >= 3);
-        std.debug.assert(valstr.len <= 5);
-        std.debug.assert(valstr[valstr.len - 2] == '.');
-        std.debug.assert(valstr[0] != ';');
-
-        const valint: i48 = ut.math.fastIntParse(i48, valstr);
-        const valptr: *MapVal = try map.findOrInsert(keystr);
-        valptr.add(valint);
-        linecount += 1;
-    }
-
-    return BRCParseResult.init(linecount, &map);
-}
-
-fn parse_BRCBucketMap_SingleThread(self: *BRCParser) !BRCParseResult {
+fn parse_SingleThread(self: *BRCParser) !BRCParseResult {
     const bucket_count: comptime_int = 512;
     const BucketMap = BRCBucketMap(bucket_count);
     var bucketMap: BucketMap = try BucketMap.init(self.allocator);
@@ -191,21 +155,24 @@ fn parse_BRCBucketMap_SingleThread(self: *BRCParser) !BRCParseResult {
     return BRCParseResult.init(linecount, &finalMap);
 }
 
-fn parse_BRCBucketMap_MultiThread(self: *BRCParser) !BRCParseResult {
+fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
     const ThreadPool = std.Thread.Pool;
     const WaitGroup = std.Thread.WaitGroup;
     const Mutex = std.Thread.Mutex;
     const ArenaAllocator = std.heap.ArenaAllocator;
     const bucket_count: comptime_int = 512;
     const BucketMap = BRCBucketMap(bucket_count);
+    const VirtualAlloc = @import("VirtualAlloc.zig");
 
-    const buffer: []u8 = try self.allocator.alignedAlloc(u8, 4096, 65535);
-    defer self.allocator.free(buffer);
+    // const buffer: []u8 = try self.allocator.alignedAlloc(u8, 4096, 2_097_152);
+    // defer self.allocator.free(buffer);
+
+    const buffer: []u8 = try VirtualAlloc.allocLargePage();
+    defer VirtualAlloc.freeLargePage(buffer) catch @panic("could not free large page");
 
     var pool: ThreadPool = undefined;
-    {
-        try pool.init(.{ .allocator = self.allocator });
-    }
+    try pool.init(.{ .allocator = self.allocator });
+    defer pool.deinit();
 
     // shared context
     const SharedContext = struct {
@@ -326,8 +293,8 @@ fn parse_BRCBucketMap_MultiThread(self: *BRCParser) !BRCParseResult {
 
 pub fn parse(self: *BRCParser) !BRCParseResult {
     const parseFn = comptime switch (builtin.single_threaded) {
-        true => parse_BRCBucketMap_SingleThread,
-        false => parse_BRCBucketMap_MultiThread,
+        true => parse_SingleThread,
+        false => parse_MultiThread,
     };
     return parseFn(self);
 }
