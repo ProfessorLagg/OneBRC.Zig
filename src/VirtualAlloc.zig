@@ -3,8 +3,15 @@ comptime {
 }
 const builtin = @import("builtin");
 const std = @import("std");
+const LPCWSTR = std.os.windows.LPCWSTR;
+const LPCSTR = std.os.windows.LPCSTR;
 const DWORD = std.os.windows.DWORD;
 const SYSTEM_INFO = std.os.windows.SYSTEM_INFO;
+
+const c = @cImport({
+    @cInclude("Windows.h");
+    @cInclude("securitybaseapi.h");
+});
 
 const AllocationType = enum(DWORD) {
     pub inline fn dw(self: AllocationType) DWORD {
@@ -52,16 +59,48 @@ inline fn ensureSystemInfo() void {
     SystemInfoInitialized = true;
 }
 
+fn SetLargePagePrivilege() !void {
+    var hToken: c.HANDLE = undefined; // access token handle
+
+    var luid: c.LUID = undefined;
+
+    const res1: c.WINBOOL = c.OpenProcessToken(c.GetCurrentProcess(), c.TOKEN_ADJUST_PRIVILEGES | c.TOKEN_QUERY, &hToken);
+    if (res1 == c.FALSE) return error.FailedToGetToken;
+
+    const res2: c.WINBOOL = c.LookupPrivilegeValueA(
+        null, // lookup privilege on local system
+        "SeLockMemoryPrivilege", // privilege to lookup
+        &luid, // receives LUID of privilege
+    );
+    if (res2 == c.FALSE) return error.LookupPrivilegeValueFailed;
+
+    var tp: c.TOKEN_PRIVILEGES = .{};
+    tp.PrivilegeCount = 1;
+    tp.Privileges[0].Luid = luid;
+    tp.Privileges[0].Attributes = c.SE_PRIVILEGE_ENABLED;
+
+    const res3 = c.AdjustTokenPrivileges(
+        hToken, // TokenHandle: HANDLE
+        c.FALSE, // DisableAllPrivileges: WINBOOL
+        &tp, // NewState: PTOKEN_PRIVILEGES
+        @sizeOf(@TypeOf(tp)), // BufferLength: DWORD
+        null,
+        null,
+    );
+    if (res3 == c.FALSE) return error.AdjustTokenPrivilegesFailed;
+
+    if (c.GetLastError() == c.ERROR_NOT_ALL_ASSIGNED) return error.TokenDoesNotHaveSpecifiedPrivilege;
+}
+
 /// Uses VirtualAlloc to allocate an entire AllocationGranularity. Guranteed to be aligned to a page at both ends
 pub fn allocBlock() ![]u8 {
     ensureSystemInfo();
     const size: usize = SystemInfo.dwAllocationGranularity;
-    const alloc_type: DWORD = AllocationType.MEM_COMMIT.dw() | AllocationType.MEM_RESERVE.dw();
     const ptr = try std.os.windows.VirtualAlloc(
         null, // addr: ?LPVOID
         size, // size: usize
-        alloc_type, // alloc_type: DWORD
-        std.os.windows.PAGE_READWRITE, // flProtect: DWORD
+        c.MEM_COMMIT || c.MEM_RESERVE, // alloc_type: DWORD
+        c.PAGE_READWRITE, // flProtect: DWORD
     );
 
     var result: []u8 = undefined;
@@ -99,6 +138,34 @@ pub fn freeBlock(block: []u8) !void {
     if (@intFromPtr(block.ptr) % SystemInfo.?.dwPageSize != 0) return error.NotAVirtualAllocBlock;
     std.os.windows.VirtualFree(
         @ptrCast(block.ptr), //lpAddress
+        0, // dwSize
+        FreeType.MEM_RELEASE.dw(), // dwFreeType
+    );
+}
+
+pub fn allocLargePage() ![]u8 {
+    try SetLargePagePrivilege();
+    const largePageSize = c.GetLargePageMinimum();
+
+    const page_ptr = c.VirtualAlloc(
+        null,
+        largePageSize,
+        c.MEM_RESERVE | c.MEM_COMMIT | c.MEM_LARGE_PAGES,
+        c.PAGE_READWRITE,
+    );
+
+    var r: []u8 = undefined;
+    r.len = @intCast(largePageSize);
+    r.ptr = @ptrCast(page_ptr);
+    return r;
+}
+
+pub fn freeLargePage(largePage: []u8) !void {
+    const largePageSize = c.GetLargePageMinimum();
+    if (largePage.len != largePageSize) return error.NotALargePage;
+    if (@intFromPtr(largePage.ptr) % largePageSize != 0) return error.NotALargePage;
+    std.os.windows.VirtualFree(
+        @ptrCast(largePage.ptr), //lpAddress
         0, // dwSize
         FreeType.MEM_RELEASE.dw(), // dwFreeType
     );
