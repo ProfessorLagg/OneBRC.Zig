@@ -122,23 +122,55 @@ pub const math = struct {
     }
 };
 
-pub const debug = struct {
-    pub const print: @TypeOf(std.debug.print) = switch (builtin.mode) {
-        .Debug, .ReleaseSafe => _print,
-        else => _print_nop,
-    };
-    var _print_writer: ?std.io.BufferedWriter(std.math.maxInt(u16), std.fs.File.Writer) = null;
-    fn _print(comptime fmt: []const u8, args: anytype) void {
+const _debug = struct {
+    const BufferedWriter: type = std.io.BufferedWriter(std.math.maxInt(u16), std.fs.File.Writer);
+    var print_buf_writer: ?BufferedWriter = null;
+    var print_writer: ?BufferedWriter.Writer = null;
+    var print_lock: std.Thread.Mutex = .{};
+
+    pub fn print(comptime fmt: []const u8, args: anytype) void {
         std.debug.assert(!@inComptime());
-        if (_print_writer == null) _print_writer = .{ .unbuffered_writer = std.io.getStdErr().writer() };
-        std.fmt.format(_print_writer.?.writer(), fmt, args) catch unreachable;
+        print_lock.lock();
+        if (print_writer == null) {
+            print_buf_writer = .{ .unbuffered_writer = std.io.getStdErr().writer() };
+            print_writer = print_buf_writer.?.writer();
+        }
+        std.fmt.format(print_writer.?, fmt, args) catch |e| std.debug.panic("\nformat(\"{s}\", {any}) failed: {any}{any}", .{ fmt, args, e, @errorReturnTrace() });
+        print_lock.unlock();
     }
-    fn _print_nop(comptime fmt: []const u8, args: anytype) void {
+    pub fn flush() void {
+        if (print_buf_writer != null) print_buf_writer.?.flush() catch |e| std.debug.panic("\n_print_buf_writer.?.flush() failed: {any}{any}", .{ e, @errorReturnTrace() });
+    }
+    pub fn assertPanic(ok: bool, comptime fmt: []const u8, args: anytype) void {
+        if(!ok){
+            @branchHint(.cold);
+            std.debug.panic(fmt, args);
+        }
+    }
+};
+const _debug_nop = struct {
+    // TODO Dynamically construct from @typeInfo(_debug);
+    pub fn print(comptime fmt: []const u8, args: anytype) void {
         _ = &fmt;
         _ = &args;
     }
+    pub fn flush() void {}
+    pub fn assertPanic(ok: bool, msg: []const u8) void {
+        _ = &ok;
+        _ = &msg;
+    }
+};
+pub const debug = switch (builtin.mode) {
+    .Debug, .ReleaseSafe => _debug,
+    else => _debug_nop,
+};
 
-    pub fn flush() void {
-        if (_print_writer != null) _print_writer.?.flush() catch unreachable;
+pub const meta = struct {
+    /// Returns a slice of `T` with 0 length and ptr set to `@ptrFromInt(@alignOf(T))`
+    pub fn zeroedSlice(comptime T: type) []T {
+        var r: []T = undefined;
+        r.len = 0;
+        r.ptr = @ptrFromInt(@alignOf(T));
+        return r;
     }
 };
