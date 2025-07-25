@@ -155,9 +155,10 @@ const _debug_nop = struct {
         _ = &args;
     }
     pub fn flush() void {}
-    pub fn assertPanic(ok: bool, msg: []const u8) void {
+    pub fn assertPanic(ok: bool, comptime fmt: []const u8, args: anytype) void {
         _ = &ok;
-        _ = &msg;
+        _ = &fmt;
+        _ = &args;
     }
 };
 pub const debug = switch (builtin.mode) {

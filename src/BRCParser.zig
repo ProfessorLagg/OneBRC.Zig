@@ -251,13 +251,13 @@ fn read_MultiThread(self: *BRCParser) !BRCParseResult {
             var lineIter = std.mem.splitScalar(u8, ctx.block, '\n');
             var localCount: usize = 0;
             while (lineIter.next()) |line| {
-
+                _ = &line;
                 // if (line.len < 5) {
                 //     ut.debug.print("[FAIL]\tblock{d}, line{d}: \"{s}\" | {any}\n", .{ ctx.blockId, localCount, line, line });
                 // } else {
                 //     ut.debug.print("[PASS]\tblock{d}, line{d}: \"{s}\" | {any}\n", .{ ctx.blockId, localCount, line, line });
                 // }
-                ut.debug.assertPanic(line.len >= 5, "expected line.len >= 5, but found: {d}", .{line.len});
+                // ut.debug.assertPanic(line.len >= 5, "expected line.len >= 5, but found: {d}", .{line.len});
                 localCount += 1;
             }
 
@@ -290,9 +290,9 @@ fn read_MultiThread(self: *BRCParser) !BRCParseResult {
 
         // Find end of the last line in the buffer
         const endIndex = lastLineEndIndex(bytes);
-        var remain = buffer[endIndex + 1 ..];
+        var remain = buffer[@min(buffer.len, endIndex + 2)..];
         while (remain.len > 0 and remain[0] == '\n') : (remain = remain[1..]) {}
-        while (remain.len > 0 and remain[remain.len - 1] == '\n') : (remain = remain[0 .. remain.len - 1]) {}
+        while (remain.len > 0 and remain[remain.len - 1] == '\n') : (remain.len -= 1) {}
         bytes = bytes[0 .. endIndex + 1];
 
         ut.debug.print("=== BUFFER\n\"{s}\"\n=== BYTES\n\"{s}\"\n=== REMAIN\n\"{s}\"\n===      \n", .{ buffer, bytes, remain });
@@ -323,24 +323,19 @@ pub fn read(self: *BRCParser) !BRCParseResult {
 
 /// Returns the index of the last character in the last line of `bytes`
 fn lastLineEndIndex(bytes: []const u8) usize {
-    // if (std.mem.lastIndexOfScalar(u8, bytes, '\n')) |idx| {
-    //     return idx - 1;
-    // }
-    // if (std.mem.lastIndexOfScalar(u8, bytes[0 .. bytes.len - 2], '.')) |idx| {
-    //     return idx + 1;
-    // }
     var i: usize = bytes.len - 1;
     if (bytes[i] == '\n') return i - 1;
     const l = @min(5, bytes.len);
     while (i > l) {
         i -= 1;
         if (bytes[i] == '\n') return i - 1;
-        if (bytes[i] == '.') {
-            std.debug.assert(bytes[i + 1] >= '0');
-            std.debug.assert(bytes[i + 1] <= '9');
+        if (bytes[i] == '.' and bytes[i + 1] >= '0' and bytes[i + 1] <= '9') {
+            //ut.debug.assertPanic(bytes[i + 1] >= '0', "expected digit but found \"{s}[{c}]\" | 0x{X}", .{ bytes[i - l .. i + 1], bytes[i + 1], bytes[i + 1] });
+            //ut.debug.assertPanic(bytes[i + 1] <= '9', "expected digit but found \"{s}[{c}]\" | 0x{X}", .{ bytes[i - l .. i + 1], bytes[i + 1], bytes[i + 1] });
             return i + 1;
         }
     }
 
+    std.log.err("Could not find lastLineEnd in:\n\"{s}\"", .{bytes});
     @panic("bytes was not properly formatted BRC!");
 }
