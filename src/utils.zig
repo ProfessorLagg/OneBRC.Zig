@@ -125,6 +125,53 @@ pub const math = struct {
         for (bytes) |byte| sum += byte;
         return sum;
     }
+
+    /// returns `x^y`. `T` must be an unsigned integer type.
+    /// Result can overflow without warning or assertion
+    pub fn powUInt(comptime T: type, x: T, y: T) T {
+        comptime {
+            const ti: std.builtin.Type = @typeInfo(T);
+            if (ti != .int) @compileError("Expected unsigned integer, but found " ++ @typeName(T));
+            if (ti.int.signedness != .signed) @compileError("Expected unsigned integer, but found " ++ @typeName(T));
+        }
+        @setRuntimeSafety(false);
+        var r: T = 1;
+        for (0..y) |_| r *%= x;
+        return r;
+    }
+};
+
+pub const hashing = struct {
+    pub inline fn fnv1a32(data: []const u8) u32 {
+        @setRuntimeSafety(false);
+        const fnv_prime: comptime_int = 16777619;
+        var hash: u32 = 2166136261;
+        for (data) |byte| {
+            hash ^= @as(u32, @intCast(byte));
+            hash *%= fnv_prime;
+        }
+        return hash;
+    }
+    pub inline fn fnv1a64(data: []const u8) u64 {
+        @setRuntimeSafety(false);
+        const fnv_prime: comptime_int = 1099511628211;
+        var hash: u64 = 0xcbf29ce484222325;
+        for (data) |byte| {
+            hash ^= @as(u64, @intCast(byte));
+            hash *%= fnv_prime;
+        }
+        return hash;
+    }
+};
+
+pub const meta = struct {
+    /// Returns a slice of `T` with 0 length and ptr set to `@ptrFromInt(@alignOf(T))`
+    pub fn zeroedSlice(comptime T: type) []T {
+        var r: []T = undefined;
+        r.len = 0;
+        r.ptr = @ptrFromInt(@alignOf(T));
+        return r;
+    }
 };
 
 const _debug = struct {
@@ -171,12 +218,6 @@ pub const debug = switch (builtin.mode) {
     else => _debug_nop,
 };
 
-pub const meta = struct {
-    /// Returns a slice of `T` with 0 length and ptr set to `@ptrFromInt(@alignOf(T))`
-    pub fn zeroedSlice(comptime T: type) []T {
-        var r: []T = undefined;
-        r.len = 0;
-        r.ptr = @ptrFromInt(@alignOf(T));
-        return r;
-    }
-};
+test hashing {
+    _ = hashing;
+}

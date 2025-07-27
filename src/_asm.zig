@@ -21,6 +21,37 @@ pub fn char_to_val(c: u8) u8 {
     );
     return r;
 }
+pub fn x86_fnv1a_32(ptr: *const anyopaque, len: usize) u32 {
+    return asm volatile (
+    // zero out registers
+        \\xor %rbx, %rbx
+        \\xor %rax, %rax
+        // Mov offset into rax
+        \\mov $0x811c9dc5, %rax
+        // move prime into r8
+        \\mov $0x01000193, %r8
+        \\.x86_fnv1a_32_ex_hashbyte:
+        // return if %cnt is 0
+        \\  cmp $0, %rcx
+        \\  je .x86_fnv1a_32_ex_ret
+        // move byte from %rdi into %bl
+        \\  movb (%rdi), %bl
+        //
+        \\  xor %bl, %al
+        //
+        \\  mul %r8
+        //
+        \\  inc %rdi
+        //
+        \\  dec %rcx
+        \\ jmp .x86_fnv1a_32_ex_hashbyte
+        \\.x86_fnv1a_32_ex_ret:
+        : [ret] "={rax}" (-> u32),
+        : [ptr] "{rdi}" (ptr),
+          [cnt] "{rcx}" (len),
+        : "rax", "r8", "bl", "rbx"
+    );
+}
 
 test char_to_val {
     std.log.warn("Test not implemented", .{});

@@ -99,7 +99,7 @@ pub fn allocBlock() ![]u8 {
     const ptr = try std.os.windows.VirtualAlloc(
         null, // addr: ?LPVOID
         size, // size: usize
-        c.MEM_COMMIT || c.MEM_RESERVE, // alloc_type: DWORD
+        c.MEM_COMMIT | c.MEM_RESERVE, // alloc_type: DWORD
         c.PAGE_READWRITE, // flProtect: DWORD
     );
 
