@@ -162,10 +162,143 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
     const ArenaAllocator = std.heap.ArenaAllocator;
     const bucket_count: comptime_int = 512;
     const BucketMap = BRCBucketMap(bucket_count);
-    const VirtualAlloc = @import("VirtualAlloc.zig");
+    // const VirtualAlloc = @import("VirtualAlloc.zig");
 
-    // const buffer: []u8 = try self.allocator.alignedAlloc(u8, 4096, 2_097_152);
-    // defer self.allocator.free(buffer);
+    const buffer: []u8 = try self.allocator.alignedAlloc(u8, 4096, 1024 * 1024 * 2);
+    defer self.allocator.free(buffer);
+
+    // const buffer: []u8 = try VirtualAlloc.allocLargePage();
+    // defer VirtualAlloc.freeLargePage(buffer) catch @panic("could not free large page");
+
+    var pool: ThreadPool = undefined;
+    try pool.init(.{ .allocator = self.allocator });
+    defer pool.deinit();
+
+    // shared context
+    const SharedContext = struct {
+        const Tsctx = @This();
+        allocator: std.mem.Allocator = undefined,
+        linecount: usize = 0,
+        map: BucketMap = undefined,
+        linecount_lock: Mutex = .{},
+        waitGroup: WaitGroup = .{},
+
+        fn init(allocator: std.mem.Allocator) !*Tsctx {
+            const r: *Tsctx = try allocator.create(Tsctx);
+            r.*.allocator = allocator;
+            r.*.linecount = 0;
+            r.*.map = try BucketMap.init(allocator);
+
+            r.*.linecount_lock = .{};
+            r.*.waitGroup = .{};
+            return r;
+        }
+        fn deinit(sctx: *Tsctx) void {
+            sctx.map.deinit();
+            sctx.allocator.destroy(sctx);
+        }
+    };
+    // Gotta put anything that touches a thread on the heap
+    const sharedContext: *SharedContext = try SharedContext.init(self.allocator); //self.allocator.create();
+    defer sharedContext.deinit();
+
+    const TaskContext = struct {
+        const Tctx = @This();
+        shared: *SharedContext,
+        arena: ArenaAllocator,
+        block: []const u8,
+        blockId: usize,
+
+        fn run(ctx: *Tctx) void {
+            defer ctx.deinit();
+            var lineIter = std.mem.splitScalar(u8, ctx.block, '\n');
+            var localCount: usize = 0;
+            while (lineIter.next()) |line| {
+                std.debug.assert(line.len >= 5);
+                var splitIndex: usize = line.len - 4;
+                while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
+                std.debug.assert(line[splitIndex] == ';');
+
+                const keystr: []const u8 = line[0..splitIndex];
+                std.debug.assert(keystr[keystr.len - 1] != '\n');
+                const valstr: []const u8 = line[(splitIndex + 1)..];
+
+                std.debug.assert(keystr.len >= 1);
+                std.debug.assert(keystr.len <= 100);
+                std.debug.assert(keystr[keystr.len - 1] != ';');
+                std.debug.assert(valstr.len >= 3);
+                std.debug.assert(valstr.len <= 5);
+                std.debug.assert(valstr[valstr.len - 2] == '.');
+                std.debug.assert(valstr[0] != ';');
+
+                const valint: i48 = ut.math.fastIntParse(i48, valstr);
+                ctx.shared.map.findOrAdd(keystr, valint) catch |e| {
+                    ut.debug.print("\n{any}\n{any}\n", .{ e, @errorReturnTrace() });
+                    @panic("BucketMap.findOrAdd failed");
+                };
+                localCount += 1;
+            }
+
+            ctx.shared.linecount_lock.lock();
+            ctx.shared.linecount += localCount;
+            ctx.shared.linecount_lock.unlock();
+        }
+
+        fn deinit(ctx: *Tctx) void {
+            ctx.arena.deinit();
+        }
+
+        fn spawn(shared: *SharedContext, threadPool: *ThreadPool, rawBytes: []const u8, id: usize) !void {
+            var arena = ArenaAllocator.init(shared.allocator);
+            const allocator = arena.allocator();
+
+            const ctx: *Tctx = try allocator.create(Tctx);
+            ctx.*.shared = shared;
+            ctx.*.arena = arena;
+            ctx.*.block = try ut.mem.clone(u8, allocator, rawBytes);
+            ctx.blockId = id;
+            threadPool.spawnWg(&shared.waitGroup, run, .{ctx});
+        }
+    };
+
+    var readSize: usize = try self.file.read(buffer);
+    var bytes: []const u8 = buffer[0..readSize];
+    var blockCount: usize = 0;
+    while (readSize > 0) {
+        blockCount += 1;
+
+        // Find end of the last line in the buffer
+        const endIndex = lastLineEndIndex(bytes);
+        var remain = buffer[@min(buffer.len, endIndex + 2)..];
+        while (remain.len > 0 and remain[0] == '\n') : (remain = remain[1..]) {}
+        while (remain.len > 0 and remain[remain.len - 1] == '\n') : (remain.len -= 1) {}
+        bytes = bytes[0 .. endIndex + 1];
+
+        // ut.debug.print("=== BUFFER\n\"{s}\"\n=== BYTES\n\"{s}\"\n=== REMAIN\n\"{s}\"\n===      \n", .{ buffer, bytes, remain });
+
+        // Schedule a thread to parse the buffer
+        try TaskContext.spawn(sharedContext, &pool, bytes, blockCount);
+
+        // once the task is spawned i can mock about with bytes again to read more data from the file
+        std.mem.copyForwards(u8, buffer, remain);
+        readSize = try self.file.read(buffer[remain.len..]);
+        bytes = buffer[@intFromBool(buffer[0] == '\n') .. readSize + remain.len];
+    }
+
+    sharedContext.waitGroup.wait();
+
+    const finalMap: BRCMap = try sharedContext.map.finalize(self.allocator);
+    return BRCParseResult.init(sharedContext.linecount, &finalMap);
+}
+
+fn parse_MultiThread_LargePageBuffer(self: *BRCParser) !BRCParseResult {
+    const ThreadPool = std.Thread.Pool;
+    const WaitGroup = std.Thread.WaitGroup;
+    const Mutex = std.Thread.Mutex;
+    const ArenaAllocator = std.heap.ArenaAllocator;
+    const bucket_count: comptime_int = 512;
+    const BucketMap = BRCBucketMap(bucket_count);
+    const VirtualAlloc = @import("VirtualAlloc.zig");
 
     const buffer: []u8 = try VirtualAlloc.allocLargePage();
     defer VirtualAlloc.freeLargePage(buffer) catch @panic("could not free large page");
@@ -294,7 +427,10 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
 pub fn parse(self: *BRCParser) !BRCParseResult {
     const parseFn = comptime switch (builtin.single_threaded) {
         true => parse_SingleThread,
-        false => parse_MultiThread,
+        false => switch (builtin.os.tag) {
+            .windows => parse_MultiThread_LargePageBuffer,
+            else => parse_MultiThread,
+        },
     };
     return parseFn(self);
 }

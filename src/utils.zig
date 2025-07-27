@@ -3,6 +3,11 @@ const std = @import("std");
 const _asm = @import("_asm.zig");
 
 pub const mem = struct {
+    pub const KiloByte: comptime_int = 1024;
+    pub const MegaByte: comptime_int = KiloByte * 1024;
+    pub const GigaByte: comptime_int = MegaByte * 1024;
+    pub const TeraByte: comptime_int = GigaByte * 1024;
+
     /// Copies as much from `src` as will fit into `dst`. Returns the number of bytes copied;
     pub fn copyBytes(noalias src: []const u8, noalias dst: []u8) usize {
         const l: usize = @min(src.len, dst.len);
@@ -142,7 +147,7 @@ const _debug = struct {
         if (print_buf_writer != null) print_buf_writer.?.flush() catch |e| std.debug.panic("\n_print_buf_writer.?.flush() failed: {any}{any}", .{ e, @errorReturnTrace() });
     }
     pub fn assertPanic(ok: bool, comptime fmt: []const u8, args: anytype) void {
-        if(!ok){
+        if (!ok) {
             @branchHint(.cold);
             std.debug.panic(fmt, args);
         }
