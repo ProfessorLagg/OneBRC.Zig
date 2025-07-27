@@ -42,19 +42,21 @@ var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\N
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100_000_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000_000.txt";
 
-const allocator: std.mem.Allocator = b: {
-    if (builtin.is_test) break :b std.testing.allocator;
-    if (!builtin.single_threaded) break :b std.heap.smp_allocator;
-    if (builtin.link_libc) break :b std.heap.c_allocator;
-    @compileError("Requires either single-threading to be disabled or lib-c to be linked");
-};
+// const allocator: std.mem.Allocator = b: {
+//     if (builtin.is_test) break :b std.testing.allocator;
+//     if (!builtin.single_threaded) break :b std.heap.smp_allocator;
+//     if (builtin.link_libc) break :b std.heap.c_allocator;
+//     @compileError("Requires either single-threading to be disabled or lib-c to be linked");
+// };
+
+const allocator = std.heap.c_allocator;
 
 pub fn main() !void {
     defer lib.utils.debug.flush();
-    // try temp();
-    try bench_parse();
-    // try bench_read();
-    //try run();
+    //temp() catch |e| std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() });
+    bench_parse() catch |e| std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() }) catch @panic("Format failed");
+    //bench_read() catch |e| std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() });
+    //run() catch |e| std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() });
 }
 
 fn temp() !void {
