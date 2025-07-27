@@ -118,44 +118,8 @@ pub fn deinit(self: *BRCParser) void {
     self.file.close();
 }
 
+
 fn parse_SingleThread(self: *BRCParser) !BRCParseResult {
-    const bucket_count: comptime_int = 512;
-    const BucketMap = BRCBucketMap(bucket_count);
-    var bucketMap: BucketMap = try BucketMap.init(self.allocator);
-
-    const fileReader = self.file.reader();
-    var lineReader: LineReader = try LineReader.init(self.allocator, fileReader);
-    var linecount: usize = 0;
-    while (try lineReader.next()) |line| {
-        std.debug.assert(line.len >= 5);
-        var splitIndex: usize = line.len - 4;
-        while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
-        std.debug.assert(line[splitIndex] == ';');
-
-        const keystr: []const u8 = line[0..splitIndex];
-        std.debug.assert(keystr[keystr.len - 1] != '\n');
-        const valstr: []const u8 = line[(splitIndex + 1)..];
-        linelog.debug("line{d}: {s}, k: {s}, v: {s}", .{ linecount, line, keystr, valstr });
-
-        std.debug.assert(keystr.len >= 1);
-        std.debug.assert(keystr.len <= 100);
-        std.debug.assert(keystr[keystr.len - 1] != ';');
-        std.debug.assert(valstr.len >= 3);
-        std.debug.assert(valstr.len <= 5);
-        std.debug.assert(valstr[valstr.len - 2] == '.');
-        std.debug.assert(valstr[0] != ';');
-
-        const valint: i48 = ut.math.fastIntParse(i48, valstr);
-        const valptr: *MapVal = try bucketMap.findOrInsert(keystr);
-        valptr.add(valint);
-        linecount += 1;
-    }
-
-    const finalMap: BRCMap = try bucketMap.finalize(self.allocator);
-    return BRCParseResult.init(linecount, &finalMap);
-}
-
-fn parse_SingleThread_fnv1a32(self: *BRCParser) !BRCParseResult {
     const MapCtx = struct {
         pub fn hash(ctx: @This(), K: []const u8) u32 {
             _ = &ctx;
@@ -167,7 +131,7 @@ fn parse_SingleThread_fnv1a32(self: *BRCParser) !BRCParseResult {
             return std.mem.eql(u8, a, b);
         }
     };
-    const HashMap: type = std.HashMap([]const u8, MapVal, MapCtx, 50);
+    const HashMap: type = std.HashMap([]const u8, MapVal, MapCtx, 20);
 
     var map: HashMap = HashMap.init(self.allocator);
     defer map.deinit();
@@ -204,7 +168,7 @@ fn parse_SingleThread_fnv1a32(self: *BRCParser) !BRCParseResult {
         MapVal.add(entry.value_ptr, valint);
     }
 
-    // const entries: 
+    // const entries:
     const entries: []BRCParseResult.ResultEntry = try self.allocator.alloc(BRCParseResult.ResultEntry, map.count());
     var iter = map.iterator();
     var i: usize = 0;
@@ -212,78 +176,11 @@ fn parse_SingleThread_fnv1a32(self: *BRCParser) !BRCParseResult {
         entries[i].val = e.value_ptr.*;
         entries[i].key = e.key_ptr.*;
     }
-
+    BRCParseResult.sortEntries(entries);
     return BRCParseResult{
         .allocator = self.allocator,
         .entries = entries,
         .linecount = linecount,
-        
-    };
-}
-
-fn parse_SingleThread_fnv1a64(self: *BRCParser) !BRCParseResult {
-    const MapCtx = struct {
-        pub fn hash(ctx: @This(), K: []const u8) u64 {
-            _ = &ctx;
-            return ut.hashing.fnv1a64(K);
-        }
-
-        pub fn eql(ctx: @This(), a: []const u8, b: []const u8) bool {
-            _ = &ctx;
-            return std.mem.eql(u8, a, b);
-        }
-    };
-    const HashMap: type = std.HashMap([]const u8, MapVal, MapCtx, 50);
-
-    var map: HashMap = HashMap.init(self.allocator);
-    defer map.deinit();
-    try map.ensureTotalCapacity(10_000);
-
-    const fileReader = self.file.reader();
-    var lineReader: LineReader = try LineReader.init(self.allocator, fileReader);
-    var linecount: usize = 0;
-    while (try lineReader.next()) |line| : (linecount += 1) {
-        std.debug.assert(line.len >= 5);
-        var splitIndex: usize = line.len - 4;
-        while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
-        std.debug.assert(line[splitIndex] == ';');
-
-        const keystr: []const u8 = line[0..splitIndex];
-        std.debug.assert(keystr[keystr.len - 1] != '\n');
-        const valstr: []const u8 = line[(splitIndex + 1)..];
-        linelog.debug("line{d}: {s}, k: {s}, v: {s}", .{ linecount, line, keystr, valstr });
-
-        std.debug.assert(keystr.len >= 1);
-        std.debug.assert(keystr.len <= 100);
-        std.debug.assert(keystr[keystr.len - 1] != ';');
-        std.debug.assert(valstr.len >= 3);
-        std.debug.assert(valstr.len <= 5);
-        std.debug.assert(valstr[valstr.len - 2] == '.');
-        std.debug.assert(valstr[0] != ';');
-
-        const valint: i48 = ut.math.fastIntParse(i48, valstr);
-        const entry = map.getOrPutAssumeCapacity(keystr);
-        if (!entry.found_existing) {
-            entry.key_ptr.* = try ut.mem.clone(u8, self.allocator, keystr);
-            entry.value_ptr.* = MapVal.None;
-        }
-        MapVal.add(entry.value_ptr, valint);
-    }
-
-    // const entries: 
-    const entries: []BRCParseResult.ResultEntry = try self.allocator.alloc(BRCParseResult.ResultEntry, map.count());
-    var iter = map.iterator();
-    var i: usize = 0;
-    while (iter.next()) |e| : (i += 1) {
-        entries[i].val = e.value_ptr.*;
-        entries[i].key = e.key_ptr.*;
-    }
-
-    return BRCParseResult{
-        .allocator = self.allocator,
-        .entries = entries,
-        .linecount = linecount,
-        
     };
 }
 
@@ -558,8 +455,7 @@ fn parse_MultiThread_LargePageBuffer(self: *BRCParser) !BRCParseResult {
 
 pub fn parse(self: *BRCParser) !BRCParseResult {
     const parseFn = comptime switch (builtin.single_threaded) {
-        // true => parse_SingleThread,
-        true => parse_SingleThread_fnv1a32,
+        true => parse_SingleThread,
         false => switch (builtin.os.tag) {
             .windows => parse_MultiThread_LargePageBuffer,
             else => parse_MultiThread,
