@@ -175,13 +175,13 @@ fn parse_SingleThread(self: *BRCParser) !BRCParseResult {
     };
 }
 
-fn parse_MultiThread_fnva132(self: *BRCParser) !BRCParseResult {
+fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
     const ThreadPool = std.Thread.Pool;
     const Mutex = std.Thread.Mutex;
     const WaitGroup = std.Thread.WaitGroup;
     const HashMap = BRCHashMap(u32, ut.hashing.fnv1a32);
 
-    const buffer_size: comptime_int = 2_097_152;
+    const block_size: comptime_int = 8388608;
     const map_capacity: comptime_int = 131072; // Performed the best in benchmarks
 
     var pool: ThreadPool = undefined;
@@ -300,7 +300,7 @@ fn parse_MultiThread_fnva132(self: *BRCParser) !BRCParseResult {
     };
 
     // TODO Just write directly to the threads block, instead of copying bytes around
-    var block: []u8 = try self.allocator.alignedAlloc(u8, 4096, buffer_size);
+    var block: []u8 = try self.allocator.alignedAlloc(u8, 4096, block_size);
     var readSize: usize = try self.file.read(block);
     var blockCount: usize = 0;
     while (true) {
@@ -328,7 +328,7 @@ fn parse_MultiThread_fnva132(self: *BRCParser) !BRCParseResult {
         try TaskContext.spawn(sharedContext, &pool, bytes, blockCount);
 
         // once the task is spawned i can mock about with bytes again to read more data from the file
-        const nextBlock: []u8 = try self.allocator.alignedAlloc(u8, 4096, buffer_size);
+        const nextBlock: []u8 = try self.allocator.alignedAlloc(u8, 4096, block_size);
         @memcpy(nextBlock[0..remain.len], remain);
         readSize = try self.file.read(nextBlock[remain.len..]);
         readSize += remain.len;
@@ -367,11 +367,7 @@ fn parse_MultiThread_fnva132(self: *BRCParser) !BRCParseResult {
 pub fn parse(self: *BRCParser) !BRCParseResult {
     const parseFn = comptime switch (builtin.single_threaded) {
         true => parse_SingleThread,
-        //false => switch (builtin.os.tag) {
-        //    .windows => parse_MultiThread_LargePageBuffer,
-        //    else => parse_MultiThread,
-        //},
-        false => parse_MultiThread_fnva132,
+        false => parse_MultiThread,
     };
     return parseFn(self);
 }
