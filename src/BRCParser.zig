@@ -200,7 +200,7 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
         waitGroup: WaitGroup = .{},
 
         fn init(allocator: std.mem.Allocator) !*Tsctx {
-            const map_count = try std.Thread.getCpuCount();
+            const map_count = std.math.ceilPowerOfTwoAssert(usize, std.Thread.getCpuCount() catch 1);
 
             const sctx: *Tsctx = try allocator.create(Tsctx);
             sctx.allocator = allocator;
@@ -269,6 +269,7 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
             }
             return localCount;
         }
+
         fn run(ctx: *Tctx) void {
             defer ctx.deinit();
             const mapIdx: usize = ctx.blockId % ctx.shared.maps.len;
@@ -296,6 +297,17 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
             ctx.block.ptr = block.ptr;
             ctx.blockId = id;
             threadPool.spawnWg(&shared.waitGroup, run, .{ctx});
+        }
+
+        /// Merges `src` into `dst` and calls `.freeKeys()` and `.deinit()` on `src`
+        fn mergeFree(src: *HashMap, dst: *HashMap) void {
+            var iter = src.iterator();
+            while (iter.next()) |entry| dst.mergeEntryByClone(entry) catch |err| {
+                ut.debug.print("{any}{any}", .{ err, @errorReturnTrace() });
+                @panic("HashMap.mergeEntryByClone failed");
+            };
+            src.freeKeys();
+            src.deinit();
         }
     };
 
@@ -326,24 +338,38 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
         try TaskContext.spawn(sharedContext, &pool, bytes, blockCount);
 
         // once the task is spawned i can mock about with bytes again to read more data from the file
-        const nextBlock: []u8 = try self.allocator.alignedAlloc(u8, 4096, block_size);
-        @memcpy(nextBlock[0..remain.len], remain);
-        readSize = try self.file.read(nextBlock[remain.len..]);
+        const next_block: []u8 = try self.allocator.alignedAlloc(u8, 4096, block_size);
+        @memcpy(next_block[0..remain.len], remain);
+        readSize = try self.file.read(next_block[remain.len..]);
         readSize += remain.len;
-        block = nextBlock[0..];
+        block = next_block[0..];
     }
 
     sharedContext.waitGroup.wait();
 
     // Merging maps into sharedContext.maps[0]
-    const finalMap: *HashMap = &sharedContext.maps[0];
-    for (1..sharedContext.maps.len) |mapIdx| {
-        const map: *HashMap = &sharedContext.maps[mapIdx];
-        var iter = map.iterator();
-        while (iter.next()) |e| try finalMap.mergeEntryByClone(e);
-        map.freeKeys();
-        map.deinit();
+    const mapCount: usize = sharedContext.maps.len;
+    std.debug.assert(mapCount != 0);
+    std.debug.assert(std.math.isPowerOfTwo(mapCount));
+
+    var round: usize = 1;
+    var merge_wg: WaitGroup = .{};
+    while (round < mapCount) : (round *= 2) {
+        ut.debug.print("merge round {d}\n", .{round});
+        
+        var src_idx: usize = round;
+        while (src_idx < mapCount) : (src_idx += round * 2) {
+            const dst_idx: usize = src_idx - round;
+            ut.debug.print("\t{d} <- {d}\n", .{ dst_idx, src_idx });
+
+            const src_map: *HashMap = @constCast(&sharedContext.maps[src_idx]);
+            const dst_map: *HashMap = @constCast(&sharedContext.maps[dst_idx]);
+            pool.spawnWg(&merge_wg, TaskContext.mergeFree, .{ src_map, dst_map });
+        }
+        merge_wg.wait();
     }
+
+    const finalMap: *HashMap = &sharedContext.maps[0];
 
     // collecting and sorting entries:
     const entries: []BRCParseResult.ResultEntry = try self.allocator.alloc(BRCParseResult.ResultEntry, finalMap.count);

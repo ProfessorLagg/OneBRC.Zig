@@ -53,17 +53,23 @@ const allocator = std.heap.c_allocator;
 
 pub fn main() !void {
     defer lib.utils.debug.flush();
-    // temp() catch |e| std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() }) catch @panic("Format failed");
+    //temp() catch |e| std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() }) catch @panic("Format failed");
     bench_parse() catch |e| std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() }) catch @panic("Format failed");
     // bench_read() catch |e| std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() }) catch @panic("Format failed");
     // run() catch |e| std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() })  catch @panic("Format failed");
 }
 
 fn temp() !void {
-    ut.debug.print("{d: <6.3}\n{d: <6.3}", .{
-        std.fmt.fmtDuration(1230 * std.time.ns_per_ms),
-        std.fmt.fmtDuration(1234 * std.time.ns_per_ms),
-    });
+    const mapCount: usize = try std.Thread.getCpuCount();
+    var round: usize = 1;
+    while (round < mapCount) : (round *= 2) {
+        ut.debug.print("round {d}\n", .{round});
+        var src: usize = round;
+        while (src < mapCount) : (src += round * 2) {
+            const dst: usize = src - round;
+            ut.debug.print("\t{d} <- {d}\n", .{ dst, src });
+        }
+    }
 }
 
 pub fn bench_parse() !void {
