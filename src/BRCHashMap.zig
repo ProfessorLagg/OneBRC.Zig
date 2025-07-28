@@ -45,7 +45,6 @@ pub fn BRCHashMap(comptime uint: type, comptime hashFn: fn ([]const u8) uint) ty
 
         allocator: Allocator,
         entries: []const Entry = ut.meta.zeroedSlice(Entry),
-        lock: std.Thread.Mutex = .{},
         count: usize = 0,
         collisionCount: usize = 0,
 
@@ -73,18 +72,62 @@ pub fn BRCHashMap(comptime uint: type, comptime hashFn: fn ([]const u8) uint) ty
         /// Returns the number of keys that collided when inserted as a number between 0 and 1
         pub fn getCollisionPercent(self: *const Self) f64 {
             @setRuntimeSafety(false);
-            @constCast(self).lock.lock();
-            defer @constCast(self).lock.unlock();
 
             const count_f: f64 = @floatFromInt(@max(1, self.count));
             const collisions_f: f64 = @floatFromInt(self.collisionCount);
             return collisions_f / count_f;
         }
 
+        /// Merges `entry` into the map, cloning key if neccecary
+        pub fn mergeEntryByClone(self: *Self, entry: *const Entry) !void {
+            const key: []const u8 = entry.getKeyString();
+            const hash: uint = entry.hash;
+            const val_ptr: *const MapVal = &entry.value;
+
+            std.debug.assert(hashFn(key) == hash);
+            std.debug.assert(key.len >= 1);
+            std.debug.assert(key.len <= 100); // 1brc contraint on keylen
+
+            if (self.count == self.entries.len) {
+                // TODO Resize instead of returning an error
+                return error.MapFull;
+            }
+
+            const baseIndex: usize = @as(usize, @intCast(hash)) & (self.entries.len - 1);
+            var collided: bool = false;
+            defer self.collisionCount += @intFromBool(collided);
+
+            for (0..self.entries.len) |i| {
+                const index: usize = (baseIndex + i) % self.entries.len;
+                const entry_ptr: *Entry = @constCast(&self.entries[index]);
+                if (self.entries[index].keylen == 0) {
+                    // Found empty slot
+                    const keyclone: []const u8 = try ut.mem.clone(u8, self.allocator, key);
+                    entry_ptr.hash = hash;
+                    entry_ptr.setKeyString(keyclone);
+                    entry_ptr.value = val_ptr.*;
+                    self.count += 1;
+                    return;
+                }
+
+                const keystr: []const u8 = self.entries[index].getKeyString();
+                if (std.mem.eql(u8, key, keystr)) {
+                    // Found matching slot
+                    entry_ptr.value.merge(val_ptr);
+                    return;
+                }
+
+                std.log.debug("Keys collided! hash: 0x{X}, key: \"{s}\"", .{ hash, key });
+                collided = true;
+            }
+
+            unreachable;
+        }
+
         /// If `key` is found in the map, adds `val` to the corresponding `MapVal`.
         /// Else inserts a new `Entry` into the map with a clone of `key`
         /// Caller asserts that `hashFn(key) == hash`.
-        pub fn addClonePreHashed(self: *Self, key: []const u8, val: i64, hash: uint) !void {
+        pub fn addByClonePreHashed(self: *Self, key: []const u8, val: i64, hash: uint) !void {
             std.debug.assert(hashFn(key) == hash);
             std.debug.assert(val >= -999);
             std.debug.assert(val <= 999);
@@ -98,12 +141,8 @@ pub fn BRCHashMap(comptime uint: type, comptime hashFn: fn ([]const u8) uint) ty
 
             const baseIndex: usize = @as(usize, @intCast(hash)) & (self.entries.len - 1);
             var collided: bool = false;
+            defer self.collisionCount += @intFromBool(collided);
 
-            self.lock.lock();
-            defer {
-                self.collisionCount += @intFromBool(collided);
-                self.lock.unlock();
-            }
             for (0..self.entries.len) |i| {
                 const index: usize = (baseIndex + i) % self.entries.len;
                 const entry_ptr: *Entry = @constCast(&self.entries[index]);
@@ -133,9 +172,9 @@ pub fn BRCHashMap(comptime uint: type, comptime hashFn: fn ([]const u8) uint) ty
 
         /// If `key` is found in the map, adds `val` to the corresponding `MapVal`.
         /// Else inserts a new `Entry` into the map with a clone of `key`
-        pub fn addClone(self: *Self, key: []const u8, val: i64) void {
+        pub fn addByClone(self: *Self, key: []const u8, val: i64) void {
             const hash: uint = hashFn(key);
-            self.addClonePreHashed(key, val, hash);
+            self.addByClonePreHashed(key, val, hash);
         }
 
         const Iterator = struct {
