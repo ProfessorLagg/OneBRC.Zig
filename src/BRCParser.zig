@@ -373,14 +373,11 @@ pub fn parse(self: *BRCParser) !BRCParseResult {
 }
 
 fn read_SingleThread(self: *BRCParser) !BRCParseResult {
-    const fileReader = self.file.reader();
-    var lineReader: LineReader = try LineReader.init(self.allocator, fileReader);
-    var result: BRCParseResult = .{};
-    while (try lineReader.next()) |line| {
-        std.debug.assert(line.len >= 5);
-        result.linecount += 1;
-    }
-    return result;
+    const buffer: []u8 = try self.allocator.alignedAlloc(u8, 4096, 8_388_608);
+    defer self.allocator.free(buffer);
+    var readSize: usize = try self.file.read(buffer);
+    while (readSize > 0) : (readSize = try self.file.read(buffer)) {}
+    return BRCParseResult{ .linecount = 1 };
 }
 
 fn read_MultiThread(self: *BRCParser) !BRCParseResult {

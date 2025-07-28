@@ -53,11 +53,10 @@ const allocator = std.heap.c_allocator;
 
 pub fn main() !void {
     defer lib.utils.debug.flush();
-    //temp() catch |e| std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() });
-    
-    bench_parse() catch |e| std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() }) catch @panic("Format failed");
-    //bench_read() catch |e| std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() });
-    //run() catch |e| std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() });
+    // temp() catch |e| std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() }) catch @panic("Format failed");
+    // bench_parse() catch |e| std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() }) catch @panic("Format failed");
+    bench_read() catch |e| std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() }) catch @panic("Format failed");
+    // run() catch |e| std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() })  catch @panic("Format failed");
 }
 
 fn temp() !void {
@@ -121,7 +120,7 @@ pub fn bench_read() !void {
         true => "Single Thread",
         false => "Multi Thread ",
     };
-    try std.fmt.format(stdout, "{s} | Parsed {d} lines | {d} keys | in {d:.3} ({d:.3}/line | {d:.3}/s)", .{
+    try std.fmt.format(stdout, "{s} | Parsed {d} lines | {d} keys | in {d:.3} ({d:.3}/line | {d:.3}/s)\n", .{
         threadTagStr,
         linecount,
         keycount,
