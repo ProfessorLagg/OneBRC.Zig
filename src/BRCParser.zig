@@ -175,16 +175,14 @@ fn parse_SingleThread(self: *BRCParser) !BRCParseResult {
     };
 }
 
-fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
+fn parse_MultiThread_fnva132(self: *BRCParser) !BRCParseResult {
     const ThreadPool = std.Thread.Pool;
-    const WaitGroup = std.Thread.WaitGroup;
     const Mutex = std.Thread.Mutex;
-    const ArenaAllocator = std.heap.ArenaAllocator;
-    const bucket_count: comptime_int = 512;
-    const BucketMap = BRCBucketMap(bucket_count);
+    const WaitGroup = std.Thread.WaitGroup;
+    const HashMap = BRCHashMap(u32, ut.hashing.fnv1a32);
 
-    const buffer: []u8 = try self.allocator.alignedAlloc(u8, 4096, 1024 * 1024 * 2);
-    defer self.allocator.free(buffer);
+    const buffer_size: comptime_int = 2_097_152;
+    const map_capacity: comptime_int = 131072; // Performed the best in benchmarks
 
     var pool: ThreadPool = undefined;
     try pool.init(.{ .allocator = self.allocator });
@@ -195,44 +193,63 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
         const Tsctx = @This();
         allocator: std.mem.Allocator = undefined,
         linecount: usize = 0,
-        map: BucketMap = undefined,
         linecount_lock: Mutex = .{},
+        // TODO Try out using a cpu count number of HashMaps, and then using threadId / block id to find which one to lock and merge to
+        maps: []HashMap = undefined,
+        locks: []Mutex = undefined,
         waitGroup: WaitGroup = .{},
 
         fn init(allocator: std.mem.Allocator) !*Tsctx {
-            const r: *Tsctx = try allocator.create(Tsctx);
-            r.*.allocator = allocator;
-            r.*.linecount = 0;
-            r.*.map = try BucketMap.init(allocator);
+            const cpu_count = try std.Thread.getCpuCount();
 
-            r.*.linecount_lock = .{};
-            r.*.waitGroup = .{};
-            return r;
+            const sctx: *Tsctx = try allocator.create(Tsctx);
+            sctx.allocator = allocator;
+            sctx.linecount = 0;
+
+            sctx.maps = try allocator.alloc(HashMap, cpu_count);
+            sctx.locks = try allocator.alloc(Mutex, cpu_count);
+            for (0..cpu_count) |i| {
+                sctx.maps[i] = try HashMap.init(allocator, map_capacity);
+                sctx.locks[i] = .{};
+            }
+
+            sctx.linecount_lock = .{};
+            sctx.waitGroup = .{};
+            return sctx;
         }
-        fn deinit(sctx: *Tsctx) void {
-            sctx.map.deinit();
+        fn deinit(sctx: *Tsctx, deinitMaps: bool) void {
+            if (deinitMaps) for (0..sctx.maps.len) |i| sctx.maps[i].deinit();
+
+            sctx.allocator.free(sctx.maps);
+            sctx.allocator.free(sctx.locks);
             sctx.allocator.destroy(sctx);
         }
     };
     // Gotta put anything that touches a thread on the heap
     const sharedContext: *SharedContext = try SharedContext.init(self.allocator); //self.allocator.create();
-    defer sharedContext.deinit();
+    defer sharedContext.deinit(false);
 
     const TaskContext = struct {
         const Tctx = @This();
         shared: *SharedContext,
-        arena: ArenaAllocator,
         block: []const u8,
         blockId: usize,
 
-        fn run(ctx: *Tctx) void {
-            defer ctx.deinit();
-            var lineIter = std.mem.splitScalar(u8, ctx.block, '\n');
+        /// Processses `block` into `map`.
+        /// Locks `map_lock` while working
+        /// Returns the number of lines found in `block`
+        fn process(block: []const u8, map: *HashMap, map_lock: *Mutex) !usize {
+            map_lock.lock();
+            defer map_lock.unlock();
+            var lineIter = std.mem.splitScalar(u8, block, '\n');
             var localCount: usize = 0;
-            while (lineIter.next()) |line| {
+            while (lineIter.next()) |line| : (localCount += 1) {
                 std.debug.assert(line.len >= 5);
-                var splitIndex: usize = line.len - 4;
-                while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
+
+                const splitAndHashResult = ut.hashing.fnv1a32UntilDelim(';', line);
+                std.debug.assert(splitAndHashResult.delim_index != null);
+                const splitIndex: usize = splitAndHashResult.delim_index.?;
+                const keyhash: u32 = splitAndHashResult.hash;
                 std.debug.assert(line[splitIndex] == ';');
 
                 const keystr: []const u8 = line[0..splitIndex];
@@ -248,145 +265,19 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
                 std.debug.assert(valstr[0] != ';');
 
                 const valint: i48 = ut.math.fastIntParse(i48, valstr);
-                ctx.shared.map.findOrAdd(keystr, valint) catch |e| {
-                    ut.debug.print("\n{any}\n{any}\n", .{ e, @errorReturnTrace() });
-                    @panic("BucketMap.findOrAdd failed");
-                };
-                localCount += 1;
+                try map.addByClonePreHashed(keystr, valint, keyhash);
             }
-
-            ctx.shared.linecount_lock.lock();
-            ctx.shared.linecount += localCount;
-            ctx.shared.linecount_lock.unlock();
+            return localCount;
         }
-
-        fn deinit(ctx: *Tctx) void {
-            ctx.arena.deinit();
-        }
-
-        fn spawn(shared: *SharedContext, threadPool: *ThreadPool, rawBytes: []const u8, id: usize) !void {
-            var arena = ArenaAllocator.init(shared.allocator);
-            const allocator = arena.allocator();
-
-            const ctx: *Tctx = try allocator.create(Tctx);
-            ctx.*.shared = shared;
-            ctx.*.arena = arena;
-            ctx.*.block = try ut.mem.clone(u8, allocator, rawBytes);
-            ctx.blockId = id;
-            threadPool.spawnWg(&shared.waitGroup, run, .{ctx});
-        }
-    };
-
-    var readSize: usize = try self.file.read(buffer);
-    var bytes: []const u8 = buffer[0..readSize];
-    var blockCount: usize = 0;
-    while (readSize > 0) {
-        blockCount += 1;
-
-        // Find end of the last line in the buffer
-        const endIndex = lastLineEndIndex(bytes);
-        var remain = buffer[@min(buffer.len, endIndex + 2)..];
-        while (remain.len > 0 and remain[0] == '\n') : (remain = remain[1..]) {}
-        while (remain.len > 0 and remain[remain.len - 1] == '\n') : (remain.len -= 1) {}
-        bytes = bytes[0 .. endIndex + 1];
-
-        // ut.debug.print("=== BUFFER\n\"{s}\"\n=== BYTES\n\"{s}\"\n=== REMAIN\n\"{s}\"\n===      \n", .{ buffer, bytes, remain });
-
-        // Schedule a thread to parse the buffer
-        try TaskContext.spawn(sharedContext, &pool, bytes, blockCount);
-
-        // once the task is spawned i can mock about with bytes again to read more data from the file
-        std.mem.copyForwards(u8, buffer, remain);
-        readSize = try self.file.read(buffer[remain.len..]);
-        bytes = buffer[@intFromBool(buffer[0] == '\n') .. readSize + remain.len];
-    }
-
-    sharedContext.waitGroup.wait();
-
-    const finalMap: BRCVecstrSortedMap = try sharedContext.map.finalize(self.allocator);
-    return BRCParseResult.init(sharedContext.linecount, &finalMap);
-}
-
-fn parse_MultiThread_LargePageBuffer(self: *BRCParser) !BRCParseResult {
-    const ThreadPool = std.Thread.Pool;
-    const WaitGroup = std.Thread.WaitGroup;
-    const Mutex = std.Thread.Mutex;
-    const ArenaAllocator = std.heap.ArenaAllocator;
-    const bucket_count: comptime_int = 512;
-    const BucketMap = BRCBucketMap(bucket_count);
-    const VirtualAlloc = @import("VirtualAlloc.zig");
-
-    const buffer: []u8 = try VirtualAlloc.allocLargePage();
-    defer VirtualAlloc.freeLargePage(buffer) catch @panic("could not free large page");
-
-    var pool: ThreadPool = undefined;
-    try pool.init(.{ .allocator = self.allocator });
-    defer pool.deinit();
-
-    // shared context
-    const SharedContext = struct {
-        const Tsctx = @This();
-        allocator: std.mem.Allocator = undefined,
-        linecount: usize = 0,
-        map: BucketMap = undefined,
-        linecount_lock: Mutex = .{},
-        waitGroup: WaitGroup = .{},
-
-        fn init(allocator: std.mem.Allocator) !*Tsctx {
-            const r: *Tsctx = try allocator.create(Tsctx);
-            r.*.allocator = allocator;
-            r.*.linecount = 0;
-            r.*.map = try BucketMap.init(allocator);
-
-            r.*.linecount_lock = .{};
-            r.*.waitGroup = .{};
-            return r;
-        }
-        fn deinit(sctx: *Tsctx) void {
-            sctx.map.deinit();
-            sctx.allocator.destroy(sctx);
-        }
-    };
-    // Gotta put anything that touches a thread on the heap
-    const sharedContext: *SharedContext = try SharedContext.init(self.allocator); //self.allocator.create();
-    defer sharedContext.deinit();
-
-    const TaskContext = struct {
-        const Tctx = @This();
-        shared: *SharedContext,
-        arena: ArenaAllocator,
-        block: []const u8,
-        blockId: usize,
-
         fn run(ctx: *Tctx) void {
             defer ctx.deinit();
-            var lineIter = std.mem.splitScalar(u8, ctx.block, '\n');
-            var localCount: usize = 0;
-            while (lineIter.next()) |line| {
-                std.debug.assert(line.len >= 5);
-                var splitIndex: usize = line.len - 4;
-                while (line[splitIndex] != ';' and splitIndex > 0) : (splitIndex -= 1) {}
-                std.debug.assert(line[splitIndex] == ';');
-
-                const keystr: []const u8 = line[0..splitIndex];
-                std.debug.assert(keystr[keystr.len - 1] != '\n');
-                const valstr: []const u8 = line[(splitIndex + 1)..];
-
-                std.debug.assert(keystr.len >= 1);
-                std.debug.assert(keystr.len <= 100);
-                std.debug.assert(keystr[keystr.len - 1] != ';');
-                std.debug.assert(valstr.len >= 3);
-                std.debug.assert(valstr.len <= 5);
-                std.debug.assert(valstr[valstr.len - 2] == '.');
-                std.debug.assert(valstr[0] != ';');
-
-                const valint: i48 = ut.math.fastIntParse(i48, valstr);
-                ctx.shared.map.findOrAdd(keystr, valint) catch |e| {
-                    ut.debug.print("\n{any}\n{any}\n", .{ e, @errorReturnTrace() });
-                    @panic("BucketMap.findOrAdd failed");
-                };
-                localCount += 1;
-            }
+            const mapIdx: usize = ctx.blockId % ctx.shared.maps.len;
+            const map: *HashMap = &ctx.shared.maps[mapIdx];
+            const map_lock: *Mutex = &ctx.shared.locks[mapIdx];
+            const localCount: usize = Tctx.process(ctx.block, map, map_lock) catch |e| b: {
+                ut.debug.print("Thread error: {any}{any}", .{ e, @errorReturnTrace() });
+                break :b 0;
+            };
 
             ctx.shared.linecount_lock.lock();
             ctx.shared.linecount += localCount;
@@ -394,50 +285,83 @@ fn parse_MultiThread_LargePageBuffer(self: *BRCParser) !BRCParseResult {
         }
 
         fn deinit(ctx: *Tctx) void {
-            ctx.arena.deinit();
+            ctx.shared.allocator.free(ctx.block);
+            ctx.shared.allocator.destroy(ctx);
         }
 
-        fn spawn(shared: *SharedContext, threadPool: *ThreadPool, rawBytes: []const u8, id: usize) !void {
-            var arena = ArenaAllocator.init(shared.allocator);
-            const allocator = arena.allocator();
-
-            const ctx: *Tctx = try allocator.create(Tctx);
-            ctx.*.shared = shared;
-            ctx.*.arena = arena;
-            ctx.*.block = try ut.mem.clone(u8, allocator, rawBytes);
+        fn spawn(shared: *SharedContext, threadPool: *ThreadPool, block: []const u8, id: usize) !void {
+            const ctx: *Tctx = try shared.allocator.create(Tctx);
+            ctx.shared = shared;
+            ctx.block.len = block.len;
+            ctx.block.ptr = block.ptr;
             ctx.blockId = id;
             threadPool.spawnWg(&shared.waitGroup, run, .{ctx});
         }
     };
 
-    var readSize: usize = try self.file.read(buffer);
-    var bytes: []const u8 = buffer[0..readSize];
+    // TODO Just write directly to the threads block, instead of copying bytes around
+    var block: []u8 = try self.allocator.alignedAlloc(u8, 4096, buffer_size);
+    var readSize: usize = try self.file.read(block);
     var blockCount: usize = 0;
-    while (readSize > 0) {
+    while (true) {
+        var bytes: []const u8 = block[0..readSize];
+        if (bytes.len == 0) break;
         blockCount += 1;
+        ut.debug.print("blockCount: {d}\n", .{blockCount});
 
         // Find end of the last line in the buffer
-        const endIndex = lastLineEndIndex(bytes);
-        var remain = buffer[@min(buffer.len, endIndex + 2)..];
-        while (remain.len > 0 and remain[0] == '\n') : (remain = remain[1..]) {}
-        while (remain.len > 0 and remain[remain.len - 1] == '\n') : (remain.len -= 1) {}
-        bytes = bytes[0 .. endIndex + 1];
+        var endIndex = bytes.len;
+        if (readSize == block.len) endIndex = std.mem.lastIndexOfScalar(u8, bytes, '\n') orelse unreachable;
 
-        // ut.debug.print("=== BUFFER\n\"{s}\"\n=== BYTES\n\"{s}\"\n=== REMAIN\n\"{s}\"\n===      \n", .{ buffer, bytes, remain });
+        const remain: []const u8 = b: {
+            var r: []const u8 = undefined;
+            // This can be outside the bytes array, and therefore outside the block
+            // Which is not a bug since r.len would be 0 in that case
+            const ptrint: usize = @intFromPtr(bytes.ptr) + ((endIndex + 1) * @sizeOf(u8));
+            r.ptr = @ptrFromInt(ptrint);
+            r.len = bytes.len - @min(endIndex + 1, bytes.len);
+            break :b r;
+        };
+        bytes.len = endIndex;
 
         // Schedule a thread to parse the buffer
         try TaskContext.spawn(sharedContext, &pool, bytes, blockCount);
 
         // once the task is spawned i can mock about with bytes again to read more data from the file
-        std.mem.copyForwards(u8, buffer, remain);
-        readSize = try self.file.read(buffer[remain.len..]);
-        bytes = buffer[@intFromBool(buffer[0] == '\n') .. readSize + remain.len];
+        const nextBlock: []u8 = try self.allocator.alignedAlloc(u8, 4096, buffer_size);
+        @memcpy(nextBlock[0..remain.len], remain);
+        readSize = try self.file.read(nextBlock[remain.len..]);
+        readSize += remain.len;
+        block = nextBlock[0..];
     }
 
     sharedContext.waitGroup.wait();
 
-    const finalMap: BRCVecstrSortedMap = try sharedContext.map.finalize(self.allocator);
-    return BRCParseResult.init(sharedContext.linecount, &finalMap);
+    // Merging maps into sharedContext.maps[0]
+    const finalMap: *HashMap = &sharedContext.maps[0];
+    for (1..sharedContext.maps.len) |mapIdx| {
+        const map: *HashMap = &sharedContext.maps[mapIdx];
+        var iter = map.iterator();
+        while (iter.next()) |e| try finalMap.mergeEntryByClone(e);
+        map.freeKeys();
+        map.deinit();
+    }
+
+    // collecting and sorting entries:
+    const entries: []BRCParseResult.ResultEntry = try self.allocator.alloc(BRCParseResult.ResultEntry, finalMap.count);
+    var iter = finalMap.iterator();
+    var i: usize = 0;
+    while (iter.next()) |e| : (i += 1) {
+        entries[i].val = e.value;
+        entries[i].key.ptr = e.keyptr;
+        entries[i].key.len = e.keylen;
+    }
+    BRCParseResult.sortEntries(entries);
+    return BRCParseResult{
+        .allocator = self.allocator,
+        .entries = entries,
+        .linecount = sharedContext.linecount,
+    };
 }
 
 pub fn parse(self: *BRCParser) !BRCParseResult {
@@ -580,181 +504,4 @@ fn lastLineEndIndex(bytes: []const u8) usize {
 
     std.log.err("Could not find lastLineEnd in:\n\"{s}\"", .{bytes});
     @panic("bytes was not properly formatted BRC!");
-}
-
-fn parse_MultiThread_fnva132(self: *BRCParser) !BRCParseResult {
-    const ThreadPool = std.Thread.Pool;
-    const Mutex = std.Thread.Mutex;
-    const WaitGroup = std.Thread.WaitGroup;
-    const HashMap = BRCHashMap(u32, ut.hashing.fnv1a32);
-
-    const buffer_size: comptime_int = 2_097_152;
-    const map_capacity: comptime_int = 131072; // Performed the best in benchmarks
-
-    var pool: ThreadPool = undefined;
-    try pool.init(.{ .allocator = self.allocator });
-    defer pool.deinit();
-
-    // shared context
-    const SharedContext = struct {
-        const Tsctx = @This();
-        allocator: std.mem.Allocator = undefined,
-        linecount: usize = 0,
-        linecount_lock: Mutex = .{},
-        // TODO Try out using a cpu count number of HashMaps, and then using threadId / block id to find which one to lock and merge to
-        maps: []HashMap = undefined,
-        locks: []Mutex = undefined,
-        waitGroup: WaitGroup = .{},
-
-        fn init(allocator: std.mem.Allocator) !*Tsctx {
-            const cpu_count = try std.Thread.getCpuCount();
-
-            const sctx: *Tsctx = try allocator.create(Tsctx);
-            sctx.allocator = allocator;
-            sctx.linecount = 0;
-
-            sctx.maps = try allocator.alloc(HashMap, cpu_count);
-            sctx.locks = try allocator.alloc(Mutex, cpu_count);
-            for (0..cpu_count) |i| {
-                sctx.maps[i] = try HashMap.init(allocator, map_capacity);
-                sctx.locks[i] = .{};
-            }
-
-            sctx.linecount_lock = .{};
-            sctx.waitGroup = .{};
-            return sctx;
-        }
-        fn deinit(sctx: *Tsctx, deinitMaps: bool) void {
-            if (deinitMaps) for (0..sctx.maps.len) |i| sctx.maps[i].deinit();
-
-            sctx.allocator.free(sctx.maps);
-            sctx.allocator.free(sctx.locks);
-            sctx.allocator.destroy(sctx);
-        }
-    };
-    // Gotta put anything that touches a thread on the heap
-    const sharedContext: *SharedContext = try SharedContext.init(self.allocator); //self.allocator.create();
-    defer sharedContext.deinit(false);
-
-    const TaskContext = struct {
-        const Tctx = @This();
-        shared: *SharedContext,
-        block: []const u8,
-        blockId: usize,
-
-        /// Processses `block` into `map`.
-        /// Locks `map_lock` while working
-        /// Returns the number of lines found in `block`
-        fn process(block: []const u8, map: *HashMap, map_lock: *Mutex) !usize {
-            map_lock.lock();
-            defer map_lock.unlock();
-            var lineIter = std.mem.splitScalar(u8, block, '\n');
-            var localCount: usize = 0;
-            while (lineIter.next()) |line| : (localCount += 1) {
-                std.debug.assert(line.len >= 5);
-
-                const splitAndHashResult = ut.hashing.fnv1a32UntilDelim(';', line);
-                std.debug.assert(splitAndHashResult.delim_index != null);
-                const splitIndex: usize = splitAndHashResult.delim_index.?;
-                const keyhash: u32 = splitAndHashResult.hash;
-                std.debug.assert(line[splitIndex] == ';');
-
-                const keystr: []const u8 = line[0..splitIndex];
-                std.debug.assert(keystr[keystr.len - 1] != '\n');
-                const valstr: []const u8 = line[(splitIndex + 1)..];
-
-                std.debug.assert(keystr.len >= 1);
-                std.debug.assert(keystr.len <= 100);
-                std.debug.assert(keystr[keystr.len - 1] != ';');
-                std.debug.assert(valstr.len >= 3);
-                std.debug.assert(valstr.len <= 5);
-                std.debug.assert(valstr[valstr.len - 2] == '.');
-                std.debug.assert(valstr[0] != ';');
-
-                const valint: i48 = ut.math.fastIntParse(i48, valstr);
-                try map.addByClonePreHashed(keystr, valint, keyhash);
-            }
-            return localCount;
-        }
-        fn run(ctx: *Tctx) void {
-            defer ctx.deinit();
-            const mapIdx: usize = ctx.blockId % ctx.shared.maps.len;
-            const map: *HashMap = &ctx.shared.maps[mapIdx];
-            const map_lock: *Mutex = &ctx.shared.locks[mapIdx];
-            const localCount: usize = Tctx.process(ctx.block, map, map_lock) catch |e| b: {
-                ut.debug.print("Thread error: {any}{any}", .{ e, @errorReturnTrace() });
-                break :b 0;
-            };
-
-            ctx.shared.linecount_lock.lock();
-            ctx.shared.linecount += localCount;
-            ctx.shared.linecount_lock.unlock();
-        }
-
-        fn deinit(ctx: *Tctx) void {
-            ctx.shared.allocator.free(ctx.block);
-            ctx.shared.allocator.destroy(ctx);
-        }
-
-        fn spawn(shared: *SharedContext, threadPool: *ThreadPool, rawBytes: []const u8, id: usize) !void {
-            const ctx: *Tctx = try shared.allocator.create(Tctx);
-            ctx.shared = shared;
-            ctx.block = try ut.mem.clone(u8, shared.allocator, rawBytes);
-            ctx.blockId = id;
-            threadPool.spawnWg(&shared.waitGroup, run, .{ctx});
-        }
-    };
-
-    // TODO Just write directly to the threads block, instead of copying bytes around
-    const buffer: []u8 = try self.allocator.alignedAlloc(u8, 4096, buffer_size);
-    var readSize: usize = try self.file.read(buffer);
-    var bytes: []const u8 = buffer[0..readSize];
-    var blockCount: usize = 0;
-    while (readSize > 0) {
-        blockCount += 1;
-        ut.debug.print("blockCount: {d}\n", .{blockCount});
-
-        // Find end of the last line in the buffer
-        const endIndex = lastLineEndIndex(bytes);
-        var remain = buffer[@min(buffer.len, endIndex + 2)..];
-        while (remain.len > 0 and remain[0] == '\n') : (remain = remain[1..]) {}
-        while (remain.len > 0 and remain[remain.len - 1] == '\n') : (remain.len -= 1) {}
-        bytes = bytes[0 .. endIndex + 1];
-
-        // Schedule a thread to parse the buffer
-        try TaskContext.spawn(sharedContext, &pool, bytes, blockCount);
-
-        // once the task is spawned i can mock about with bytes again to read more data from the file
-        std.mem.copyForwards(u8, buffer, remain);
-        readSize = try self.file.read(buffer[remain.len..]);
-        bytes = buffer[@intFromBool(buffer[0] == '\n') .. readSize + remain.len];
-    }
-
-    sharedContext.waitGroup.wait();
-
-    // Merging maps into sharedContext.maps[0]
-    const finalMap: *HashMap = &sharedContext.maps[0];
-    for (1..sharedContext.maps.len) |mapIdx| {
-        const map: *HashMap = &sharedContext.maps[mapIdx];
-        var iter = map.iterator();
-        while (iter.next()) |e| try finalMap.mergeEntryByClone(e);
-        map.freeKeys();
-        map.deinit();
-    }
-
-    // collecting and sorting entries:
-    const entries: []BRCParseResult.ResultEntry = try self.allocator.alloc(BRCParseResult.ResultEntry, finalMap.count);
-    var iter = finalMap.iterator();
-    var i: usize = 0;
-    while (iter.next()) |e| : (i += 1) {
-        entries[i].val = e.value;
-        entries[i].key.ptr = e.keyptr;
-        entries[i].key.len = e.keylen;
-    }
-    BRCParseResult.sortEntries(entries);
-    return BRCParseResult{
-        .allocator = self.allocator,
-        .entries = entries,
-        .linecount = sharedContext.linecount,
-    };
 }
