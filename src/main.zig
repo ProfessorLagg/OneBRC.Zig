@@ -54,8 +54,8 @@ const allocator = std.heap.c_allocator;
 pub fn main() !void {
     defer lib.utils.debug.flush();
     // temp() catch |e| std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() }) catch @panic("Format failed");
-    // bench_parse() catch |e| std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() }) catch @panic("Format failed");
-    bench_read() catch |e| std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() }) catch @panic("Format failed");
+    bench_parse() catch |e| std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() }) catch @panic("Format failed");
+    // bench_read() catch |e| std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() }) catch @panic("Format failed");
     // run() catch |e| std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() })  catch @panic("Format failed");
 }
 

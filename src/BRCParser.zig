@@ -181,7 +181,7 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
     const WaitGroup = std.Thread.WaitGroup;
     const HashMap = BRCHashMap(u32, ut.hashing.fnv1a32);
 
-    const block_size: comptime_int = 8388608;
+    const block_size: comptime_int = 8_388_608;
     const map_capacity: comptime_int = 131072; // Performed the best in benchmarks
 
     var pool: ThreadPool = undefined;
@@ -200,15 +200,15 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
         waitGroup: WaitGroup = .{},
 
         fn init(allocator: std.mem.Allocator) !*Tsctx {
-            const cpu_count = try std.Thread.getCpuCount();
+            const map_count = try std.Thread.getCpuCount();
 
             const sctx: *Tsctx = try allocator.create(Tsctx);
             sctx.allocator = allocator;
             sctx.linecount = 0;
 
-            sctx.maps = try allocator.alloc(HashMap, cpu_count);
-            sctx.locks = try allocator.alloc(Mutex, cpu_count);
-            for (0..cpu_count) |i| {
+            sctx.maps = try allocator.alloc(HashMap, map_count);
+            sctx.locks = try allocator.alloc(Mutex, map_count);
+            for (0..map_count) |i| {
                 sctx.maps[i] = try HashMap.init(allocator, map_capacity);
                 sctx.locks[i] = .{};
             }
@@ -299,7 +299,6 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
         }
     };
 
-    // TODO Just write directly to the threads block, instead of copying bytes around
     var block: []u8 = try self.allocator.alignedAlloc(u8, 4096, block_size);
     var readSize: usize = try self.file.read(block);
     var blockCount: usize = 0;
