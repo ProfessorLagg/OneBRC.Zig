@@ -302,9 +302,8 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
     var block: []u8 = try self.allocator.alignedAlloc(u8, 4096, block_size);
     var readSize: usize = try self.file.read(block);
     var blockCount: usize = 0;
-    while (true) {
+    while (readSize > 0) {
         var bytes: []const u8 = block[0..readSize];
-        if (bytes.len == 0) break;
         blockCount += 1;
         ut.debug.print("blockCount: {d}\n", .{blockCount});
 
