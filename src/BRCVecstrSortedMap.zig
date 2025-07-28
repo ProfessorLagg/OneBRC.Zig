@@ -13,47 +13,7 @@ const Vecstr128 = @import("vecstr.zig").Vecstr128;
 
 const log = std.log.scoped(.BRCMap);
 
-pub const MapVal = struct {
-    pub const FinalMapVal = struct {
-        mean: f64 = 0,
-        min: f64 = 0,
-        max: f64 = 0,
-    };
-    pub const None: MapVal = .{};
-
-    sum: i64 = 0,
-    count: u32 = 0,
-    min: i16 = std.math.maxInt(i16),
-    max: i16 = std.math.minInt(i16),
-    pub inline fn add(self: *MapVal, v: i64) void {
-        @setRuntimeSafety(false);
-        self.sum += v;
-        self.count += 1;
-        const v16: i16 = @intCast(v);
-        self.min = @min(self.min, v16);
-        self.max = @max(self.max, v16);
-    }
-    pub inline fn merge(self: *MapVal, other: *const MapVal) void {
-        @setRuntimeSafety(false);
-        self.sum += other.sum;
-        self.count += other.count;
-        self.min = @min(self.min, other.min);
-        self.max = @max(self.max, other.max);
-    }
-    pub inline fn finalize(self: *const MapVal) FinalMapVal {
-        @setRuntimeSafety(false);
-        @setFloatMode(.optimized);
-        const sum_f: f64 = @floatFromInt(self.sum);
-        const count_f: f64 = @floatFromInt(self.count);
-        const min_f: f64 = @floatFromInt(self.min);
-        const max_f: f64 = @floatFromInt(self.max);
-        return .{
-            .mean = sum_f / (count_f * 10.0),
-            .min = min_f / 10.0,
-            .max = max_f / 10.0,
-        };
-    }
-};
+const MapVal = @import("BRCMapVal.zig");
 
 fn SubMap(comptime StringLength: comptime_int) type {
     return struct {
@@ -73,7 +33,7 @@ fn SubMap(comptime StringLength: comptime_int) type {
         keys: []Vecstr,
         vals: []MapVal,
 
-        fn init(parent: *const BRCMap) Self {
+        fn init(parent: *const BRCVecstrSortedMap) Self {
             return Self{
                 .allocator = parent.allocator,
                 .keybuf = ut.meta.zeroedSlice(Vecstr),
@@ -251,7 +211,7 @@ fn SubMap(comptime StringLength: comptime_int) type {
     };
 }
 
-const BRCMap = @This();
+const BRCVecstrSortedMap = @This();
 allocator: std.mem.Allocator,
 sub8: SubMap(8),
 sub16: SubMap(16),
@@ -259,8 +219,8 @@ sub32: SubMap(32),
 sub64: SubMap(64),
 sub128: SubMap(128),
 
-pub fn init(allocator: std.mem.Allocator) BRCMap {
-    var r = BRCMap{
+pub fn init(allocator: std.mem.Allocator) BRCVecstrSortedMap {
+    var r = BRCVecstrSortedMap{
         .allocator = allocator,
         .sub8 = undefined,
         .sub16 = undefined,
@@ -275,7 +235,7 @@ pub fn init(allocator: std.mem.Allocator) BRCMap {
     r.sub128 = @TypeOf(r.sub128).init(&r);
     return r;
 }
-pub fn deinit(self: *BRCMap) void {
+pub fn deinit(self: *BRCVecstrSortedMap) void {
     self.sub8.deinit();
     self.sub16.deinit();
     self.sub32.deinit();
@@ -283,7 +243,7 @@ pub fn deinit(self: *BRCMap) void {
     self.sub128.deinit();
 }
 
-pub inline fn count(self: *const BRCMap) usize {
+pub inline fn count(self: *const BRCVecstrSortedMap) usize {
     return self.sub8.count() +
         self.sub16.count() +
         self.sub32.count() +
@@ -291,7 +251,7 @@ pub inline fn count(self: *const BRCMap) usize {
         self.sub128.count();
 }
 
-pub fn findOrInsert(self: *BRCMap, key: []const u8) !*MapVal {
+pub fn findOrInsert(self: *BRCVecstrSortedMap, key: []const u8) !*MapVal {
     if (key.len <= 8) return try self.sub8.findOrInsert(Vecstr8.create(key));
     if (key.len <= 16) return try self.sub16.findOrInsert(Vecstr16.create(key));
     if (key.len <= 32) return try self.sub32.findOrInsert(Vecstr32.create(key));
@@ -299,7 +259,7 @@ pub fn findOrInsert(self: *BRCMap, key: []const u8) !*MapVal {
     if (key.len <= 128) return try self.sub128.findOrInsert(Vecstr128.create(key));
     unreachable;
 }
-pub fn findOrAdd(self: *BRCMap, key: []const u8, valint: i64) !void {
+pub fn findOrAdd(self: *BRCVecstrSortedMap, key: []const u8, valint: i64) !void {
     if (key.len <= 8) return try self.sub8.findOrAdd(Vecstr8.create(key), valint);
     if (key.len <= 16) return try self.sub16.findOrAdd(Vecstr16.create(key), valint);
     if (key.len <= 32) return try self.sub32.findOrAdd(Vecstr32.create(key), valint);
@@ -314,7 +274,7 @@ pub const MapEntry = struct {
 };
 
 pub const MapIterator = struct {
-    map: *const BRCMap,
+    map: *const BRCVecstrSortedMap,
     idx: usize = 0,
 
     pub fn next(self: *MapIterator) ?MapEntry {
@@ -357,12 +317,12 @@ pub const MapIterator = struct {
     }
 };
 
-pub fn iterator(self: *const BRCMap) MapIterator {
+pub fn iterator(self: *const BRCVecstrSortedMap) MapIterator {
     return MapIterator{ .map = self };
 }
 
 /// Merges `other` into `self`
-pub fn mergeWith(self: *BRCMap, other: *const BRCMap) !void {
+pub fn mergeWith(self: *BRCVecstrSortedMap, other: *const BRCVecstrSortedMap) !void {
     for (0..other.sub8.count()) |i| (try self.sub8.findOrInsert(other.sub8.keys[i])).merge(&other.sub8.vals[i]);
     for (0..other.sub16.count()) |i| (try self.sub16.findOrInsert(other.sub16.keys[i])).merge(&other.sub16.vals[i]);
     for (0..other.sub32.count()) |i| (try self.sub32.findOrInsert(other.sub32.keys[i])).merge(&other.sub32.vals[i]);

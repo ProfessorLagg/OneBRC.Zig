@@ -6,7 +6,7 @@ const vecstr = @import("vecstr.zig");
 
 pub const _asm = @import("_asm.zig");
 
-const BRCMap = @import("BRCmap.zig");
+const BRCVecstrSortedMap = @import("BRCVecstrSortedMap.zig");
 pub const BRCParser = @import("BRCParser.zig");
 
 pub const DynamicBuffer = @import("DynamicBuffer.zig");
@@ -25,8 +25,8 @@ test vecstr {
 test _asm {
     _ = _asm;
 }
-test BRCMap {
-    _ = BRCMap;
+test BRCVecstrSortedMap {
+    _ = BRCVecstrSortedMap;
 }
 test BRCParser {
     _ = BRCParser;

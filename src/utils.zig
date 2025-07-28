@@ -142,7 +142,13 @@ pub const math = struct {
 };
 
 pub const hashing = struct {
-    pub inline fn fnv1a32(data: []const u8) u32 {
+    pub fn UntilDelimResult(comptime T: type) type {
+        return struct {
+            hash: T = undefined,
+            delim_index: ?usize = null,
+        };
+    }
+    pub fn fnv1a32(data: []const u8) u32 {
         @setRuntimeSafety(false);
         const fnv_prime: comptime_int = 16777619;
         var hash: u32 = 2166136261;
@@ -152,7 +158,23 @@ pub const hashing = struct {
         }
         return hash;
     }
-    pub inline fn fnv1a64(data: []const u8) u64 {
+    /// Calculates FNV-1a 32-bit hash of `line` until `delim` is reached. `delim` is not included in the hash.
+    /// Returns both the hash value and index of `delim`.
+    pub fn fnv1a32UntilDelim(comptime delim: u8, line: []const u8) UntilDelimResult(u32) {
+        @setRuntimeSafety(false);
+        const fnv_prime: comptime_int = 16777619;
+        const fnv_offset_basis: comptime_int = 0x811c9dc5;
+        var hash: u32 = fnv_offset_basis;
+        for (line, 0..line.len) |byte, i| {
+            if (byte == delim) return UntilDelimResult(u32){ .hash = hash, .delim_index = i };
+
+            hash ^= @as(u32, @intCast(byte));
+            hash *%= fnv_prime;
+        }
+        return UntilDelimResult(u32){ .hash = hash, .delim_index = null };
+    }
+
+    pub fn fnv1a64(data: []const u8) u64 {
         @setRuntimeSafety(false);
         const fnv_prime: comptime_int = 1099511628211;
         var hash: u64 = 0xcbf29ce484222325;
@@ -161,6 +183,21 @@ pub const hashing = struct {
             hash *%= fnv_prime;
         }
         return hash;
+    }
+    /// Calculates FNV-1a 64-bit hash of `line` until `delim` is reached. `delim` is not included in the hash.
+    /// Returns both the hash value and index of `delim`.
+    pub fn fnv1a64UntilDelim(comptime delim: u8, line: []const u8) UntilDelimResult(u64) {
+        @setRuntimeSafety(false);
+        const fnv_prime: comptime_int = 1099511628211;
+        const fnv_offset_basis: comptime_int = 0xcbf29ce484222325;
+        var hash: u64 = fnv_offset_basis;
+        for (line, 0..line.len) |byte, i| {
+            if (byte == delim) return UntilDelimResult(u64){ .hash = hash, .delim_index = i };
+
+            hash ^= @as(u64, @intCast(byte));
+            hash *%= fnv_prime;
+        }
+        return UntilDelimResult(u64){ .hash = hash, .delim_index = null };
     }
 };
 

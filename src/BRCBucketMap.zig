@@ -1,8 +1,8 @@
 const builtin = @import("builtin");
 const std = @import("std");
-const BRCMap = @import("BRCmap.zig");
-const MapVal = BRCMap.MapVal;
-const MapEntry = BRCMap.MapEntry;
+const BRCVecstrSortedMap = @import("BRCVecstrSortedMap.zig");
+const MapVal = BRCVecstrSortedMap.MapVal;
+const MapEntry = BRCVecstrSortedMap.MapEntry;
 const ut = @import("utils.zig");
 
 pub fn BRCBucketMap(comptime bucket_count: comptime_int) type {
@@ -10,7 +10,7 @@ pub fn BRCBucketMap(comptime bucket_count: comptime_int) type {
         const Self = @This();
         arena: std.heap.ArenaAllocator,
         allocator: std.mem.Allocator,
-        buckets: [bucket_count]BRCMap,
+        buckets: [bucket_count]BRCVecstrSortedMap,
 
         fn calcBucketIndex(key: []const u8) usize {
             @setRuntimeSafety(false);
@@ -31,7 +31,7 @@ pub fn BRCBucketMap(comptime bucket_count: comptime_int) type {
         }
         pub fn init(allocator: std.mem.Allocator) !Self {
             var r: Self = initBase(allocator);
-            inline for (0..bucket_count) |i| r.buckets[i] = BRCMap.init(allocator);
+            inline for (0..bucket_count) |i| r.buckets[i] = BRCVecstrSortedMap.init(allocator);
             return r;
         }
         pub fn deinit(self: *Self) void {
@@ -39,7 +39,7 @@ pub fn BRCBucketMap(comptime bucket_count: comptime_int) type {
             self.arena.deinit();
         }
 
-        pub fn findBucket(self: *Self, key: []const u8) *BRCMap {
+        pub fn findBucket(self: *Self, key: []const u8) *BRCVecstrSortedMap {
             return &self.buckets[calcBucketIndex(key)];
         }
 
@@ -51,9 +51,9 @@ pub fn BRCBucketMap(comptime bucket_count: comptime_int) type {
         }
 
         /// Joins all the buckets into a single map, using the input allocator, and frees self
-        pub fn finalize(self: *Self, allocator: std.mem.Allocator) !BRCMap {
+        pub fn finalize(self: *Self, allocator: std.mem.Allocator) !BRCVecstrSortedMap {
             std.log.debug("Finalizing BRCBucketMap", .{});
-            var finalMap: BRCMap = BRCMap.init(allocator);
+            var finalMap: BRCVecstrSortedMap = BRCVecstrSortedMap.init(allocator);
             inline for (self.buckets) |bucket| finalMap.mergeWith(&bucket) catch @panic("merge failed");
             self.deinit();
             return finalMap;

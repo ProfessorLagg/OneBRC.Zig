@@ -7,9 +7,8 @@ const LineReader = switch (builtin.os.tag) {
     else => @import("delimReader.zig").DelimReader(std.fs.File.Reader, '\n', 1_073_741_824),
 };
 const BRCBucketMap = @import("BRCBucketMap.zig").BRCBucketMap;
-const BRCMap = @import("BRCmap.zig");
-const MapVal = BRCMap.MapVal;
-const MapEntry = BRCMap.MapEntry;
+const BRCVecstrSortedMap = @import("BRCVecstrSortedMap.zig");
+const MapVal = @import("BRCMapVal.zig");
 const ut = @import("utils.zig");
 const linelog = std.log.scoped(.Lines);
 
@@ -57,7 +56,7 @@ pub const BRCParseResult = struct {
         }
     }
 
-    fn init(linecount: usize, map: *const BRCMap) !BRCParseResult {
+    fn init(linecount: usize, map: *const BRCVecstrSortedMap) !BRCParseResult {
         const allocator: std.mem.Allocator = map.allocator;
         const entryCount = map.sub8.count() + map.sub16.count() + map.sub32.count() + map.sub64.count() + map.sub128.count();
         const entries: []ResultEntry = try allocator.alloc(ResultEntry, entryCount);
@@ -174,6 +173,64 @@ fn parse_SingleThread(self: *BRCParser) !BRCParseResult {
     while (iter.next()) |e| : (i += 1) {
         entries[i].val = e.value_ptr.*;
         entries[i].key = e.key_ptr.*;
+    }
+    BRCParseResult.sortEntries(entries);
+    return BRCParseResult{
+        .allocator = self.allocator,
+        .entries = entries,
+        .linecount = linecount,
+    };
+}
+
+fn parse_SingleThread_BRCHashMap_fnv1a32(self: *BRCParser) !BRCParseResult {
+    const BRCHashMap = @import("BRCHashMap.zig").BRCHashMap;
+    const HashMap = BRCHashMap(u32, ut.hashing.fnv1a32);
+
+    const map_capacity: comptime_int = 131072; // Performed the best in benchmarks
+    var map: HashMap = try HashMap.init(self.allocator, map_capacity);
+    defer {
+        const collisionPercent = map.getCollisionPercent();
+        ut.debug.print("{d:.2}% of insertions collided out of {d} keys when using a capacity of {d}", .{ collisionPercent, map.count, map.entries.len });
+        map.deinit();
+    }
+
+    const fileReader = self.file.reader();
+    var lineReader: LineReader = try LineReader.init(self.allocator, fileReader);
+    var linecount: usize = 0;
+    while (try lineReader.next()) |line| : (linecount += 1) {
+        std.debug.assert(line.len >= 5);
+
+        const splitAndHashResult = ut.hashing.fnv1a32UntilDelim(';', line);
+        std.debug.assert(splitAndHashResult.delim_index != null);
+        const splitIndex: usize = splitAndHashResult.delim_index.?;
+        const keyhash: u32 = splitAndHashResult.hash;
+        std.debug.assert(line[splitIndex] == ';');
+
+        const keystr: []const u8 = line[0..splitIndex];
+        std.debug.assert(keystr[keystr.len - 1] != '\n');
+        const valstr: []const u8 = line[(splitIndex + 1)..];
+        linelog.debug("line{d}: {s}, k: {s}, v: {s}", .{ linecount, line, keystr, valstr });
+
+        std.debug.assert(keystr.len >= 1);
+        std.debug.assert(keystr.len <= 100);
+        std.debug.assert(keystr[keystr.len - 1] != ';');
+        std.debug.assert(valstr.len >= 3);
+        std.debug.assert(valstr.len <= 5);
+        std.debug.assert(valstr[valstr.len - 2] == '.');
+        std.debug.assert(valstr[0] != ';');
+
+        const valint: i48 = ut.math.fastIntParse(i48, valstr);
+        try map.addClonePreHashed(keystr, valint, keyhash);
+    }
+
+    // const entries:
+    const entries: []BRCParseResult.ResultEntry = try self.allocator.alloc(BRCParseResult.ResultEntry, map.count);
+    var iter = map.iterator();
+    var i: usize = 0;
+    while (iter.next()) |e| : (i += 1) {
+        entries[i].val = e.value;
+        entries[i].key.ptr = e.keyptr;
+        entries[i].key.len = e.keylen;
     }
     BRCParseResult.sortEntries(entries);
     return BRCParseResult{
@@ -311,7 +368,7 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
 
     sharedContext.waitGroup.wait();
 
-    const finalMap: BRCMap = try sharedContext.map.finalize(self.allocator);
+    const finalMap: BRCVecstrSortedMap = try sharedContext.map.finalize(self.allocator);
     return BRCParseResult.init(sharedContext.linecount, &finalMap);
 }
 
@@ -444,7 +501,7 @@ fn parse_MultiThread_LargePageBuffer(self: *BRCParser) !BRCParseResult {
 
     sharedContext.waitGroup.wait();
 
-    const finalMap: BRCMap = try sharedContext.map.finalize(self.allocator);
+    const finalMap: BRCVecstrSortedMap = try sharedContext.map.finalize(self.allocator);
     return BRCParseResult.init(sharedContext.linecount, &finalMap);
 }
 
@@ -640,7 +697,8 @@ fn parse_MultiThread_fnva132(self: *BRCParser) !BRCParseResult {
 
 pub fn parse(self: *BRCParser) !BRCParseResult {
     const parseFn = comptime switch (builtin.single_threaded) {
-        true => parse_SingleThread,
+        // true => parse_SingleThread,
+        true => parse_SingleThread_BRCHashMap_fnv1a32,
         //false => switch (builtin.os.tag) {
         //    .windows => parse_MultiThread_LargePageBuffer,
         //    else => parse_MultiThread,

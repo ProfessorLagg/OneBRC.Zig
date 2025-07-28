@@ -7,7 +7,7 @@ const ParseResult = lib.BRCParser.BRCParseResult;
 pub const std_options: std.Options = .{
     // Set the log level to info to .debug. use the scope levels instead
     .log_level = switch (builtin.mode) {
-        .Debug => .debug,
+        .Debug => .info,
         .ReleaseSafe => .err,
         .ReleaseSmall => .err,
         .ReleaseFast => .err,
