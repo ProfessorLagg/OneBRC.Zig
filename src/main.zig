@@ -42,14 +42,14 @@ pub const std_options: std.Options = .{
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100_000_000.txt";
 var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000_000.txt";
 
-// const allocator: std.mem.Allocator = b: {
-//     if (builtin.is_test) break :b std.testing.allocator;
-//     if (!builtin.single_threaded) break :b std.heap.smp_allocator;
-//     if (builtin.link_libc) break :b std.heap.c_allocator;
-//     @compileError("Requires either single-threading to be disabled or lib-c to be linked");
-// };
+const allocator: std.mem.Allocator = b: {
+    if (builtin.is_test) break :b std.testing.allocator;
+    if (!builtin.single_threaded) break :b std.heap.smp_allocator;
+    if (builtin.link_libc) break :b std.heap.c_allocator;
+    @compileError("Requires either single-threading to be disabled or lib-c to be linked");
+};
 
-const allocator = std.heap.c_allocator;
+// const allocator = std.heap.c_allocator;
 
 pub fn main() !void {
     defer lib.utils.debug.flush();
