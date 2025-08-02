@@ -2,6 +2,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 
 const _asm = @import("_asm.zig");
+const Buffer = @import("buffer.zig");
 // const LineReader = DelimReader(std.fs.File.Reader, '\n', 4096);
 const LineReader = switch (builtin.os.tag) {
     .windows => @import("delimReader.zig").VirtualAllocDelimReader(std.fs.File.Reader, '\n'),
@@ -182,7 +183,6 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
     const WaitGroup = std.Thread.WaitGroup;
     const HashMap = BRCHashMap(u32, ut.hashing.fnv1a32);
 
-    const block_size: comptime_int = 8_388_608;
     const map_capacity: comptime_int = 131072; // Performed the best in benchmarks
 
     var pool: ThreadPool = undefined;
@@ -228,7 +228,8 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
     const TaskContext = struct {
         const Tctx = @This();
         shared: *SharedContext,
-        block: []const u8,
+        block: Buffer,
+        len: usize,
         blockId: usize,
 
         /// Processses `block` into `map`.
@@ -271,7 +272,7 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
             const mapIdx: usize = ctx.blockId % ctx.shared.maps.len;
             const map: *HashMap = &ctx.shared.maps[mapIdx];
             const map_lock: *Mutex = &ctx.shared.locks[mapIdx];
-            const localCount: usize = @call(.always_inline, Tctx.process, .{ ctx.block, map, map_lock }) catch |e| b: {
+            const localCount: usize = @call(.always_inline, Tctx.process, .{ ctx.block.slice(ctx.len), map, map_lock }) catch |e| b: {
                 ut.debug.print("Thread error: {any}{any}", .{ e, @errorReturnTrace() });
                 break :b 0;
             };
@@ -280,17 +281,8 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
         }
 
         fn deinit(ctx: *Tctx) void {
-            ctx.shared.allocator.free(ctx.block);
+            ctx.block.destroy();
             ctx.shared.allocator.destroy(ctx);
-        }
-
-        fn spawn(shared: *SharedContext, threadPool: *ThreadPool, block: []const u8, id: usize) !void {
-            const ctx: *Tctx = try shared.allocator.create(Tctx);
-            ctx.shared = shared;
-            ctx.block.len = block.len;
-            ctx.block.ptr = block.ptr;
-            ctx.blockId = id;
-            threadPool.spawnWg(&shared.waitGroup, run, .{ctx});
         }
 
         /// Merges `src` into `dst` and calls `.freeKeys()` and `.deinit()` on `src`
@@ -305,17 +297,16 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
         }
     };
 
-    var block: []u8 = try self.allocator.alignedAlloc(u8, 4096, block_size);
-    var readSize: usize = try self.file.read(block);
+    var block: Buffer = try Buffer.create();
+    var readSize: usize = try self.file.read(block.slice(Buffer.size));
     var blockCount: usize = 0;
     while (readSize > 0) {
-        var bytes: []const u8 = block[0..readSize];
+        var bytes: []const u8 = block.slice(readSize);
         blockCount += 1;
         ut.debug.print("blockCount: {d}\n", .{blockCount});
 
         // Find end of the last line in the buffer
-        var endIndex = bytes.len;
-        if (readSize == block.len) endIndex = std.mem.lastIndexOfScalar(u8, bytes, '\n') orelse unreachable;
+        const endIndex = if (bytes.len < Buffer.size) bytes.len else if (bytes.len == Buffer.size) std.mem.lastIndexOfScalar(u8, bytes, '\n') orelse unreachable else unreachable;
 
         const remain: []const u8 = b: {
             var r: []const u8 = undefined;
@@ -329,14 +320,21 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
         bytes.len = endIndex;
 
         // Schedule a thread to parse the buffer
-        try TaskContext.spawn(sharedContext, &pool, bytes, blockCount);
+        const ctx: *TaskContext = try sharedContext.allocator.create(TaskContext);
+        ctx.shared = sharedContext;
+        ctx.len = bytes.len;
+        ctx.block = block;
+        ctx.blockId = blockCount;
 
         // once the task is spawned i can mock about with bytes again to read more data from the file
-        const next_block: []u8 = try self.allocator.alignedAlloc(u8, 4096, block_size);
-        @memcpy(next_block[0..remain.len], remain);
-        readSize = try self.file.read(next_block[remain.len..]);
+        var next_block: Buffer = try Buffer.create();
+        const next_bytes = next_block.slice(Buffer.size);
+        @memcpy(next_bytes[0..remain.len], remain);
+        readSize = try self.file.read(next_bytes[remain.len..]);
         readSize += remain.len;
-        block = next_block[0..];
+
+        pool.spawnWg(&sharedContext.waitGroup, TaskContext.run, .{ctx});
+        block = next_block;
     }
 
     sharedContext.waitGroup.wait();
