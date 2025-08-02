@@ -1,6 +1,8 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
+
+const _asm = @import("_asm.zig");
 // const LineReader = DelimReader(std.fs.File.Reader, '\n', 4096);
 const LineReader = switch (builtin.os.tag) {
     .windows => @import("delimReader.zig").VirtualAllocDelimReader(std.fs.File.Reader, '\n'),
@@ -408,8 +410,6 @@ fn parse_MultiThread_MappedFile(self: *BRCParser) !BRCParseResult {
         const Tsctx = @This();
         allocator: std.mem.Allocator = undefined,
         linecount: usize = 0,
-        linecount_lock: Mutex = .{},
-        // TODO Try out using a cpu count number of HashMaps, and then using threadId / block id to find which one to lock and merge to
         maps: []HashMap = undefined,
         locks: []Mutex = undefined,
         waitGroup: WaitGroup = .{},
@@ -495,10 +495,7 @@ fn parse_MultiThread_MappedFile(self: *BRCParser) !BRCParseResult {
                 ut.debug.print("Thread error: {any}{any}", .{ e, @errorReturnTrace() });
                 break :b 0;
             };
-
-            ctx.shared.linecount_lock.lock();
-            ctx.shared.linecount += localCount;
-            ctx.shared.linecount_lock.unlock();
+            _asm.sumDirect(&ctx.shared.linecount, localCount);
         }
 
         fn deinit(ctx: *Tctx) void {
@@ -598,8 +595,8 @@ fn parse_MultiThread_MappedFile(self: *BRCParser) !BRCParseResult {
 pub fn parse(self: *BRCParser) !BRCParseResult {
     const parseFn = comptime switch (builtin.single_threaded) {
         true => parse_SingleThread,
-        // false => parse_MultiThread,
-        false => parse_MultiThread_MappedFile,
+        false => parse_MultiThread,
+        // false => parse_MultiThread_MappedFile,
     };
     return parseFn(self);
 }

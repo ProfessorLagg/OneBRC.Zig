@@ -88,6 +88,53 @@ test repmovsb {
     try std.testing.expectEqualSlices(u8, src_page, dst_page);
 }
 
+/// computes dst.* +%= src.* in one action
+pub inline fn sumDirect(dst: *usize, src: *const usize) void {
+    return asm volatile (
+        \\ mov (%rsi), %rax
+        \\ add %rax, (%rdi)
+        :
+        : [dst] "{rdi}" (dst),
+          [src] "{rsi}" (src),
+        : "rax"
+    );
+}
+
+test sumDirect {
+    const allocator: std.mem.Allocator = std.testing.allocator;
+    const len: comptime_int = 111;
+    var prng = std.Random.DefaultPrng.init(2025_08_02);
+
+    const src: []usize = try allocator.alloc(usize, len);
+    defer allocator.free(src);
+    const exp: []usize = try allocator.alloc(usize, len);
+    defer allocator.free(exp);
+    const fnd: []usize = try allocator.alloc(usize, len);
+    defer allocator.free(fnd);
+
+    prng.fill(std.mem.sliceAsBytes(src));
+    prng.fill(std.mem.sliceAsBytes(exp));
+    @memcpy(fnd, exp);
+
+    for (0..len) |i| {
+        const src_ptr: *const usize = &src[i];
+        const exp_ptr: *usize = &exp[i];
+        const fnd_ptr: *usize = &fnd[i];
+
+        const exp_org: usize = exp_ptr.*;
+        const fnd_org: usize = fnd_ptr.*;
+
+        exp_ptr.* +%= src_ptr.*;
+        sumDirect(fnd_ptr, src_ptr);
+
+        std.testing.expectEqual(exp[i], fnd[i]) catch |e| {
+            std.log.err("expect {d} +%= {d} == {d}", .{ src[i], exp_org, exp[i] });
+            std.log.err("found  {d} +%= {d} == {d}", .{ src[i], fnd_org, fnd[i] });
+            return e;
+        };
+    }
+}
+
 // pub inline fn compare_u8(a: u8, b: u8) i8 {
 //     return asm volatile (
 //         \\mov $0, %ax
