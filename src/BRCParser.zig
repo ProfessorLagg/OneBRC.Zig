@@ -182,7 +182,7 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
     const WaitGroup = std.Thread.WaitGroup;
     const HashMap = BRCHashMap(u32, ut.hashing.fnv1a32);
 
-    const block_size: comptime_int = 1024 * 16; //8_388_608;
+    const block_size: comptime_int = 8_388_608;
     const map_capacity: comptime_int = 131072; // Performed the best in benchmarks
 
     var pool: ThreadPool = undefined;
@@ -304,13 +304,16 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
     defer std.heap.page_allocator.free(buffer);
 
     var blockCount: usize = 0;
+
     var left: usize = 0;
     var right: usize = block_size;
     var rem: usize = 0;
     loop: while (true) {
         if (left >= buffer.len) break :loop;
 
+        right = left + rem + block_size;
         const readSize: usize = try self.file.read(buffer[left + rem .. @min(right, buffer.len)]);
+
         blockCount += 1;
 
         // find end of last line
@@ -318,11 +321,12 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
         switch (readSize) {
             0 => break :loop,
             block_size => {
-                while (buffer[right] != '\n' and right > left) : (right -= 1) {
+                while (buffer[right] != '\n' and right > left) {
+                    right -= 1;
                     rem += 1;
                 }
             },
-            else => {},
+            else => right = buffer.len,
         }
 
         // Schedule a thread to parse the buffer
@@ -334,8 +338,11 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
         pool.spawnWg(&sharedContext.waitGroup, TaskContext.run, .{ctx});
 
         // adjust pointers
-        left = right + @intFromBool(right < buffer.len and buffer[right] == '\n');
-        right = left + block_size;
+        left = right;
+        if (left < buffer.len and buffer[left] == '\n') {
+            left += 1;
+            rem -= @intFromBool(rem > 0);
+        }
     }
 
     sharedContext.waitGroup.wait();

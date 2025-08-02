@@ -4,7 +4,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const link_libc = true;
-    const single_threaded = true;
+    const single_threaded = false;
     // const omit_frame_pointer: bool = optimize == .ReleaseFast;
     const omit_frame_pointer: bool = false;
 
