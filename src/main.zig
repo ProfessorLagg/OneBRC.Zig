@@ -53,10 +53,14 @@ const allocator: std.mem.Allocator = b: {
 
 pub fn main() !void {
     defer lib.utils.debug.flush();
-    //temp() catch |e| std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() }) catch @panic("Format failed");
-    bench_parse() catch |e| std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() }) catch @panic("Format failed");
-    // bench_read() catch |e| std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() }) catch @panic("Format failed");
-    // run() catch |e| std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() })  catch @panic("Format failed");
+    //temp() catch |e| catch_print(e);
+    //bench_parse() catch |e| catch_print(e);
+    // bench_read() catch |e| catch_print(e);
+    run() catch |e| catch_print(e);
+}
+
+fn catch_print(e: anyerror) void {
+    std.fmt.format(std.io.getStdErr().writer(), "{any}{any}", .{ e, @errorReturnTrace() }) catch @panic("Format failed");
 }
 
 fn temp() !void {

@@ -300,7 +300,7 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
         }
 
         /// Merges `src` into `dst` and calls `.freeKeys()` and `.deinit()` on `src`
-        fn mergeFree(src: *HashMap, dst: *HashMap) void {
+        fn mergeAndFree(src: *HashMap, dst: *HashMap) void {
             var iter = src.iterator();
             while (iter.next()) |entry| dst.mergeEntryByClone(entry) catch |err| {
                 ut.debug.print("{any}{any}", .{ err, @errorReturnTrace() });
@@ -353,10 +353,11 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
     std.debug.assert(std.math.isPowerOfTwo(mapCount));
 
     var round: usize = 1;
-    var merge_wg: WaitGroup = .{};
+    
     while (round < mapCount) : (round *= 2) {
         ut.debug.print("merge round {d}\n", .{round});
-        
+
+        var merge_wg: WaitGroup = .{};
         var src_idx: usize = round;
         while (src_idx < mapCount) : (src_idx += round * 2) {
             const dst_idx: usize = src_idx - round;
@@ -364,9 +365,9 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
 
             const src_map: *HashMap = @constCast(&sharedContext.maps[src_idx]);
             const dst_map: *HashMap = @constCast(&sharedContext.maps[dst_idx]);
-            pool.spawnWg(&merge_wg, TaskContext.mergeFree, .{ src_map, dst_map });
+            pool.spawnWg(&merge_wg, TaskContext.mergeAndFree, .{ src_map, dst_map });
         }
-        merge_wg.wait();
+        WaitGroup.wait(&merge_wg);
     }
 
     const finalMap: *HashMap = &sharedContext.maps[0];

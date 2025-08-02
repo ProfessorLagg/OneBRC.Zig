@@ -5,6 +5,8 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const link_libc = true;
     const single_threaded = false;
+    // const omit_frame_pointer: bool = optimize == .ReleaseFast;
+    const omit_frame_pointer: bool = false;
 
     const lib_mod = b.createModule(.{
         .root_source_file = b.path("src/root.zig"),
@@ -12,6 +14,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = link_libc,
         .single_threaded = single_threaded,
+        .omit_frame_pointer = omit_frame_pointer,
     });
 
     const exe_mod = b.createModule(.{
@@ -20,6 +23,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = link_libc,
         .single_threaded = single_threaded,
+        .omit_frame_pointer = omit_frame_pointer,
     });
     exe_mod.addImport("brc_lib", lib_mod);
 

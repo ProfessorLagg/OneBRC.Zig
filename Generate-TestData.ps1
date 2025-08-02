@@ -8,7 +8,6 @@ Param(
     [string]$keyListPath = $(Join-Path -Path $PSScriptRoot -ChildPath '\src\benchmarking\data\worldcities.txt')
 )
 # ===== SCRIPT ======
-cls
 $ErrorActionPreference = 'Stop'
 cd $PSScriptRoot
 
