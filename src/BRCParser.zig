@@ -2,7 +2,6 @@ const builtin = @import("builtin");
 const std = @import("std");
 
 const _asm = @import("_asm.zig");
-const Buffer = @import("buffer.zig");
 // const LineReader = DelimReader(std.fs.File.Reader, '\n', 4096);
 const LineReader = switch (builtin.os.tag) {
     .windows => @import("delimReader.zig").VirtualAllocDelimReader(std.fs.File.Reader, '\n'),
@@ -183,6 +182,7 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
     const WaitGroup = std.Thread.WaitGroup;
     const HashMap = BRCHashMap(u32, ut.hashing.fnv1a32);
 
+    const block_size: comptime_int = 1024 * 16; //8_388_608;
     const map_capacity: comptime_int = 131072; // Performed the best in benchmarks
 
     var pool: ThreadPool = undefined;
@@ -228,7 +228,7 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
     const TaskContext = struct {
         const Tctx = @This();
         shared: *SharedContext,
-        block: Buffer,
+        block: []const u8,
         len: usize,
         blockId: usize,
 
@@ -241,6 +241,9 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
             var lineIter = std.mem.splitScalar(u8, block, '\n');
             var localCount: usize = 0;
             while (lineIter.next()) |line| : (localCount += 1) {
+                // ut.debug.print("line {d}: \"{s}\" | {any} \n", .{ localCount, line, line });
+                // ut.debug.flush();
+
                 std.debug.assert(line.len >= 5);
 
                 const splitAndHashResult = ut.hashing.fnv1a32UntilDelim(';', line);
@@ -268,11 +271,12 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
         }
 
         fn run(ctx: *Tctx) void {
+            @setRuntimeSafety(false);
             defer @call(.always_inline, Tctx.deinit, .{ctx});
             const mapIdx: usize = ctx.blockId % ctx.shared.maps.len;
             const map: *HashMap = &ctx.shared.maps[mapIdx];
             const map_lock: *Mutex = &ctx.shared.locks[mapIdx];
-            const localCount: usize = @call(.always_inline, Tctx.process, .{ ctx.block.slice(ctx.len), map, map_lock }) catch |e| b: {
+            const localCount: usize = Tctx.process(ctx.block, map, map_lock) catch |e| b: {
                 ut.debug.print("Thread error: {any}{any}", .{ e, @errorReturnTrace() });
                 break :b 0;
             };
@@ -281,7 +285,6 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
         }
 
         fn deinit(ctx: *Tctx) void {
-            ctx.block.destroy();
             ctx.shared.allocator.destroy(ctx);
         }
 
@@ -296,45 +299,43 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
             src.deinit();
         }
     };
+    const file_size = self.file.getEndPos() catch (try self.file.stat()).size;
+    const buffer: []u8 = try std.heap.page_allocator.alignedAlloc(u8, std.heap.pageSize(), file_size);
+    defer std.heap.page_allocator.free(buffer);
 
-    var block: Buffer = try Buffer.create();
-    var readSize: usize = try self.file.read(block.slice(Buffer.size));
     var blockCount: usize = 0;
-    while (readSize > 0) {
-        var bytes: []const u8 = block.slice(readSize);
+    var left: usize = 0;
+    var right: usize = block_size;
+    var rem: usize = 0;
+    loop: while (true) {
+        if (left >= buffer.len) break :loop;
+
+        const readSize: usize = try self.file.read(buffer[left + rem .. @min(right, buffer.len)]);
         blockCount += 1;
-        ut.debug.print("blockCount: {d}\n", .{blockCount});
 
-        // Find end of the last line in the buffer
-        const endIndex = if (bytes.len < Buffer.size) bytes.len else if (bytes.len == Buffer.size) std.mem.lastIndexOfScalar(u8, bytes, '\n') orelse unreachable else unreachable;
-
-        const remain: []const u8 = b: {
-            var r: []const u8 = undefined;
-            // This can be outside the bytes array, and therefore outside the block
-            // Which is not a bug since r.len would be 0 in that case
-            const ptrint: usize = @intFromPtr(bytes.ptr) + ((endIndex + 1) * @sizeOf(u8));
-            r.ptr = @ptrFromInt(ptrint);
-            r.len = bytes.len - @min(endIndex + 1, bytes.len);
-            break :b r;
-        };
-        bytes.len = endIndex;
+        // find end of last line
+        rem = 0;
+        switch (readSize) {
+            0 => break :loop,
+            block_size => {
+                while (buffer[right] != '\n' and right > left) : (right -= 1) {
+                    rem += 1;
+                }
+            },
+            else => {},
+        }
 
         // Schedule a thread to parse the buffer
         const ctx: *TaskContext = try sharedContext.allocator.create(TaskContext);
         ctx.shared = sharedContext;
-        ctx.len = bytes.len;
-        ctx.block = block;
+        ctx.block = buffer[left..right];
         ctx.blockId = blockCount;
-
-        // once the task is spawned i can mock about with bytes again to read more data from the file
-        var next_block: Buffer = try Buffer.create();
-        const next_bytes = next_block.slice(Buffer.size);
-        @memcpy(next_bytes[0..remain.len], remain);
-        readSize = try self.file.read(next_bytes[remain.len..]);
-        readSize += remain.len;
-
+        ut.debug.print("scheduling blockId{d}\n", .{ctx.blockId});
         pool.spawnWg(&sharedContext.waitGroup, TaskContext.run, .{ctx});
-        block = next_block;
+
+        // adjust pointers
+        left = right + @intFromBool(right < buffer.len and buffer[right] == '\n');
+        right = left + block_size;
     }
 
     sharedContext.waitGroup.wait();
@@ -382,12 +383,12 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
 }
 
 pub fn parse(self: *BRCParser) !BRCParseResult {
-    const parseFn = comptime switch (builtin.single_threaded) {
-        true => parse_SingleThread,
-        false => parse_MultiThread,
-        // false => parse_MultiThread_MappedFile,
-    };
-    return parseFn(self);
+    // const parseFn = comptime switch (builtin.single_threaded) {
+    //     true => parse_SingleThread,
+    //     false => parse_MultiThread,
+    // };
+    // return parseFn(self);
+    return parse_MultiThread(self);
 }
 
 fn read_SingleThread(self: *BRCParser) !BRCParseResult {

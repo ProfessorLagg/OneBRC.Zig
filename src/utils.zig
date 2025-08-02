@@ -146,6 +146,19 @@ pub const math = struct {
         for (0..y) |_| r *%= x;
         return r;
     }
+
+    /// rounds x to the next multiple of y away from 0.
+    /// only works on unsigned integers
+    pub fn nextMultipleOf(comptime T: type, x: T, y: T) T {
+        comptime {
+            const ti: std.builtin.Type = @typeInfo(T);
+            if (ti != .int) @compileError("Expected unsigned integer, but found " ++ @typeName(T));
+            if (ti.int.signedness != .signed) @compileError("Expected unsigned integer, but found " ++ @typeName(T));
+        }
+
+        const d: T = x / y;
+        return (d + @intFromBool((x * d) == y)) * y;
+    }
 };
 
 pub const hashing = struct {
