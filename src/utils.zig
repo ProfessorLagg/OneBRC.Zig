@@ -3,6 +3,13 @@ const std = @import("std");
 const _asm = @import("_asm.zig");
 
 pub const mem = struct {
+    pub const staticAllocator: std.mem.Allocator = b: {
+        if (builtin.is_test) break :b std.testing.allocator;
+        if (!builtin.single_threaded) break :b std.heap.smp_allocator;
+        if (builtin.link_libc) break :b std.heap.c_allocator;
+        @compileError("Requires either single-threading to be disabled or lib-c to be linked");
+    };
+
     pub const KiloByte: comptime_int = 1024;
     pub const MegaByte: comptime_int = KiloByte * 1024;
     pub const GigaByte: comptime_int = MegaByte * 1024;
@@ -208,6 +215,12 @@ pub const meta = struct {
         r.len = 0;
         r.ptr = @ptrFromInt(@alignOf(T));
         return r;
+    }
+};
+
+pub const fs = struct {
+    pub fn getFilePath(file: std.fs.File, out_buffer: *[std.fs.max_path_bytes]u8) ![]const u8 {
+        return try std.os.getFdPath(file.handle, out_buffer);
     }
 };
 

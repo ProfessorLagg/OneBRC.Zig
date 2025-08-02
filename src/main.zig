@@ -7,7 +7,7 @@ const ParseResult = lib.BRCParser.BRCParseResult;
 pub const std_options: std.Options = .{
     // Set the log level to info to .debug. use the scope levels instead
     .log_level = switch (builtin.mode) {
-        .Debug => .info,
+        .Debug => .debug,
         .ReleaseSafe => .err,
         .ReleaseSmall => .err,
         .ReleaseFast => .err,
@@ -37,10 +37,10 @@ pub const std_options: std.Options = .{
 
 // following files have 10 000 keys, and likely more than 1 instance of each key
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100_000.txt";
-// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000.txt";
+var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\10_000_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100_000_000.txt";
-var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000_000.txt";
+// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000_000.txt";
 
 const allocator: std.mem.Allocator = b: {
     if (builtin.is_test) break :b std.testing.allocator;
@@ -54,9 +54,9 @@ const allocator: std.mem.Allocator = b: {
 pub fn main() !void {
     defer lib.utils.debug.flush();
     //temp() catch |e| catch_print(e);
-    //bench_parse() catch |e| catch_print(e);
+    bench_parse() catch |e| catch_print(e);
     // bench_read() catch |e| catch_print(e);
-    run() catch |e| catch_print(e);
+    //run() catch |e| catch_print(e);
 }
 
 fn catch_print(e: anyerror) void {
@@ -81,9 +81,9 @@ pub fn bench_parse() !void {
     var timer = std.time.Timer.start() catch unreachable;
 
     var parser = try lib.BRCParser.init(allocator, debugfilepath);
-    var result: ParseResult = try parser.parse();
+    const filesize: u64 = parser.file.getEndPos() catch (try parser.file.stat()).size;
 
-    const filesize: u64 = (try parser.file.stat()).size;
+    var result: ParseResult = try parser.parse();
     parser.deinit();
 
     const linecount = result.linecount;
