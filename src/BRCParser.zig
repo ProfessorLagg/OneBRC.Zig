@@ -1,7 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
-
 const _asm = @import("_asm.zig");
 // const LineReader = DelimReader(std.fs.File.Reader, '\n', 4096);
 const LineReader = switch (builtin.os.tag) {
@@ -195,8 +194,6 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
         const Tsctx = @This();
         allocator: std.mem.Allocator = undefined,
         linecount: usize = 0,
-        linecount_lock: Mutex = .{},
-        // TODO Try out using a cpu count number of HashMaps, and then using threadId / block id to find which one to lock and merge to
         maps: []HashMap = undefined,
         locks: []Mutex = undefined,
         waitGroup: WaitGroup = .{},
@@ -214,14 +211,11 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
                 sctx.maps[i] = try HashMap.init(allocator, map_capacity);
                 sctx.locks[i] = .{};
             }
-
-            sctx.linecount_lock = .{};
             sctx.waitGroup = .{};
             return sctx;
         }
         fn deinit(sctx: *Tsctx, deinitMaps: bool) void {
             if (deinitMaps) for (0..sctx.maps.len) |i| sctx.maps[i].deinit();
-
             sctx.allocator.free(sctx.maps);
             sctx.allocator.free(sctx.locks);
             sctx.allocator.destroy(sctx);
@@ -282,9 +276,7 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
                 break :b 0;
             };
 
-            ctx.shared.linecount_lock.lock();
-            ctx.shared.linecount += localCount;
-            ctx.shared.linecount_lock.unlock();
+            _asm.sumDirect(&ctx.shared.linecount, localCount);
         }
 
         fn deinit(ctx: *Tctx) void {
@@ -391,6 +383,142 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
     };
 }
 
+pub fn parse(self: *BRCParser) !BRCParseResult {
+    const parseFn = comptime switch (builtin.single_threaded) {
+        true => parse_SingleThread,
+        false => parse_MultiThread,
+        // false => parse_MultiThread_MappedFile,
+    };
+    return parseFn(self);
+}
+
+fn read_SingleThread(self: *BRCParser) !BRCParseResult {
+    const buffer: []u8 = try self.allocator.alignedAlloc(u8, 4096, 8_388_608);
+    defer self.allocator.free(buffer);
+    var readSize: usize = try self.file.read(buffer);
+    while (readSize > 0) : (readSize = try self.file.read(buffer)) {}
+    return BRCParseResult{ .linecount = 1 };
+}
+
+fn read_MultiThread(self: *BRCParser) !BRCParseResult {
+    const ThreadPool = std.Thread.Pool;
+    const WaitGroup = std.Thread.WaitGroup;
+    const Mutex = std.Thread.Mutex;
+    const ArenaAllocator = std.heap.ArenaAllocator;
+
+    const buffer: []u8 = try self.allocator.alignedAlloc(u8, 4096, 65535);
+    defer self.allocator.free(buffer);
+
+    var pool: ThreadPool = undefined;
+    try pool.init(.{ .allocator = self.allocator });
+
+    const SharedContext = struct {
+        allocator: std.mem.Allocator = undefined,
+        result: BRCParseResult = .{},
+        result_lock: Mutex = .{},
+        waitGroup: WaitGroup = .{},
+    };
+    // Gotta put anything that touches a thread on the heap
+    const sharedContext: *SharedContext = try self.allocator.create(SharedContext);
+    defer self.allocator.destroy(sharedContext);
+    sharedContext.*.allocator = self.allocator;
+    sharedContext.*.result = .{};
+    sharedContext.*.result_lock = .{};
+    sharedContext.*.waitGroup = .{};
+
+    const TaskContext = struct {
+        const Tctx = @This();
+        shared: *SharedContext,
+        arena: ArenaAllocator,
+        block: []const u8,
+        blockId: usize,
+
+        fn run(ctx: *Tctx) void {
+            defer ctx.deinit();
+            var lineIter = std.mem.splitScalar(u8, ctx.block, '\n');
+            var localCount: usize = 0;
+            while (lineIter.next()) |line| {
+                _ = &line;
+                localCount += 1;
+            }
+
+            ctx.shared.result_lock.lock();
+            ctx.shared.result.linecount += localCount;
+            ctx.shared.result_lock.unlock();
+        }
+
+        fn deinit(ctx: *Tctx) void {
+            ctx.arena.deinit();
+        }
+        fn spawn(shared: *SharedContext, threadPool: *ThreadPool, rawBytes: []const u8, id: usize) !void {
+            var arena = ArenaAllocator.init(shared.allocator);
+            const allocator = arena.allocator();
+
+            const ctx: *Tctx = try allocator.create(Tctx);
+            ctx.*.shared = shared;
+            ctx.*.arena = arena;
+            ctx.*.block = try ut.mem.clone(u8, allocator, rawBytes);
+            ctx.blockId = id;
+            threadPool.spawnWg(&shared.waitGroup, run, .{ctx});
+        }
+    };
+
+    var readSize: usize = try self.file.read(buffer);
+    var bytes: []const u8 = buffer[0..readSize];
+    var blockCount: usize = 0;
+    while (readSize > 0) {
+        blockCount += 1;
+
+        // Find end of the last line in the buffer
+        const endIndex = lastLineEndIndex(bytes);
+        var remain = buffer[@min(buffer.len, endIndex + 2)..];
+        while (remain.len > 0 and remain[0] == '\n') : (remain = remain[1..]) {}
+        while (remain.len > 0 and remain[remain.len - 1] == '\n') : (remain.len -= 1) {}
+        bytes = bytes[0 .. endIndex + 1];
+
+        ut.debug.print("=== BUFFER\n\"{s}\"\n=== BYTES\n\"{s}\"\n=== REMAIN\n\"{s}\"\n===      \n", .{ buffer, bytes, remain });
+
+        // Schedule a thread to parse the buffer
+        try TaskContext.spawn(sharedContext, &pool, bytes, blockCount);
+
+        // once the task is spawned i can mock about with bytes again to read more data from the file
+        std.mem.copyForwards(u8, buffer, remain);
+        readSize = try self.file.read(buffer[remain.len..]);
+        bytes = buffer[@intFromBool(buffer[0] == '\n') .. readSize + remain.len];
+    }
+
+    sharedContext.waitGroup.wait();
+
+    const result: BRCParseResult = (&sharedContext.result).*;
+    return result;
+}
+
+pub fn read(self: *BRCParser) !BRCParseResult {
+    const readFn = comptime switch (builtin.single_threaded) {
+        true => read_SingleThread,
+        false => read_MultiThread,
+    };
+
+    return readFn(self);
+}
+
+/// Returns the index of the last character in the last line of `bytes`
+fn lastLineEndIndex(bytes: []const u8) usize {
+    var i: usize = bytes.len - 1;
+    if (bytes[i] == '\n') return i - 1;
+    const l = @min(5, bytes.len);
+    while (i > l) {
+        i -= 1;
+        if (bytes[i] == '\n') return i - 1;
+        if (bytes[i] == '.' and bytes[i + 1] >= '0' and bytes[i + 1] <= '9') {
+            return i + 1;
+        }
+    }
+
+    std.log.err("Could not find lastLineEnd in:\n\"{s}\"", .{bytes});
+    @panic("bytes was not properly formatted BRC!");
+}
+
 fn parse_MultiThread_MappedFile(self: *BRCParser) !BRCParseResult {
     const ThreadPool = std.Thread.Pool;
     const Mutex = std.Thread.Mutex;
@@ -398,7 +526,7 @@ fn parse_MultiThread_MappedFile(self: *BRCParser) !BRCParseResult {
     const HashMap = BRCHashMap(u32, ut.hashing.fnv1a32);
     const MappedFile = @import("MappedFile.zig").MappedFile(.{ .enableWriting = false, .largePages = false });
 
-    const block_size: comptime_int = 1024 * 64;//8_388_608;
+    const block_size: comptime_int = 1024 * 64; //8_388_608;
     const map_capacity: comptime_int = 131072; // Performed the best in benchmarks
 
     var pool: ThreadPool = undefined;
@@ -590,140 +718,4 @@ fn parse_MultiThread_MappedFile(self: *BRCParser) !BRCParseResult {
         .entries = entries,
         .linecount = sharedContext.linecount,
     };
-}
-
-pub fn parse(self: *BRCParser) !BRCParseResult {
-    const parseFn = comptime switch (builtin.single_threaded) {
-        true => parse_SingleThread,
-        false => parse_MultiThread,
-        // false => parse_MultiThread_MappedFile,
-    };
-    return parseFn(self);
-}
-
-fn read_SingleThread(self: *BRCParser) !BRCParseResult {
-    const buffer: []u8 = try self.allocator.alignedAlloc(u8, 4096, 8_388_608);
-    defer self.allocator.free(buffer);
-    var readSize: usize = try self.file.read(buffer);
-    while (readSize > 0) : (readSize = try self.file.read(buffer)) {}
-    return BRCParseResult{ .linecount = 1 };
-}
-
-fn read_MultiThread(self: *BRCParser) !BRCParseResult {
-    const ThreadPool = std.Thread.Pool;
-    const WaitGroup = std.Thread.WaitGroup;
-    const Mutex = std.Thread.Mutex;
-    const ArenaAllocator = std.heap.ArenaAllocator;
-
-    const buffer: []u8 = try self.allocator.alignedAlloc(u8, 4096, 65535);
-    defer self.allocator.free(buffer);
-
-    var pool: ThreadPool = undefined;
-    try pool.init(.{ .allocator = self.allocator });
-
-    const SharedContext = struct {
-        allocator: std.mem.Allocator = undefined,
-        result: BRCParseResult = .{},
-        result_lock: Mutex = .{},
-        waitGroup: WaitGroup = .{},
-    };
-    // Gotta put anything that touches a thread on the heap
-    const sharedContext: *SharedContext = try self.allocator.create(SharedContext);
-    defer self.allocator.destroy(sharedContext);
-    sharedContext.*.allocator = self.allocator;
-    sharedContext.*.result = .{};
-    sharedContext.*.result_lock = .{};
-    sharedContext.*.waitGroup = .{};
-
-    const TaskContext = struct {
-        const Tctx = @This();
-        shared: *SharedContext,
-        arena: ArenaAllocator,
-        block: []const u8,
-        blockId: usize,
-
-        fn run(ctx: *Tctx) void {
-            defer ctx.deinit();
-            var lineIter = std.mem.splitScalar(u8, ctx.block, '\n');
-            var localCount: usize = 0;
-            while (lineIter.next()) |line| {
-                _ = &line;
-                localCount += 1;
-            }
-
-            ctx.shared.result_lock.lock();
-            ctx.shared.result.linecount += localCount;
-            ctx.shared.result_lock.unlock();
-        }
-
-        fn deinit(ctx: *Tctx) void {
-            ctx.arena.deinit();
-        }
-        fn spawn(shared: *SharedContext, threadPool: *ThreadPool, rawBytes: []const u8, id: usize) !void {
-            var arena = ArenaAllocator.init(shared.allocator);
-            const allocator = arena.allocator();
-
-            const ctx: *Tctx = try allocator.create(Tctx);
-            ctx.*.shared = shared;
-            ctx.*.arena = arena;
-            ctx.*.block = try ut.mem.clone(u8, allocator, rawBytes);
-            ctx.blockId = id;
-            threadPool.spawnWg(&shared.waitGroup, run, .{ctx});
-        }
-    };
-
-    var readSize: usize = try self.file.read(buffer);
-    var bytes: []const u8 = buffer[0..readSize];
-    var blockCount: usize = 0;
-    while (readSize > 0) {
-        blockCount += 1;
-
-        // Find end of the last line in the buffer
-        const endIndex = lastLineEndIndex(bytes);
-        var remain = buffer[@min(buffer.len, endIndex + 2)..];
-        while (remain.len > 0 and remain[0] == '\n') : (remain = remain[1..]) {}
-        while (remain.len > 0 and remain[remain.len - 1] == '\n') : (remain.len -= 1) {}
-        bytes = bytes[0 .. endIndex + 1];
-
-        ut.debug.print("=== BUFFER\n\"{s}\"\n=== BYTES\n\"{s}\"\n=== REMAIN\n\"{s}\"\n===      \n", .{ buffer, bytes, remain });
-
-        // Schedule a thread to parse the buffer
-        try TaskContext.spawn(sharedContext, &pool, bytes, blockCount);
-
-        // once the task is spawned i can mock about with bytes again to read more data from the file
-        std.mem.copyForwards(u8, buffer, remain);
-        readSize = try self.file.read(buffer[remain.len..]);
-        bytes = buffer[@intFromBool(buffer[0] == '\n') .. readSize + remain.len];
-    }
-
-    sharedContext.waitGroup.wait();
-
-    const result: BRCParseResult = (&sharedContext.result).*;
-    return result;
-}
-
-pub fn read(self: *BRCParser) !BRCParseResult {
-    const readFn = comptime switch (builtin.single_threaded) {
-        true => read_SingleThread,
-        false => read_MultiThread,
-    };
-
-    return readFn(self);
-}
-
-/// Returns the index of the last character in the last line of `bytes`
-fn lastLineEndIndex(bytes: []const u8) usize {
-    var i: usize = bytes.len - 1;
-    if (bytes[i] == '\n') return i - 1;
-    const l = @min(5, bytes.len);
-    while (i > l) {
-        i -= 1;
-        if (bytes[i] == '\n') return i - 1;
-        if (bytes[i] == '.' and bytes[i + 1] >= '0' and bytes[i + 1] <= '9') {
-            return i + 1;
-        }
-    }
-
-    std.log.err("Could not find lastLineEnd in:\n\"{s}\"", .{bytes});
-    @panic("bytes was not properly formatted BRC!");
 }
