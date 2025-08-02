@@ -88,7 +88,7 @@ test repmovsb {
     try std.testing.expectEqualSlices(u8, src_page, dst_page);
 }
 
-/// computes dst.* +%= src.* in one action.
+/// computes dst.* +%= src in one action.
 /// Avoids race conditions when muliple threads are trying to update `dst.*` without impacting performance
 pub inline fn sumDirect(dst: *usize, src: usize) void {
     return asm volatile (
