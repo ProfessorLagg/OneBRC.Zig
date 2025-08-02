@@ -267,11 +267,11 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
         }
 
         fn run(ctx: *Tctx) void {
-            defer ctx.deinit();
+            defer @call(.always_inline, Tctx.deinit, .{ctx});
             const mapIdx: usize = ctx.blockId % ctx.shared.maps.len;
             const map: *HashMap = &ctx.shared.maps[mapIdx];
             const map_lock: *Mutex = &ctx.shared.locks[mapIdx];
-            const localCount: usize = Tctx.process(ctx.block, map, map_lock) catch |e| b: {
+            const localCount: usize = @call(.always_inline, Tctx.process, .{ ctx.block, map, map_lock }) catch |e| b: {
                 ut.debug.print("Thread error: {any}{any}", .{ e, @errorReturnTrace() });
                 break :b 0;
             };
