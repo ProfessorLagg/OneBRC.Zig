@@ -6,6 +6,8 @@ const ut = @import("utils.zig");
 const DynamicArray = @import("DynamicArray.zig").DynamicArray;
 const MapVal = @import("BRCMapVal.zig");
 
+const log = std.log.scoped(.BRCHashMap);
+
 pub fn BRCHashMap(comptime uint: type, comptime hashFn: fn ([]const u8) uint) type {
     // TODO Verify that hashInt is an unsigned, power of 2, integer
     comptime {
@@ -117,7 +119,7 @@ pub fn BRCHashMap(comptime uint: type, comptime hashFn: fn ([]const u8) uint) ty
                     return;
                 }
 
-                std.log.debug("Keys collided! hash: 0x{X}, key: \"{s}\"", .{ hash, key });
+                log.debug("Keys collided! hash: 0x{X}, key: \"{s}\"", .{ hash, key });
                 collided = true;
             }
 
@@ -163,7 +165,7 @@ pub fn BRCHashMap(comptime uint: type, comptime hashFn: fn ([]const u8) uint) ty
                     return;
                 }
 
-                std.log.debug("Keys collided! hash: 0x{X}, key: \"{s}\"", .{ hash, key });
+                log.debug("Keys collided! hash: 0x{X}, key: \"{s}\"", .{ hash, key });
                 collided = true;
             }
 
