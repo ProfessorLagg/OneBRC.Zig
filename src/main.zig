@@ -16,6 +16,7 @@ pub const std_options: std.Options = .{
         .{ .scope = .DelimReader, .level = .err },
         .{ .scope = .BRCMap, .level = .err },
         .{ .scope = .Lines, .level = .err },
+        .{ .scope = .BRCHashMap, .level = .err },
     },
 };
 
@@ -39,8 +40,8 @@ pub const std_options: std.Options = .{
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\10_000_000.txt";
-// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100_000_000.txt";
-var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000_000.txt";
+var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100_000_000.txt";
+// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000_000.txt";
 
 const allocator: std.mem.Allocator = b: {
     if (builtin.is_test) break :b std.testing.allocator;
@@ -53,7 +54,7 @@ const allocator: std.mem.Allocator = b: {
 
 pub fn main() !void {
     defer lib.utils.debug.flush();
-    //temp() catch |e| catch_print(e);
+    // temp() catch |e| catch_print(e);
     bench_parse() catch |e| catch_print(e);
     // bench_read() catch |e| catch_print(e);
     //run() catch |e| catch_print(e);
@@ -64,15 +65,19 @@ fn catch_print(e: anyerror) void {
 }
 
 fn temp() !void {
-    const mapCount: usize = try std.Thread.getCpuCount();
-    var round: usize = 1;
-    while (round < mapCount) : (round *= 2) {
-        ut.debug.print("round {d}\n", .{round});
-        var src: usize = round;
-        while (src < mapCount) : (src += round * 2) {
-            const dst: usize = src - round;
-            ut.debug.print("\t{d} <- {d}\n", .{ dst, src });
-        }
+    const file: std.fs.File = try std.fs.cwd().openFile(debugfilepath, .{});
+    const dst_dir_path: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\temp";
+    const dst_dir: std.fs.Dir = try std.fs.cwd().openDir(dst_dir_path, .{});
+
+    const BlockReader: type = lib.BRCBlockReader(@TypeOf(file), 8_388_608);
+    var blockReader = BlockReader.init(allocator, file);
+    var blockId: usize = 1;
+    while (try blockReader.next()) |block| : (blockId += 1) {
+        const fileName = try std.fmt.allocPrint(allocator, "block {d}.txt", .{blockId});
+        defer allocator.free(fileName);
+        var out_file = try dst_dir.createFile(fileName, .{});
+        defer out_file.close();
+        _ = try out_file.writeAll(block);
     }
 }
 
@@ -85,7 +90,7 @@ pub fn bench_parse() !void {
 
     var result: ParseResult = try parser.parse();
     parser.deinit();
-
+    ut.debug.flush();
     const linecount = result.linecount;
     const keycount = result.entries.len;
     result.deinit();

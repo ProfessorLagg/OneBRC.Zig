@@ -134,37 +134,72 @@ test sumDirect {
     }
 }
 
-// pub inline fn compare_u8(a: u8, b: u8) i8 {
-//     return asm volatile (
-//         \\mov $0, %ax
-//         \\cmp %[b], %[a]
-//         \\seta %al
-//         \\setb %bl
-//         \\sub %al, %bl
-//         : [ret] "={al}" (-> i8),
-//         : [a] "{al}" (a),
-//           [b] "{bl}" (b),
-//     );
-// }
+pub const Register256 = enum {
+    ymm1,
+    ymm3,
+    ymm5,
+    ymm7,
+    ymm9,
+    ymm11,
+    ymm13,
+    ymm15,
+};
+/// Loads 32 bytes / 256 bits of data from `ptr` into `register`
+pub inline fn load256(comptime register: Register256, ptr: *anyopaque) void {
+    comptime if (!builtin.target.cpu.features.isEnabled(@intFromEnum(std.Target.x86.Feature.avx))) @compileError("this function requires avx");
+    return asm volatile ( // NO FOLD
+        "vlddqu (%rsi), %" ++ @tagName(register)
+        :
+        : [ptr] "{rsi}" (ptr),
+    );
+}
 
-// fn compare_u8_safe(a: u8, b: u8) i8 {
-//     if (a < b) return -1;
-//     if (a > b) return 1;
-//     return 0;
-// }
+/// stores 32 bytes / 256 bits from `register` into `ptr`
+pub inline fn store256(comptime register: Register256, ptr: *anyopaque) void {
+    comptime if (!builtin.target.cpu.features.isEnabled(@intFromEnum(std.Target.x86.Feature.avx))) @compileError("this function requires avx");
+    return asm volatile ( // NO FOLD
+        "vmovdqu %" ++ @tagName(register) ++ ", (%rdi)"
+        :
+        : [ptr] "{rdi}" (ptr),
+    );
+}
 
-// test compare_u8 {
-//     const max_u8: u8 = std.math.maxInt(u8);
-//     var a: u8 = 0;
-//     while (a < max_u8) : (a += 1) {
-//         var b: u8 = 0;
-//         while (b < max_u8) : (b += 1) {
-//             const safe = compare_u8_safe(a, b);
-//             const _asm = compare_u8(a, b);
-//             std.testing.expectEqual(safe, _asm) catch |e| {
-//                 std.log.err("expected compare({d},{d}) == {d}, but found {d}", .{ a, b, safe, _asm });
-//                 return e;
-//             };
-//         }
-//     }
-// }
+/// Sets all 32 values of `register` to `v`
+pub inline fn set256_8(comptime register: Register256, v: u8) void {
+    comptime if (!builtin.target.cpu.features.isEnabled(@intFromEnum(std.Target.x86.Feature.avx2))) @compileError("this function requires avx2");
+    return asm volatile ( //NO FOLD
+        "vpbroadcastb %ah, %" ++ @tagName(register)
+        :
+        : [v] "ah" (v),
+    );
+}
+
+/// Sets all 16 values of `register` to `v`
+pub inline fn set256_16(comptime register: Register256, v: u16) void {
+    comptime if (!builtin.target.cpu.features.isEnabled(@intFromEnum(std.Target.x86.Feature.avx2))) @compileError("this function requires avx2");
+    return asm volatile ( //NO FOLD
+        "vpbroadcastb %ax, %" ++ @tagName(register)
+        :
+        : [v] "ax" (v),
+    );
+}
+
+/// Sets all 8 values of `register` to `v`
+pub inline fn set256_32(comptime register: Register256, v: u32) void {
+    comptime if (!builtin.target.cpu.features.isEnabled(@intFromEnum(std.Target.x86.Feature.avx2))) @compileError("this function requires avx2");
+    return asm volatile ( //NO FOLD
+        "vpbroadcastb %eax, %" ++ @tagName(register)
+        :
+        : [v] "eax" (v),
+    );
+}
+
+/// Sets all 4 values of `register` to `v`
+pub inline fn set256_64(comptime register: Register256, v: u64) void {
+    comptime if (!builtin.target.cpu.features.isEnabled(@intFromEnum(std.Target.x86.Feature.avx2))) @compileError("this function requires avx2");
+    return asm volatile ( //NO FOLD
+        "vpbroadcastb %rax, %" ++ @tagName(register)
+        :
+        : [v] "rax" (v),
+    );
+}

@@ -1,7 +1,8 @@
 using namespace System.IO
 
 Param(
-    [string]$Mode = "ReleaseSafe"
+    [string]$Mode = "ReleaseSafe",
+    [switch]$ClearCache
 )
 
 $validModes = @(
@@ -11,7 +12,7 @@ $validModes = @(
     'Debug'
 )
 
-if($Mode -cnotin $validModes){
+if ($Mode -cnotin $validModes) {
     Write-Error "Expected one of $([string]::join(', ', $validModes)). But found $($Mode)";
     exit 1;
 }
@@ -19,11 +20,14 @@ if($Mode -cnotin $validModes){
 cd $PSScriptRoot
 [Environment]::CurrentDirectory = $PSScriptRoot
 
-$cacheDir = [DirectoryInfo]::new(".zig-cache")
-if($cacheDir.Exists){$cacheDir | Remove-Item -Recurse -Force}
+if ($ClearCache) {
+    $cacheDir = [DirectoryInfo]::new(".zig-cache")
+    if ($cacheDir.Exists) { $cacheDir | Remove-Item -Recurse -Force }
+}
+
 
 $outDir = [DirectoryInfo]::new("zig-out")
-if($outDir.Exists){$outDir | Remove-Item -Recurse -Force}
+if ($outDir.Exists) { $outDir | Remove-Item -Recurse -Force }
 
 zig build -freference-trace "-Doptimize=$($Mode)"
 
