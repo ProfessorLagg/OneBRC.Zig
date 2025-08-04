@@ -14,6 +14,7 @@ docgen_tmp/
 # End of https://www.toptal.com/developers/gitignore/api/zig
 run.log
 tmp.*
+temp.*
 stderr.txt
 stdout.txt
 dumptxt.exe
