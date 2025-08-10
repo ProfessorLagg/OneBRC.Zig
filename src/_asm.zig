@@ -90,7 +90,7 @@ test repmovsb {
 
 /// computes dst.* +%= src in one action.
 /// Avoids race conditions when muliple threads are trying to update `dst.*` without impacting performance
-pub inline fn sumDirect(dst: *usize, src: usize) void {
+pub inline fn add_direct(dst: *usize, src: usize) void {
     return asm volatile (
         \\ add %rax, (%rdi)
         :
@@ -100,7 +100,19 @@ pub inline fn sumDirect(dst: *usize, src: usize) void {
     );
 }
 
-test sumDirect {
+/// computes dst.* -%= src in one action.
+/// Avoids race conditions when muliple threads are trying to update `dst.*` without impacting performance
+pub inline fn sub_direct(dst: *usize, src: usize) void {
+    return asm volatile (
+        \\ sub %rax, (%rdi)
+        :
+        : [dst] "{rdi}" (dst),
+          [src] "{rax}" (src),
+        : "rax"
+    );
+}
+
+test add_direct {
     const allocator: std.mem.Allocator = std.testing.allocator;
     const len: comptime_int = 111;
     var prng = std.Random.DefaultPrng.init(2025_08_02);
@@ -124,7 +136,7 @@ test sumDirect {
         const fnd_org: usize = fnd_ptr.*;
 
         exp_ptr.* +%= src[i];
-        sumDirect(fnd_ptr, src[i]);
+        add_direct(fnd_ptr, src[i]);
 
         std.testing.expectEqual(exp[i], fnd[i]) catch |e| {
             std.log.err("expect {d} +%= {d} == {d}", .{ src[i], exp_org, exp[i] });

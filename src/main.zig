@@ -25,7 +25,7 @@ pub const std_options: std.Options = .{
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\simple2.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\verysmall.txt";
 
-// following files have more than 1 instance of each key, and 41343 keys in total
+// following files have more than 1 instance of each key, and 41 343 keys in total
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\small.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\medium.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1GB.txt";
@@ -38,23 +38,33 @@ pub const std_options: std.Options = .{
 
 // following files have 10 000 keys, and likely more than 1 instance of each key
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100_000.txt";
-// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000.txt";
+var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\10_000_000.txt";
-var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100_000_000.txt";
+// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100_000_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000_000.txt";
 
-const allocator: std.mem.Allocator = b: {
-    if (builtin.is_test) break :b std.testing.allocator;
-    if (!builtin.single_threaded) break :b std.heap.smp_allocator;
-    if (builtin.link_libc) break :b std.heap.c_allocator;
-    @compileError("Requires either single-threading to be disabled or lib-c to be linked");
-};
+// const allocator: std.mem.Allocator = b: {
+//     if (builtin.is_test) break :b std.testing.allocator;
+//     if (!builtin.single_threaded) break :b std.heap.smp_allocator;
+//     if (builtin.link_libc) break :b std.heap.c_allocator;
+//     @compileError("Requires either single-threading to be disabled or lib-c to be linked");
+// };
 
-// const allocator = std.heap.c_allocator;
+//const allocator = std.heap.c_allocator;
+
+var allocator: std.mem.Allocator = undefined;
 
 pub fn main() !void {
     defer lib.utils.debug.flush();
-    // temp() catch |e| catch_print(e);
+
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer switch (gpa.deinit()) {
+        .ok => {},
+        .leak => unreachable,
+    };
+    allocator = gpa.allocator();
+
+    temp() catch |e| catch_print(e);
     bench_parse() catch |e| catch_print(e);
     // bench_read() catch |e| catch_print(e);
     //run() catch |e| catch_print(e);
@@ -66,18 +76,23 @@ fn catch_print(e: anyerror) void {
 
 fn temp() !void {
     const file: std.fs.File = try std.fs.cwd().openFile(debugfilepath, .{});
-    const dst_dir_path: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\temp";
+    const dst_dir_path: []const u8 = "D:\\Temp-SSD\\1brc\\temp";
     const dst_dir: std.fs.Dir = try std.fs.cwd().openDir(dst_dir_path, .{});
 
-    const BlockReader: type = lib.BRCBlockReader(@TypeOf(file), 8_388_608);
+    const block_size = 8_388_608;
+    const BlockReader: type = lib.BRCBlockReader(@TypeOf(file), block_size);
     var blockReader = BlockReader.init(allocator, file);
     var blockId: usize = 1;
     while (try blockReader.next()) |block| : (blockId += 1) {
+        defer allocator.free(block.ptr[0..block_size]);
+
         const fileName = try std.fmt.allocPrint(allocator, "block {d}.txt", .{blockId});
         defer allocator.free(fileName);
         var out_file = try dst_dir.createFile(fileName, .{});
         defer out_file.close();
         _ = try out_file.writeAll(block);
+
+        std.debug.assert(std.mem.indexOfScalar(u8, block, 0) == null);
     }
 }
 

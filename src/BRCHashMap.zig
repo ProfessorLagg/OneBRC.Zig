@@ -23,7 +23,7 @@ pub fn BRCHashMap(comptime uint: type, comptime hashFn: fn ([]const u8) uint) ty
         const Self = @This();
         pub const Entry = struct {
             hash: uint = 0,
-            keyptr: [*]const u8 = undefined,
+            keyptr: [*]const u8 = @ptrFromInt(@alignOf(u8)),
             keylen: u8 = 0,
             value: MapVal = MapVal.None,
 
@@ -37,11 +37,17 @@ pub fn BRCHashMap(comptime uint: type, comptime hashFn: fn ([]const u8) uint) ty
 
             /// Sets `self.keyptr` and `self.keylen`.
             /// Caller asserts that`keyString.len <= std.math.maxInt(@TypeOf(self.keylen))`
-            pub fn setKeyString(self: *Entry, keyString: []const u8) void {
-                @setRuntimeSafety(false);
-                std.debug.assert(keyString.len <= std.math.maxInt(@TypeOf(self.keylen)));
-                self.keyptr = keyString.ptr;
-                self.keylen = @truncate(keyString.len);
+            pub fn setKeyString(self: *Entry, key: []const u8) void {
+                std.debug.assert(key.len <= std.math.maxInt(@TypeOf(self.keylen)));
+                self.keyptr = key.ptr;
+                self.keylen = @truncate(key.len);
+            }
+
+            pub fn setKeyStringClone(self: *Entry, allocator: std.mem.Allocator, key: []const u8) !void {
+                std.debug.assert(key.len <= std.math.maxInt(@TypeOf(self.keylen)));
+                const keyclone = try ut.mem.clone(u8, allocator, key);
+                self.keyptr = keyclone.ptr;
+                self.keylen = @truncate(keyclone.len);
             }
         };
 
@@ -82,10 +88,8 @@ pub fn BRCHashMap(comptime uint: type, comptime hashFn: fn ([]const u8) uint) ty
 
         /// Merges `entry` into the map, cloning key if neccecary
         pub fn mergeEntryByClone(self: *Self, entry: *const Entry) !void {
-            const key: []const u8 = entry.getKeyString();
-            const hash: uint = entry.hash;
-            const val_ptr: *const MapVal = &entry.value;
-
+            const key = entry.keyptr[0..entry.keylen];
+            const hash = entry.hash;
             std.debug.assert(hashFn(key) == hash);
             std.debug.assert(key.len >= 1);
             std.debug.assert(key.len <= 100); // 1brc contraint on keylen
@@ -107,7 +111,7 @@ pub fn BRCHashMap(comptime uint: type, comptime hashFn: fn ([]const u8) uint) ty
                     const keyclone: []const u8 = try ut.mem.clone(u8, self.allocator, key);
                     entry_ptr.hash = hash;
                     entry_ptr.setKeyString(keyclone);
-                    entry_ptr.value = val_ptr.*;
+                    entry_ptr.value = entry.value;
                     self.count += 1;
                     return;
                 }
@@ -115,7 +119,7 @@ pub fn BRCHashMap(comptime uint: type, comptime hashFn: fn ([]const u8) uint) ty
                 const keystr: []const u8 = self.entries[index].getKeyString();
                 if (std.mem.eql(u8, key, keystr)) {
                     // Found matching slot
-                    entry_ptr.value.merge(val_ptr);
+                    entry_ptr.value.merge(&entry.value);
                     return;
                 }
 
@@ -183,15 +187,11 @@ pub fn BRCHashMap(comptime uint: type, comptime hashFn: fn ([]const u8) uint) ty
             entries: []const Entry = undefined,
             index: usize = 0,
 
-            pub fn first(self: *Iterator) ?*const Entry {
-                self.index = 0;
-                return self.next();
-            }
             pub fn next(self: *Iterator) ?*const Entry {
                 while (self.index < self.entries.len) {
-                    const entry_ptr: *const Entry = &self.entries[self.index];
+                    const entry: *const Entry = &self.entries[self.index];
                     self.index += 1;
-                    if (entry_ptr.keylen != 0) return entry_ptr;
+                    if (@intFromPtr(entry.keyptr) != @alignOf(u8) and entry.*.keylen > 0) return entry;
                 }
                 return null;
             }

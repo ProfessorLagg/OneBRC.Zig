@@ -58,6 +58,21 @@ pub const BRCParseResult = struct {
         }
     }
 
+    fn init_adaptor(linecount: usize, allocator: std.mem.Allocator, comptime T: type, adaptor: fn (T) ResultEntry, items: []const T) !BRCParseResult {
+        const entries: []ResultEntry = try allocator.alloc(ResultEntry, items.len);
+        for (0..items.len) |i| {
+            entries[i] = adaptor(items[i]);
+            entries[i].key = try ut.mem.clone(u8, allocator, entries[i].key);
+        }
+        sortEntries(entries);
+
+        return BRCParseResult{
+            .allocator = allocator,
+            .linecount = linecount,
+            .entries = entries,
+        };
+    }
+
     fn init(linecount: usize, map: *const BRCVecstrSortedMap) !BRCParseResult {
         const allocator: std.mem.Allocator = map.allocator;
         const entryCount = map.sub8.count() + map.sub16.count() + map.sub32.count() + map.sub64.count() + map.sub128.count();
@@ -188,7 +203,6 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
 
     var pool: ThreadPool = undefined;
     try pool.init(.{ .allocator = self.allocator });
-    defer pool.deinit();
 
     // shared context
     const SharedContext = struct {
@@ -199,24 +213,20 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
         // TODO Try out using a cpu count number of HashMaps, and then using threadId / block id to find which one to lock and merge to
         maps: []HashMap = undefined,
         locks: []Mutex = undefined,
-        waitGroup: WaitGroup = .{},
+        activeTasksCount: usize = 0,
 
         fn init(allocator: std.mem.Allocator) !*Tsctx {
             const map_count = std.math.ceilPowerOfTwoAssert(usize, std.Thread.getCpuCount() catch 1);
 
             const sctx: *Tsctx = try allocator.create(Tsctx);
+            sctx.* = Tsctx{};
             sctx.allocator = allocator;
-            sctx.linecount = 0;
-
             sctx.maps = try allocator.alloc(HashMap, map_count);
             sctx.locks = try allocator.alloc(Mutex, map_count);
             for (0..map_count) |i| {
                 sctx.maps[i] = try HashMap.init(allocator, map_capacity);
                 sctx.locks[i] = .{};
             }
-
-            sctx.linecount_lock = .{};
-            sctx.waitGroup = .{};
             return sctx;
         }
         fn deinit(sctx: *Tsctx, deinitMaps: bool) void {
@@ -249,10 +259,12 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
             var lineIter = std.mem.splitScalar(u8, ctx.block, '\n');
             var localCount: usize = 0;
             while (lineIter.next()) |line| : (localCount += 1) {
-                ut.debug.printLn("line {d}-{d}: \"{s}\" | {any}", .{ ctx.blockId, localCount, line, line });
-
                 std.debug.assert(line.len >= 5);
                 const splitAndHashResult = ut.hashing.fnv1a32UntilDelim(';', line);
+                // if(splitAndHashResult.delim_index == null){
+                //     ut.debug.printLn("block {d}, line {d}: \"{s}\" | {any}", .{ ctx.blockId, localCount, line, line });
+                //     ut.debug.flush();
+                // }
                 std.debug.assert(splitAndHashResult.delim_index != null);
 
                 const splitIndex: usize = splitAndHashResult.delim_index.?;
@@ -278,14 +290,18 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
         }
 
         fn run(ctx: *Tctx) void {
-            defer ctx.deinit();
+            _asm.add_direct(&ctx.shared.activeTasksCount, 1);
+            defer {
+                _asm.sub_direct(&ctx.shared.activeTasksCount, 1);
+                ctx.deinit();
+            }
 
             const localCount: usize = ctx.process() catch |e| b: {
                 ut.debug.print("Thread error: {any}{any}", .{ e, @errorReturnTrace() });
                 break :b 0;
             };
 
-            _asm.sumDirect(&ctx.shared.linecount, localCount);
+            _asm.add_direct(&ctx.shared.linecount, localCount);
         }
 
         fn deinit(ctx: *Tctx) void {
@@ -303,6 +319,14 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
             src.freeKeys();
             src.deinit();
         }
+
+        fn adaptEntry(entry: HashMap.Entry) BRCParseResult.ResultEntry {
+            var r: BRCParseResult.ResultEntry = undefined;
+            r.key.ptr = entry.keyptr;
+            r.key.len = entry.keylen;
+            r.val = entry.value;
+            return r;
+        }
     };
 
     var blockReader: BRCBlockReader = BRCBlockReader.init(self.allocator, self.file);
@@ -317,10 +341,9 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
         ctx.shared = sharedContext;
         ctx.block = block;
         ctx.blockId = blockCount;
-        pool.spawnWg(&sharedContext.waitGroup, TaskContext.run, .{ctx});
+        try pool.spawn(TaskContext.run, .{ctx});
     }
-
-    sharedContext.waitGroup.wait();
+    while (sharedContext.activeTasksCount > 0) {}
 
     // Merging maps into sharedContext.maps[0]
     const mapCount: usize = sharedContext.maps.len;
@@ -341,26 +364,22 @@ fn parse_MultiThread(self: *BRCParser) !BRCParseResult {
             const dst_map: *HashMap = @constCast(&sharedContext.maps[dst_idx]);
             pool.spawnWg(&merge_wg, TaskContext.mergeFree, .{ src_map, dst_map });
         }
-        merge_wg.wait();
     }
+    pool.waitAndWork(&merge_wg);
 
     const finalMap: *HashMap = &sharedContext.maps[0];
-
-    // collecting and sorting entries:
-    const entries: []BRCParseResult.ResultEntry = try self.allocator.alloc(BRCParseResult.ResultEntry, finalMap.count);
-    var iter = finalMap.iterator();
-    var i: usize = 0;
-    while (iter.next()) |e| : (i += 1) {
-        entries[i].val = e.value;
-        entries[i].key.ptr = e.keyptr;
-        entries[i].key.len = e.keylen;
+    const final_entries = try self.allocator.alloc(HashMap.Entry, finalMap.count);
+    defer {
+        finalMap.freeKeys();
+        finalMap.deinit();
+        self.allocator.free(final_entries);
     }
-    BRCParseResult.sortEntries(entries);
-    return BRCParseResult{
-        .allocator = self.allocator,
-        .entries = entries,
-        .linecount = sharedContext.linecount,
-    };
+
+    var i: usize = 0;
+    var iter = finalMap.iterator();
+    while (iter.next()) |entry| : (i += 1) final_entries[i] = entry.*;
+
+    return BRCParseResult.init_adaptor(sharedContext.linecount, self.allocator, HashMap.Entry, TaskContext.adaptEntry, final_entries);
 }
 
 pub fn parse(self: *BRCParser) !BRCParseResult {

@@ -113,13 +113,14 @@ pub const math = struct {
         var m: T = 1;
 
         var i: isize = @as(isize, @intCast(numstr.len)) - 1;
-        while (i >= isNegativeInt) : (i -= 1) {
+        while (i >= isNegativeInt) {
             const ci: T = @intCast(numstr[@as(usize, @bitCast(i))]);
             const valid: bool = ci >= 48 and ci <= 57;
             const validInt: T = @intFromBool(valid);
             const invalidInt: T = @intFromBool(!valid);
             result += validInt * ((ci - 48) * m); // '0' = 48
             m = (m * 10 * validInt) + (m * invalidInt);
+            i -= 1;
         }
 
         const sign: T = (-1 * isNegativeInt) + @as(T, @intFromBool(!isNegative));

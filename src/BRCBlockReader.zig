@@ -41,35 +41,38 @@ pub fn BRCBlockReaderUnmanaged(comptime TReader: type, comptime BlockSize: u32) 
 
         // TODO SINCE I CAN ALWAYS READ 256 BITS FROM THE END OF THE BLOCK I CAN SIMD FIND THE END INDEX
 
-        pub fn next(self: *Self, allocator: std.mem.Allocator) !?[]const u8 {
-            const buffer: []u8 = try allocator.alloc(u8, BlockSize);
+        /// Split's the input buffer on the last `\n`.
+        /// Updates buffer.len to not include the last `\n`
+        /// Returns the remaning bytes, excluding the last `\n`
+        fn splitBuffer(buffer: *[]u8) []const u8 {
             std.debug.assert(buffer.len == BlockSize);
-            const remlen: usize = self.remainder.len;
-            if (remlen > 0) {
-                @memcpy(buffer[0..remlen], self.remainder);
+            const full_buffer: []const u8 = buffer.*[0..buffer.len];
+            var split_index = buffer.len - 100;
+            while (split_index < buffer.len and buffer.ptr[split_index] != '\n') {
+                split_index += 1;
+            }
+            buffer.len = split_index;
+            return if (split_index >= full_buffer.len) ut.meta.zeroedSlice(u8) else full_buffer[split_index + 1 ..];
+        }
+        pub fn next(self: *Self, allocator: std.mem.Allocator) !?[]const u8 {
+            var block: []u8 = try allocator.alloc(u8, BlockSize);
+            @memset(block, 0);
+            if (self.remainder.len > 0) { // Copy out the previous remaining bytes
+                _ = ut.mem.copy(u8, self.remainder, @constCast(block[0..self.remainder.len]));
                 allocator.free(self.remainder);
-            }
-            const read_size = try self.reader.read(buffer[remlen..]);
-
-            var result: []const u8 = buffer[0..(remlen + read_size)];
-            switch (result.len) {
-                0 => return null,
-                BlockSize => {
-                    result.len = std.mem.lastIndexOfScalar(u8, result, '\n') orelse result.len;
-                    if (result.len < BlockSize) {
-                        // copy out remainder
-                        var idx: usize = result.len;
-                        while (idx < buffer.len and buffer[idx] == '\n') : (idx += 1) {}
-                        self.remainder = try ut.mem.clone(u8, allocator, buffer[idx..]);
-                    } else {
-                        self.remainder.len = 0;
-                        self.remainder.ptr = @ptrFromInt(@alignOf(u8));
-                    }
-                },
-                else => std.debug.assert(result.len < buffer.len),
+                self.remainder.ptr = @ptrFromInt(@alignOf(u8));
+                self.remainder.len = 0;
             }
 
-            return result;
+            const writeable_buffer: []u8 = @constCast(block[self.remainder.len..]);
+            const read_size = try self.reader.read(writeable_buffer);
+            block.len = self.remainder.len + read_size;
+            if (block.len == 0 or block[0] == 0) return null;
+            if (block.len == BlockSize) {
+                const new_remainder = splitBuffer(&block);
+                self.remainder = try ut.mem.clone(u8, allocator, new_remainder);
+            }
+            return block;
         }
     };
 }
