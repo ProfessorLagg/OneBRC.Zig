@@ -33,7 +33,7 @@ const _Windows = struct {
         hMap: c.HANDLE = null,
         hView: c.HANDLE = null,
 
-        pub fn init(path: []const u8) !*MappedFileInfo {
+        fn init(path: []const u8) !*MappedFileInfo {
             var r: *MappedFileInfo = try hidden_allocator.create(MappedFileInfo);
             r.file = try std.fs.cwd().openFile(path, .{ .mode = .read_only });
             r.hMap = c.CreateFileMappingW(
@@ -71,6 +71,7 @@ const _Windows = struct {
         _ = c.UnmapViewOfFile(mfi.hView);
         std.os.windows.CloseHandle(mfi.hMap.?);
         mfi.file.close();
+        hidden_allocator.destroy(mfi);
     }
 };
 
