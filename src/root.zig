@@ -13,3 +13,13 @@ pub const BlockReader = blockReaderNs.BlockReader;
 test blockReaderNs {
     _ = blockReaderNs;
 }
+
+const Stat = @import("Stat.zig");
+test Stat {
+    _ = Stat;
+}
+
+const BRCMap = @import("BRCMap.zig");
+test BRCMap {
+    _ = BRCMap;
+}
