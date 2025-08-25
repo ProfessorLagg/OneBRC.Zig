@@ -96,7 +96,7 @@ fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
     // Merge maps
     for (1..maps.len) |mi| {
         const map: *BRCMap = &maps[mi];
-        for (0..map.count) |ki| {
+        for (0..map.keys.len) |ki| {
             if (map.keys[ki] != null) {
                 try maps[0].addOrMerge(map.keys[ki].?, &map.values[ki].?);
             }
@@ -104,6 +104,42 @@ fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
         map.deinit();
     }
     defer maps[0].deinit();
+    try printBrcMap(&maps[0]);
+}
+
+fn printBrcMap(map: *const BRCMap) !void {
+    const rawbuf: []u8 = try map.allocator.alloc(u8, 1160_000);
+    defer map.allocator.free(rawbuf);
+
+    var buf: []u8 = rawbuf[0..];
+    buf[0] = '{';
+    buf = buf[1..];
+
+    var rem: usize = map.count;
+
+    for (0..map.keys.len) |i| {
+        if (map.keys[i] != null) {
+            if (rem < map.count) {
+                buf[0] = ',';
+                buf = buf[1..];
+            }
+            const val = map.values[i].?;
+            const record = try std.fmt.bufPrint(buf, "{s}={d:.1}/{d:.1}/{d:.1}", .{
+                map.keys[i].?,
+                val.minF(),
+                val.meanF(),
+                val.maxF(),
+            });
+            buf = buf[record.len..];
+            rem -= 1;
+        }
+        if (rem == 0) break;
+    }
+    buf[0] = '}';
+    buf = buf[1..];
+
+    const stdout = std.io.getStdOut();
+    _ = try stdout.write(rawbuf[0..(rawbuf.len - buf.len)]);
 }
 
 pub fn main() !void {
@@ -117,7 +153,8 @@ pub fn main() !void {
     const perf_f: f64 = @round(fileSize_f / s_f);
     const perf: u64 = @intFromFloat(perf_f);
 
-    std.debug.print("parsed {} in {} at {}/s", .{
+    const stderr = std.io.getStdErr().writer();
+    try std.fmt.format(stderr, "\n\nparsed {} in {} at {}/s\n", .{
         std.fmt.fmtIntSizeBin(fileSize),
         std.fmt.fmtDuration(ns),
         std.fmt.fmtIntSizeBin(perf),
