@@ -53,10 +53,10 @@ fn parseBlock(map: *BRCMap, block: []const u8) usize {
     return linecount;
 }
 
-fn parseBlockMultiThread(map: *BRCMap, count: *usize, lock: *std.Thread.Mutex, block: []const u8) void {
+fn parseBlockMultiThread(map: *BRCMap, lock: *std.Thread.Mutex, block: []const u8) void {
     lock.lock();
     defer lock.unlock();
-    count.* += parseBlock(map, block);
+    _ = parseBlock(map, block);
 }
 
 fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
@@ -65,23 +65,20 @@ fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
     var reader: BlockReader = try BlockReader.init(path);
     defer reader.deinit();
 
-    const threadCount = try std.Thread.getCpuCount();
-    const maps: []BRCMap = try allocator.alloc(BRCMap, threadCount);
+    const threadCount = (try std.Thread.getCpuCount()) - 1;
+
+    const mapCount = threadCount * 2;
+    const maps: []BRCMap = try allocator.alloc(BRCMap, mapCount);
     defer allocator.free(maps);
-    const counts: []usize = try allocator.alloc(usize, threadCount);
-    defer allocator.free(maps);
-    const locks: []std.Thread.Mutex = try allocator.alloc(std.Thread.Mutex, threadCount);
-    for (0..threadCount) |i| {
+    const locks: []std.Thread.Mutex = try allocator.alloc(std.Thread.Mutex, mapCount);
+    for (0..mapCount) |i| {
         maps[i] = try BRCMap.init(allocator);
-        counts[i] = 0;
         locks[i] = std.Thread.Mutex{};
     }
 
     var pool: std.Thread.Pool = undefined;
     try pool.init(.{ .allocator = allocator });
     var wg: std.Thread.WaitGroup = .{};
-
-    const stdout = std.io.getStdOut().writer();
     var i: usize = 0;
 
     while (reader.next()) |block| : (i += 1) {
@@ -89,12 +86,14 @@ fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
         std.debug.assert(block[0] != '\n');
         std.debug.assert(block[block.len - 1] != '\n');
         const id: usize = i % threadCount;
-        pool.spawnWg(&wg, parseBlockMultiThread, .{ &maps[id], &counts[id], &locks[id], block });
+        pool.spawnWg(&wg, parseBlockMultiThread, .{ &maps[id], &locks[id], block });
     }
+
+    // TODO let the main thread parse aswell
+
     wg.wait();
 
     // Merge maps
-    var count: usize = counts[0];
     for (1..maps.len) |mi| {
         const map: *BRCMap = &maps[mi];
         for (0..map.count) |ki| {
@@ -102,17 +101,25 @@ fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
                 try maps[0].addOrMerge(map.keys[ki].?, &map.values[ki].?);
             }
         }
-        count += counts[mi];
         map.deinit();
     }
     defer maps[0].deinit();
-
-    try std.fmt.format(stdout, "found {d} keys in {d} lines\n", .{ maps[0].count, count });
 }
 
 pub fn main() !void {
+    const fileSize = (try (try std.fs.cwd().openFile(debugfilepath, .{})).stat()).size;
     var timer = try std.time.Timer.start();
     try parseFile(static_allocator, debugfilepath);
     const ns = timer.read();
-    std.debug.print("parsed in {}", .{std.fmt.fmtDuration(ns)});
+    const ns_f: f64 = @floatFromInt(ns);
+    const s_f: f64 = ns_f / @as(f64, @floatFromInt(std.time.ns_per_s));
+    const fileSize_f: f64 = @floatFromInt(fileSize);
+    const perf_f: f64 = @round(fileSize_f / s_f);
+    const perf: u64 = @intFromFloat(perf_f);
+
+    std.debug.print("parsed {} in {} at {}/s", .{
+        std.fmt.fmtIntSizeBin(fileSize),
+        std.fmt.fmtDuration(ns),
+        std.fmt.fmtIntSizeBin(perf),
+    });
 }
