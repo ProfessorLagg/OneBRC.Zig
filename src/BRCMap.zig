@@ -85,16 +85,18 @@ pub fn BRCMap(comptime capacity: comptime_int) type {
         }
 
         pub fn addOrMerge(self: *Self, key: []const u8, stat: *const Stat) !void {
-            const si: isize = self.findKeyIndex(key);
-            if (self.keys[si] >= 0) {
-                const index: usize = @bitCast(si);
-                self.values[index].?.mergeWith(stat);
-            } else {
-                const index: usize = @as(usize, @bitCast(si * -1));
-                self.keys[index] = try self.allocator.alloc(key.len);
-                @memcpy(@constCast(self.keys[index].?), key);
-                self.values[index] = stat.*;
-                self.count += 1;
+                        switch (self.findKeyIndex(key)) {
+                .found => |index| {
+                    std.debug.assert(self.keys[index] != null);
+                    std.debug.assert(self.values[index] != null);
+                    self.values[index].?.mergeWith(stat);
+                },
+                .new => |index| {
+                    self.keys[index] = try self.allocator.alloc(u8, key.len);
+                    @memcpy(@constCast(self.keys[index].?), key);
+                    self.values[index] = stat.*;
+                    self.count += 1;
+                },
             }
         }
     };

@@ -28,9 +28,9 @@ pub const std_options: std.Options = .{
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\10_000_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100_000_000.txt";
-// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000_000.txt";
+var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000_000.txt";
 
-const allocator: std.mem.Allocator = b: {
+const static_allocator: std.mem.Allocator = b: {
     if (builtin.is_test) break :b std.testing.allocator;
     if (!builtin.single_threaded) break :b std.heap.smp_allocator;
     if (builtin.link_libc) break :b std.heap.c_allocator;
@@ -53,25 +53,66 @@ fn parseBlock(map: *BRCMap, block: []const u8) usize {
     return linecount;
 }
 
-pub fn main() !void {
-    const blocksize: comptime_int = 4096;
+fn parseBlockMultiThread(map: *BRCMap, count: *usize, lock: *std.Thread.Mutex, block: []const u8) void {
+    lock.lock();
+    defer lock.unlock();
+    count.* += parseBlock(map, block);
+}
+
+fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
+    const blocksize: comptime_int = 1024 * 1024 * 1024;
     const BlockReader: type = lib.BlockReader(blocksize);
-    var reader: BlockReader = try BlockReader.init(debugfilepath);
+    var reader: BlockReader = try BlockReader.init(path);
     defer reader.deinit();
+
+    const threadCount = try std.Thread.getCpuCount();
+    const maps: []BRCMap = try allocator.alloc(BRCMap, threadCount);
+    defer allocator.free(maps);
+    const counts: []usize = try allocator.alloc(usize, threadCount);
+    defer allocator.free(maps);
+    const locks: []std.Thread.Mutex = try allocator.alloc(std.Thread.Mutex, threadCount);
+    for (0..threadCount) |i| {
+        maps[i] = try BRCMap.init(allocator);
+        counts[i] = 0;
+        locks[i] = std.Thread.Mutex{};
+    }
+
+    var pool: std.Thread.Pool = undefined;
+    try pool.init(.{ .allocator = allocator });
+    var wg: std.Thread.WaitGroup = .{};
 
     const stdout = std.io.getStdOut().writer();
     var i: usize = 0;
-    var map = try BRCMap.init(allocator);
-    defer map.deinit();
-    var totalLineCount: usize = 0;
+
     while (reader.next()) |block| : (i += 1) {
         std.debug.assert(block.len <= blocksize);
         std.debug.assert(block[0] != '\n');
         std.debug.assert(block[block.len - 1] != '\n');
-        const linecount = parseBlock(&map, block);
-        totalLineCount += linecount;
-        try std.fmt.format(stdout, "Block {d} had {d} lines\n", .{ i, linecount });
+        const id: usize = i % threadCount;
+        pool.spawnWg(&wg, parseBlockMultiThread, .{ &maps[id], &counts[id], &locks[id], block });
     }
+    wg.wait();
 
-    try std.fmt.format(stdout, "found {d} keys in {d} lines\n", .{ map.count, totalLineCount });
+    // Merge maps
+    var count: usize = counts[0];
+    for (1..maps.len) |mi| {
+        const map: *BRCMap = &maps[mi];
+        for (0..map.count) |ki| {
+            if (map.keys[ki] != null) {
+                try maps[0].addOrMerge(map.keys[ki].?, &map.values[ki].?);
+            }
+        }
+        count += counts[mi];
+        map.deinit();
+    }
+    defer maps[0].deinit();
+
+    try std.fmt.format(stdout, "found {d} keys in {d} lines\n", .{ maps[0].count, count });
+}
+
+pub fn main() !void {
+    var timer = try std.time.Timer.start();
+    try parseFile(static_allocator, debugfilepath);
+    const ns = timer.read();
+    std.debug.print("parsed in {}", .{std.fmt.fmtDuration(ns)});
 }
