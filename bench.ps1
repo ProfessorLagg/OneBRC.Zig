@@ -5,12 +5,17 @@ Param(
     [ValidateRange(1,[int]::MaxValue)]
     [int]$RunCount = 16,
 
-    [Int64]$FileSize = $(Get-ItemPropertyValue -Path "C:\CodeProjects\1BillionRowChallenge\data\NoHashtag\1_000_000_000.txt" -Name Length)
+    [string]$Path = "C:\CodeProjects\1BillionRowChallenge\data\NoHashtag\1_000_000_000.txt"
+
+    
 )
+
 
 cd $PSScriptRoot
 [Environment]::CurrentDirectory = $PSScriptRoot
 $ErrorActionPreference = 'Stop'
+
+
 
 function Get-TotalNanoSeconds{
     Param(
@@ -85,6 +90,8 @@ function Format-Throughput{
     return "$($val.ToString('0.0000', [cultureinfo]::InvariantCulture)) $($tag)/s"
 }
 
+[Int64]$FileSize = Get-ItemPropertyValue -Path $Path -Name Length
+
 $cacheDir = [DirectoryInfo]::new(".zig-cache")
 if($cacheDir.Exists){$cacheDir | Remove-Item -Recurse -Force}
 
@@ -103,14 +110,7 @@ for($i = 0; $i -lt $RunCount; $i++){
     [string]$stat = "$($i.ToString('0')) / $($RunCount.ToString('0')) | $($prog.ToString('n'))%"
     Write-Progress "Benchmarking $($exeFile.FullName)" -Status $stat -PercentComplete $prog
 
-    $proc = [Process]::new();
-    $proc.StartInfo.FileName = $exeFile.FullName;
-    $proc.StartInfo.CreateNoWindow = $true;
-    $proc.StartInfo.UseShellExecute = $false;
-    $proc.StartInfo.RedirectStandardOutput = $true;
-    $proc.StartInfo.RedirectStandardError = $true;
-    
-    $proc.Start() | Out-Null
+    $proc = Start-Process -FilePath $exeFile.FullName -ArgumentList $Path -WorkingDirectory $PSScriptRoot -PassThru -WindowStyle Hidden
     $proc.PriorityClass = [ProcessPriorityClass]::AboveNormal;
     $proc.WaitForExit() | Out-Null
     
@@ -120,9 +120,14 @@ for($i = 0; $i -lt $RunCount; $i++){
     [GC]::Collect([GC]::MaxGeneration, [GCCollectionMode]::Optimized, $true, $true)
 }
 
-$avgTicks = $times | Measure-Object -Property Ticks -Average | select -ExpandProperty Average
-$avgTime = [TimeSpan]::FromTicks($avgTicks)
+$tickMeasure = $times | %{[Convert]::ToDouble($_.Ticks)} | Measure-Object -Minimum -Average -Maximum
+$minTime = [TimeSpan]::FromTicks($tickMeasure.Minimum);
+$avgTime = [TimeSpan]::FromTicks($tickMeasure.Average);
+$maxTime = [TimeSpan]::FromTicks($tickMeasure.Maximum);
+
 
 Write-Host "Times:"
 $times | %{Write-Host "`t$($_ | Format-LargestUnitString) | $(Format-Throughput -Duration $_ -Size $FileSize)"}
-Write-Host "Average: $($avgTime | Format-LargestUnitString) | $(Format-Throughput -Duration $avgTime -Size $FileSize)"
+Write-Host "Best : $($avgTime | Format-LargestUnitString) | $(Format-Throughput -Duration $minTime -Size $FileSize)"
+Write-Host "Mean : $($avgTime | Format-LargestUnitString) | $(Format-Throughput -Duration $avgTime -Size $FileSize)"
+Write-Host "Worst: $($avgTime | Format-LargestUnitString) | $(Format-Throughput -Duration $maxTime -Size $FileSize)"
