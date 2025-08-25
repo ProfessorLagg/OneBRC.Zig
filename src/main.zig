@@ -1,6 +1,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const lib = @import("brc_lib");
+const BRCMap: type = lib.BRCMap(131070);
 
 pub const std_options: std.Options = .{
     // Set the log level to info to .debug. use the scope levels instead
@@ -35,6 +36,19 @@ const allocator: std.mem.Allocator = b: {
     if (builtin.link_libc) break :b std.heap.c_allocator;
     @compileError("Requires either single-threading to be disabled or lib-c to be linked");
 };
+
+fn parseBlock(map: *BRCMap, block: []const u8) usize {
+    var iter = std.mem.splitScalar(u8, block, '\n');
+    while (iter.next()) |line| {
+        std.debug.assert(line.len >= 5);
+        const split_index: usize = std.mem.indexOfScalar(u8, line, ';') orelse @panic("line missing ';'");
+
+        const key_str: []const u8 = line[0..split_index];
+        const val_str: []const u8 = line[split_index + 1 ..];
+        const val: i32 = lib.brcIntParse(val_str);
+        map.addOrUpdate(key_str, val);
+    }
+}
 
 pub fn main() !void {
     const blocksize: comptime_int = 4096;
