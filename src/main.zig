@@ -3,24 +3,24 @@ const std = @import("std");
 const lib = @import("brc_lib");
 const BRCMap: type = lib.BRCMap(131072);
 
-pub const std_options: std.Options = .{
-    // Set the log level to info to .debug. use the scope levels instead
-    .log_level = switch (builtin.mode) {
-        .Debug => .debug,
-        .ReleaseSafe => .err,
-        .ReleaseSmall => .err,
-        .ReleaseFast => .err,
-    },
-    .log_scope_levels = &[_]std.log.ScopeLevel{
-        // .{ .scope = .DelimReader, .level = .err },
-        // .{ .scope = .BRCMap, .level = .err },
-        // .{ .scope = .Lines, .level = .err },
-        // .{ .scope = .BRCHashMap, .level = .err },
-    },
-};
+// pub const std_options: std.Options = .{
+//     // Set the log level to info to .debug. use the scope levels instead
+//     .log_level = switch (builtin.mode) {
+//         .Debug => .debug,
+//         .ReleaseSafe => .err,
+//         .ReleaseSmall => .err,
+//         .ReleaseFast => .err,
+//     },
+//     .log_scope_levels = &[_]std.log.ScopeLevel{
+//         // .{ .scope = .DelimReader, .level = .err },
+//         // .{ .scope = .BRCMap, .level = .err },
+//         // .{ .scope = .Lines, .level = .err },
+//         // .{ .scope = .BRCHashMap, .level = .err },
+//     },
+// };
 
 // following files have at most 10 000 keys, and likely more than 1 instance of each key
-// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100.txt";
+var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\10_000.txt";
 
@@ -28,7 +28,7 @@ pub const std_options: std.Options = .{
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\10_000_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100_000_000.txt";
-var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000_000.txt";
+// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000_000.txt";
 
 const static_allocator: std.mem.Allocator = b: {
     if (builtin.is_test) break :b std.testing.allocator;
@@ -67,7 +67,7 @@ fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
 
     const threadCount = (try std.Thread.getCpuCount()) - 1;
 
-    const mapCount = threadCount * 2;
+    const mapCount = threadCount + 2;
     const maps: []BRCMap = try allocator.alloc(BRCMap, mapCount);
     defer allocator.free(maps);
     const locks: []std.Thread.Mutex = try allocator.alloc(std.Thread.Mutex, mapCount);
@@ -77,20 +77,21 @@ fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
     }
 
     var pool: std.Thread.Pool = undefined;
-    try pool.init(.{ .allocator = allocator });
+    try pool.init(.{ .allocator = allocator, .n_jobs = threadCount });
     var wg: std.Thread.WaitGroup = .{};
     var i: usize = 0;
-
+    var id: usize = undefined;
     while (reader.next()) |block| : (i += 1) {
         std.debug.assert(block.len <= blocksize);
         std.debug.assert(block[0] != '\n');
         std.debug.assert(block[block.len - 1] != '\n');
-        const id: usize = i % threadCount;
-        pool.spawnWg(&wg, parseBlockMultiThread, .{ &maps[id], &locks[id], block });
+        id = i % threadCount;
+        if (reader.remain() == 0) {
+            parseBlockMultiThread(&maps[id], &locks[id], block);
+        } else {
+            pool.spawnWg(&wg, parseBlockMultiThread, .{ &maps[id], &locks[id], block });
+        }
     }
-
-    // TODO let the main thread parse aswell
-
     wg.wait();
 
     // Merge maps
@@ -143,9 +144,16 @@ fn printBrcMap(map: *const BRCMap) !void {
 }
 
 pub fn main() !void {
-    const fileSize = (try (try std.fs.cwd().openFile(debugfilepath, .{})).stat()).size;
+    const stderr = std.io.getStdErr().writer();
+    const args = try std.process.argsAlloc(static_allocator);
+    defer std.process.argsFree(static_allocator, args);
+    const filepath = if (args.len == 2) args[1] else debugfilepath;
+
+    try std.fmt.format(stderr, "Parsing file: {s}\n", .{filepath});
+
+    const fileSize = (try (try std.fs.cwd().openFile(filepath, .{})).stat()).size;
     var timer = try std.time.Timer.start();
-    try parseFile(static_allocator, debugfilepath);
+    try parseFile(static_allocator, filepath);
     const ns = timer.read();
     const ns_f: f64 = @floatFromInt(ns);
     const s_f: f64 = ns_f / @as(f64, @floatFromInt(std.time.ns_per_s));
@@ -153,7 +161,6 @@ pub fn main() !void {
     const perf_f: f64 = @round(fileSize_f / s_f);
     const perf: u64 = @intFromFloat(perf_f);
 
-    const stderr = std.io.getStdErr().writer();
     try std.fmt.format(stderr, "\n\nparsed {} in {} at {}/s\n", .{
         std.fmt.fmtIntSizeBin(fileSize),
         std.fmt.fmtDuration(ns),
