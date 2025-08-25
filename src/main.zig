@@ -19,12 +19,11 @@ pub const std_options: std.Options = .{
 };
 
 // following files have at most 10 000 keys, and likely more than 1 instance of each key
-var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100.txt";
-// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000.txt";
+// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100.txt";
+var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\10_000.txt";
 
 // following files have 10 000 keys, and likely more than 1 instance of each key
-// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\10_000_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100_000_000.txt";
@@ -38,9 +37,18 @@ const allocator: std.mem.Allocator = b: {
 };
 
 pub fn main() !void {
-    const filemap = try lib.fileMapping.map(debugfilepath);
-    defer lib.fileMapping.unmap(filemap);
+    const blocksize: comptime_int = 4096;
+    const BlockReader: type = lib.BlockReader(blocksize);
+    var reader: BlockReader = try BlockReader.init(debugfilepath);
+    defer reader.deinit();
 
-    const stdout = std.io.getStdOut();
-    _ = try stdout.write(filemap.slice);
+    const stdout = std.io.getStdOut().writer();
+    var i: usize = 0;
+    while (reader.next()) |block| : (i += 1) {
+        std.debug.assert(block.len <= blocksize);
+        std.debug.assert(block[0] != '\n');
+        std.debug.assert(block[block.len - 1] != '\n');
+        
+        try std.fmt.format(stdout, "========== BLOCK {d} ==========\n{s}\n", .{ i, block });
+    }
 }

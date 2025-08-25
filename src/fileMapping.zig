@@ -7,7 +7,7 @@ const File = fs.File;
 
 pub const MappedFile = struct {
     extra: ?*anyopaque = null,
-    slice: []u8,
+    slice: []const u8,
 };
 
 pub fn map(path: []const u8) !MappedFile {
@@ -57,7 +57,7 @@ const _Windows = struct {
 
     fn map(path: []const u8) !MappedFile {
         const mfi: *MappedFileInfo = try MappedFileInfo.init(path);
-        var slice: []u8 = undefined;
+        var slice: []const u8 = undefined;
         slice.ptr = @alignCast(@ptrCast(mfi.hView));
         slice.len = (try mfi.file.stat()).size;
         return MappedFile{

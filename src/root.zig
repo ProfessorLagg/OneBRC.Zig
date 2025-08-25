@@ -7,3 +7,9 @@ pub const fileMapping = @import("fileMapping.zig");
 test fileMapping {
     _ = fileMapping;
 }
+
+const blockReaderNs = @import("BlockReader.zig");
+pub const BlockReader = blockReaderNs.BlockReader;
+test blockReaderNs {
+    _ = blockReaderNs;
+}
