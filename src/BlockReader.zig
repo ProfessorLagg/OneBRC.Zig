@@ -37,5 +37,9 @@ pub fn BlockReader(comptime blocksize: comptime_int) type {
             }
             return null;
         }
+
+        pub fn remain(self: *const Self) usize {
+            return self.mappedFile.slice.len - @min(self.left, self.mappedFile.slice.len);
+        }
     };
 }

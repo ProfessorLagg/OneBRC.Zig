@@ -48,7 +48,11 @@ pub fn main() !void {
         std.debug.assert(block.len <= blocksize);
         std.debug.assert(block[0] != '\n');
         std.debug.assert(block[block.len - 1] != '\n');
-        
-        try std.fmt.format(stdout, "========== BLOCK {d} ==========\n{s}\n", .{ i, block });
+
+        try std.fmt.format(stdout, "========== BLOCK {d} ({d} remaining)==========\n{s}\n", .{
+            i,
+            std.fmt.fmtIntSizeBin(reader.remain()),
+            block,
+        });
     }
 }
