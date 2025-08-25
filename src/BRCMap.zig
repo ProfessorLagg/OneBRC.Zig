@@ -85,7 +85,7 @@ pub fn BRCMap(comptime capacity: comptime_int) type {
         }
 
         pub fn addOrMerge(self: *Self, key: []const u8, stat: *const Stat) !void {
-                        switch (self.findKeyIndex(key)) {
+            switch (self.findKeyIndex(key)) {
                 .found => |index| {
                     std.debug.assert(self.keys[index] != null);
                     std.debug.assert(self.values[index] != null);
