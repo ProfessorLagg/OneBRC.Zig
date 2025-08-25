@@ -1,7 +1,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const lib = @import("brc_lib");
-const BRCMap: type = lib.BRCMap(131070);
+const BRCMap: type = lib.BRCMap(131072);
 
 pub const std_options: std.Options = .{
     // Set the log level to info to .debug. use the scope levels instead
@@ -21,7 +21,7 @@ pub const std_options: std.Options = .{
 
 // following files have at most 10 000 keys, and likely more than 1 instance of each key
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100.txt";
-var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000.txt";
+// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\10_000.txt";
 
 // following files have 10 000 keys, and likely more than 1 instance of each key
@@ -39,15 +39,18 @@ const allocator: std.mem.Allocator = b: {
 
 fn parseBlock(map: *BRCMap, block: []const u8) usize {
     var iter = std.mem.splitScalar(u8, block, '\n');
+    var linecount: usize = 0;
     while (iter.next()) |line| {
         std.debug.assert(line.len >= 5);
+        linecount += 1;
         const split_index: usize = std.mem.indexOfScalar(u8, line, ';') orelse @panic("line missing ';'");
 
         const key_str: []const u8 = line[0..split_index];
         const val_str: []const u8 = line[split_index + 1 ..];
         const val: i32 = lib.brcIntParse(val_str);
-        map.addOrUpdate(key_str, val);
+        map.addOrUpdate(key_str, val) catch |e| std.log.err("{any}{any}", .{ e, @errorReturnTrace() });
     }
+    return linecount;
 }
 
 pub fn main() !void {
@@ -58,15 +61,17 @@ pub fn main() !void {
 
     const stdout = std.io.getStdOut().writer();
     var i: usize = 0;
+    var map = try BRCMap.init(allocator);
+    defer map.deinit();
+    var totalLineCount: usize = 0;
     while (reader.next()) |block| : (i += 1) {
         std.debug.assert(block.len <= blocksize);
         std.debug.assert(block[0] != '\n');
         std.debug.assert(block[block.len - 1] != '\n');
-
-        try std.fmt.format(stdout, "========== BLOCK {d} ({d} remaining)==========\n{s}\n", .{
-            i,
-            std.fmt.fmtIntSizeBin(reader.remain()),
-            block,
-        });
+        const linecount = parseBlock(&map, block);
+        totalLineCount += linecount;
+        try std.fmt.format(stdout, "Block {d} had {d} lines\n", .{ i, linecount });
     }
+
+    try std.fmt.format(stdout, "found {d} keys in {d} lines\n", .{ map.count, totalLineCount });
 }

@@ -16,9 +16,10 @@ test Stat {
     _ = Stat;
 }
 
-const BRCMap = @import("BRCMap.zig");
-test BRCMap {
-    _ = BRCMap;
+const BRCMapNs = @import("BRCMap.zig");
+pub const BRCMap = BRCMapNs.BRCMap;
+test BRCMapNs {
+    _ = BRCMapNs;
 }
 
 pub fn brcIntParse(str: []const u8) i32 {

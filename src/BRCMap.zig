@@ -2,6 +2,12 @@ const builtin = @import("builtin");
 const std = @import("std");
 const Stat = @import("Stat.zig");
 
+inline fn memeql(a: []const u8, b: []const u8) bool {
+    if (a.len != b.len) return false;
+    for (0..a.len) |i| if (a[i] != b[i]) return false;
+    return true;
+}
+
 pub fn BRCMap(comptime capacity: comptime_int) type {
     comptime {
         if (capacity <= 0) @compileError("capacity must be > 0");
@@ -16,12 +22,16 @@ pub fn BRCMap(comptime capacity: comptime_int) type {
         values: []?Stat = undefined,
 
         pub fn init(allocator: std.mem.Allocator) !Self {
-            return Self{
+            const r: Self = Self{
                 .allocator = allocator,
                 .count = 0,
                 .keys = try allocator.alloc(?[]const u8, capacity),
                 .values = try allocator.alloc(?Stat, capacity),
             };
+
+            @memset(r.keys, null);
+            @memset(r.values, null);
+            return r;
         }
 
         pub fn deinit(self: *Self) void {
@@ -39,27 +49,38 @@ pub fn BRCMap(comptime capacity: comptime_int) type {
             return hash % capacity;
         }
 
-        fn findKeyIndex(self: *const Self, key: []const u8) isize {
+        const KeyIndexResultType = enum {
+            found,
+            new,
+        };
+        const KeyIndexResult = union(KeyIndexResultType) {
+            found: usize,
+            new: usize,
+        };
+
+        fn findKeyIndex(self: *const Self, key: []const u8) KeyIndexResult {
             const base_index: usize = getBaseIndex(key);
             for (0..capacity) |offset| {
                 const index: usize = (base_index + offset) % capacity;
-                if (self.keys[index] == null) return @as(isize, @bitCast(index)) * -1;
-                if (std.mem.eql(u8, key, self.keys[index])) return @as(isize, @bitCast(index));
+                if (self.keys[index] == null) return KeyIndexResult{ .new = index };
+                if (memeql(key, self.keys[index].?)) return KeyIndexResult{ .found = index };
             }
-            @panic("BRCMap full");
+            unreachable;
         }
 
         pub fn addOrUpdate(self: *Self, key: []const u8, value: i32) !void {
-            const si: isize = self.findKeyIndex(key);
-            if (self.keys[si] >= 0) {
-                const index: usize = @bitCast(si);
-                self.values[index].?.add(value);
-            } else {
-                const index: usize = @as(usize, @bitCast(si * -1));
-                self.keys[index] = try self.allocator.alloc(key.len);
-                @memcpy(self.keys[index].?, key);
-                self.values[index] = Stat.init(value);
-                self.count += 1;
+            switch (self.findKeyIndex(key)) {
+                .found => |index| {
+                    std.debug.assert(self.keys[index] != null);
+                    std.debug.assert(self.values[index] != null);
+                    self.values[index].?.add(value);
+                },
+                .new => |index| {
+                    self.keys[index] = try self.allocator.alloc(u8, key.len);
+                    @memcpy(@constCast(self.keys[index].?), key);
+                    self.values[index] = Stat.init(value);
+                    self.count += 1;
+                },
             }
         }
 
@@ -71,7 +92,7 @@ pub fn BRCMap(comptime capacity: comptime_int) type {
             } else {
                 const index: usize = @as(usize, @bitCast(si * -1));
                 self.keys[index] = try self.allocator.alloc(key.len);
-                @memcpy(self.keys[index].?, key);
+                @memcpy(@constCast(self.keys[index].?), key);
                 self.values[index] = stat.*;
                 self.count += 1;
             }
