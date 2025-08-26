@@ -143,12 +143,8 @@ fn printBrcMap(map: *const BRCMap) !void {
     _ = try stdout.write(rawbuf[0..(rawbuf.len - buf.len)]);
 }
 
-fn run() !void {
+inline fn bench(filepath: []const u8) !void {
     const stderr = std.io.getStdErr().writer();
-    const args = try std.process.argsAlloc(static_allocator);
-    defer std.process.argsFree(static_allocator, args);
-    const filepath = if (args.len == 2) args[1] else debugfilepath;
-
     try std.fmt.format(stderr, "Parsing file: {s}\n", .{filepath});
 
     const fileSize = (try (try std.fs.cwd().openFile(filepath, .{})).stat()).size;
@@ -167,26 +163,10 @@ fn run() !void {
         std.fmt.fmtIntSizeBin(perf),
     });
 }
-
-fn debug() !void {
-    var len_u: u48 = 510;
-    const len_a = std.mem.asBytes(&len_u);
-    _ = &len_a;
-
-    const stderr = std.io.getStdErr().writer();
-    const endian: std.builtin.Endian = builtin.target.cpu.arch.endian();
-    try std.fmt.format(stderr, "endianess: {s}", .{@tagName(endian)});
-
-    // while (len_u <= 520) : (len_u += 1) {
-    //     try std.fmt.format(stderr, "usize: {d} | array: ", .{len_u});
-    //     for(0..len_a.len)|i|{
-    //         if(i > 0) _ = try stderr.write(", ");
-    //         try std.fmt.format(stderr, "[{d}] = {d:>3}",.{i,len_a[i]});
-    //     }
-    //     try stderr.writeByte('\n');
-    // }
-}
-
 pub fn main() !void {
-    try run();
+    const args = try std.process.argsAlloc(static_allocator);
+    defer std.process.argsFree(static_allocator, args);
+    const filepath = if (args.len == 2) args[1] else debugfilepath;
+    // try bench(filepath);
+    try parseFile(static_allocator, filepath);
 }
