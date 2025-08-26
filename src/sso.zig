@@ -15,6 +15,7 @@ inline fn isLarge(self: *const sso) bool {
 }
 
 inline fn set_small(self: *sso, str: []const u8) void {
+    std.debug.assert(str.len <= std.math.maxInt(u8));
     const len_ptr: *u8 = &self.data[0];
     const data: []u8 = self.data[1..];
     std.debug.assert(str.len <= MaxSmallSize);
@@ -23,12 +24,14 @@ inline fn set_small(self: *sso, str: []const u8) void {
 }
 inline fn set_large(self: *sso, str: []const u8) void {
     std.debug.assert(str.len > MaxSmallSize);
+    std.debug.assert(str.len <= std.math.maxInt(u8));
     const len_ptr: *align(1) usize = @ptrCast(&self.data[0]);
     len_ptr.* = std.mem.nativeToLittle(usize, str.len);
     const ptr_ptr: *align(1) usize = @ptrCast(&self.data[@sizeOf(usize)]);
     ptr_ptr.* = @intFromPtr(str.ptr);
 }
 pub fn set(self: *sso, str: []const u8) void {
+    std.debug.assert(str.len <= std.math.maxInt(u8));
     if (str.len <= MaxSmallSize) self.set_small(str) else self.set_large(str);
 }
 
