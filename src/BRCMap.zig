@@ -2,6 +2,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const Stat = @import("Stat.zig");
 
+
 inline fn memeql(a: []const u8, b: []const u8) bool {
     if (a.len != b.len) return false;
     for (0..a.len) |i| if (a[i] != b[i]) return false;
