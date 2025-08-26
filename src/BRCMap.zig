@@ -4,7 +4,6 @@ const Stat = @import("Stat.zig");
 const sso = @import("sso.zig");
 
 inline fn memeql(a: []const u8, b: []const u8) bool {
-    // TODO SIMD This
     if (a.len != b.len) return false;
     for (0..a.len) |i| if (a[i] != b[i]) return false;
     return true;
