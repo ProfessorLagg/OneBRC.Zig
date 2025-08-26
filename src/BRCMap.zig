@@ -5,7 +5,20 @@ const sso = @import("sso.zig");
 
 inline fn memeql(a: []const u8, b: []const u8) bool {
     if (a.len != b.len) return false;
-    for (0..a.len) |i| if (a[i] != b[i]) return false;
+    if (a.ptr == b.ptr) return true;
+
+    const vlen: comptime_int = std.simd.suggestVectorLength(u8) orelse 8;
+    const L: usize = a.len;
+    var l: usize = a.len;
+    while ((L - l) >= vlen) {
+        const va_ptr: *align(1) const @Vector(vlen, u8) = @ptrCast(&a[l]);
+        const vb_ptr: *align(1) const @Vector(vlen, u8) = @ptrCast(&b[l]);
+        const veql: @Vector(vlen, bool) = va_ptr.* == vb_ptr.*;
+        const eql: bool = @reduce(.And, veql);
+        if (!eql) return false;
+        l += vlen;
+    }
+    while (l < L) : (l += 1) if (a[l] != b[l]) return false;
     return true;
 }
 
