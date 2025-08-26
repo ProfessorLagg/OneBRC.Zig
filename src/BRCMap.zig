@@ -1,7 +1,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const Stat = @import("Stat.zig");
-
+const sso = @import("sso.zig");
 
 inline fn memeql(a: []const u8, b: []const u8) bool {
     if (a.len != b.len) return false;
@@ -19,14 +19,14 @@ pub fn BRCMap(comptime capacity: comptime_int) type {
         const Self = @This();
         allocator: std.mem.Allocator,
         count: usize = 0,
-        keys: []?[]const u8 = undefined,
+        keys: []?sso = undefined,
         values: []?Stat = undefined,
 
         pub fn init(allocator: std.mem.Allocator) !Self {
             const r: Self = Self{
                 .allocator = allocator,
                 .count = 0,
-                .keys = try allocator.alloc(?[]const u8, capacity),
+                .keys = try allocator.alloc(?sso, capacity),
                 .values = try allocator.alloc(?Stat, capacity),
             };
 
@@ -36,7 +36,7 @@ pub fn BRCMap(comptime capacity: comptime_int) type {
         }
 
         pub fn deinit(self: *Self) void {
-            for (self.keys) |key| if (key != null) self.allocator.free(key.?);
+            for (self.keys) |key| if (key != null) @constCast(&key.?).destroy(self.allocator);
             self.allocator.free(self.keys);
             self.allocator.free(self.values);
         }
@@ -64,7 +64,7 @@ pub fn BRCMap(comptime capacity: comptime_int) type {
             for (0..capacity) |offset| {
                 const index: usize = (base_index + offset) % capacity;
                 if (self.keys[index] == null) return KeyIndexResult{ .new = index };
-                if (memeql(key, self.keys[index].?)) return KeyIndexResult{ .found = index };
+                if (memeql(key, self.keys[index].?.get())) return KeyIndexResult{ .found = index };
             }
             unreachable;
         }
@@ -77,8 +77,7 @@ pub fn BRCMap(comptime capacity: comptime_int) type {
                     self.values[index].?.add(value);
                 },
                 .new => |index| {
-                    self.keys[index] = try self.allocator.alloc(u8, key.len);
-                    @memcpy(@constCast(self.keys[index].?), key);
+                    self.keys[index] = try sso.clone(self.allocator, key);
                     self.values[index] = Stat.init(value);
                     self.count += 1;
                 },
@@ -93,8 +92,7 @@ pub fn BRCMap(comptime capacity: comptime_int) type {
                     self.values[index].?.mergeWith(stat);
                 },
                 .new => |index| {
-                    self.keys[index] = try self.allocator.alloc(u8, key.len);
-                    @memcpy(@constCast(self.keys[index].?), key);
+                    self.keys[index] = try sso.clone(self.allocator, key);
                     self.values[index] = stat.*;
                     self.count += 1;
                 },

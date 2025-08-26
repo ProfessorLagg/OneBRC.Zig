@@ -14,14 +14,14 @@ inline fn isLarge(self: *const sso) bool {
     return self.data[0] > MaxSmallSize;
 }
 
-fn set_small(self: *sso, str: []const u8) void {
+inline fn set_small(self: *sso, str: []const u8) void {
     const len_ptr: *u8 = &self.data[0];
     const data: []u8 = self.data[1..];
     std.debug.assert(str.len <= MaxSmallSize);
     len_ptr.* = @as(u8, @intCast(str.len));
     @memcpy(data[0..str.len], str);
 }
-fn set_large(self: *sso, str: []const u8) void {
+inline fn set_large(self: *sso, str: []const u8) void {
     std.debug.assert(str.len > MaxSmallSize);
     const len_ptr: *align(1) usize = @ptrCast(&self.data[0]);
     len_ptr.* = std.mem.nativeToLittle(usize, str.len);
@@ -32,13 +32,13 @@ pub fn set(self: *sso, str: []const u8) void {
     if (str.len <= MaxSmallSize) self.set_small(str) else self.set_large(str);
 }
 
-fn get_small(self: *const sso) []const u8 {
+inline fn get_small(self: *const sso) []const u8 {
     const len: u8 = self.data[0];
     const data = self.data[1..];
     std.debug.assert(len < StructSize);
     return data[0..len];
 }
-fn get_large(self: *const sso) []const u8 {
+inline fn get_large(self: *const sso) []const u8 {
     const len_ptr: *align(1) const usize = @ptrCast(&self.data[0]);
     const ptr_ptr: *align(1) const usize = @ptrCast(&self.data[@sizeOf(usize)]);
     var r: []u8 = undefined;
@@ -82,6 +82,26 @@ test set {
             try std.testing.expect(string.isLarge());
         }
 
+        try std.testing.expectEqualStrings(city, string.get());
+    }
+}
+
+test clone {
+    const allocator = std.testing.allocator;
+    const cities = @embedFile("cities.txt");
+    var iter = std.mem.splitScalar(u8, cities, '\n');
+
+    var string: sso = .{};
+    while (iter.next()) |city| {
+        string = try sso.clone(allocator, city);
+        defer string.destroy(allocator);
+        if (city.len <= MaxSmallSize) {
+            try std.testing.expect(string.isSmall());
+            try std.testing.expect(!string.isLarge());
+        } else {
+            try std.testing.expect(!string.isSmall());
+            try std.testing.expect(string.isLarge());
+        }
         try std.testing.expectEqualStrings(city, string.get());
     }
 }

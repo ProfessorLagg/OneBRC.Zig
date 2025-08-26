@@ -99,7 +99,7 @@ fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
         const map: *BRCMap = &maps[mi];
         for (0..map.keys.len) |ki| {
             if (map.keys[ki] != null) {
-                try maps[0].addOrMerge(map.keys[ki].?, &map.values[ki].?);
+                try maps[0].addOrMerge(map.keys[ki].?.get(), &map.values[ki].?);
             }
         }
         map.deinit();
@@ -126,7 +126,7 @@ fn printBrcMap(map: *const BRCMap) !void {
             }
             const val = map.values[i].?;
             const record = try std.fmt.bufPrint(buf, "{s}={d:.1}/{d:.1}/{d:.1}", .{
-                map.keys[i].?,
+                map.keys[i].?.get(),
                 val.minF(),
                 val.meanF(),
                 val.maxF(),
@@ -188,5 +188,5 @@ fn debug() !void {
 }
 
 pub fn main() !void {
-    try debug();
+    try run();
 }
