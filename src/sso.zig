@@ -24,6 +24,8 @@ const SizeCategory = enum(u8) {
     }
 };
 
+// TODO Handle strings longer than 255 (where the first byte of usize len is not guaranteed to be > 0)
+
 const sso = @This();
 data: [StructSize]u8 = undefined,
 
@@ -56,10 +58,7 @@ pub fn set(self: *sso, str: []const u8) void {
     switch (SizeCategory.fromLen(str.len)) {
         .small => self.set_small(str),
         .medium => self.set_medium(str),
-        .large => {
-            @branchHint(.cold);
-            @panic("sso with length > 255 not yet implemented");
-        },
+        .large => @panic("sso with length > 255 not yet implemented"),
     }
 }
 
@@ -82,10 +81,7 @@ pub fn get(self: *const sso) []const u8 {
     return switch (SizeCategory.fromLen(self.data[0])) {
         .small => self.get_small(),
         .medium => self.get_medium(),
-        .large => {
-            @branchHint(.cold);
-            @panic("sso with length > 255 not yet implemented");
-        },
+        .large => @panic("sso with length > 255 not yet implemented"),
     };
 }
 
@@ -98,10 +94,7 @@ pub fn clone(allocator: std.mem.Allocator, str: []const u8) !sso {
             @memcpy(str_clone, str);
             result.set_medium(str_clone);
         },
-        .large => {
-            @branchHint(.cold);
-            @panic("sso with length > 255 not yet implemented");
-        },
+        .large => @panic("sso with length > 255 not yet implemented"),
     }
     return result;
 }
