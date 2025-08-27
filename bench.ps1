@@ -3,7 +3,7 @@ using namespace System.Diagnostics
 
 Param(
     [ValidateRange(1,[int]::MaxValue)]
-    [int]$RunCount = 16,
+    [int]$RunCount = 5,
 
     [string]$Path = "C:\CodeProjects\1BillionRowChallenge\data\NoHashtag\1_000_000_000.txt"
 
@@ -126,8 +126,16 @@ $avgTime = [TimeSpan]::FromTicks($tickMeasure.Average);
 $maxTime = [TimeSpan]::FromTicks($tickMeasure.Maximum);
 
 
+
+
 Write-Host "Times:"
 $times | %{Write-Host "`t$($_ | Format-LargestUnitString) | $(Format-Throughput -Duration $_ -Size $FileSize)"}
-Write-Host "Best : $($avgTime | Format-LargestUnitString) | $(Format-Throughput -Duration $minTime -Size $FileSize)"
+Write-Host "Best : $($minTime | Format-LargestUnitString) | $(Format-Throughput -Duration $minTime -Size $FileSize)"
 Write-Host "Mean : $($avgTime | Format-LargestUnitString) | $(Format-Throughput -Duration $avgTime -Size $FileSize)"
-Write-Host "Worst: $($avgTime | Format-LargestUnitString) | $(Format-Throughput -Duration $maxTime -Size $FileSize)"
+Write-Host "Worst: $($maxTime | Format-LargestUnitString) | $(Format-Throughput -Duration $maxTime -Size $FileSize)"
+
+if($RunCount -ceq 5){
+    $brcTicks = $times | %{[Convert]::ToDouble($_.Ticks)} | Sort-Object | Select -Skip 1 | select -SkipLast 1 | Measure-Object -Average | select -ExpandProperty Average
+    $brcTime = [TimeSpan]::FromTicks($brcTicks);
+    Write-Host "`nBRC  : $($brcTime | Format-LargestUnitString) | $(Format-Throughput -Duration $brcTime -Size $FileSize)"
+}
