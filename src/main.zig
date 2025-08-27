@@ -37,64 +37,66 @@ const static_allocator: std.mem.Allocator = b: {
     @compileError("Requires either single-threading to be disabled or lib-c to be linked");
 };
 
-fn parseBlock(map: *BRCMap, block: []const u8) usize {
+fn parseBlock(map: *BRCMap, block: []const u8) void {
     var iter = std.mem.splitScalar(u8, block, '\n');
-    var linecount: usize = 0;
     while (iter.next()) |line| {
         std.debug.assert(line.len >= 5);
-        linecount += 1;
-        const split_index: usize = std.mem.indexOfScalar(u8, line, ';') orelse @panic("line missing ';'");
+        std.debug.assert(line[0] != '\n');
+        std.debug.assert(line[line.len - 1] != '\n');
 
+        // TODO SIMD indexOfScalar
+        const split_index: usize = std.mem.indexOfScalar(u8, line, ';') orelse @panic("line missing ';'");
         const key_str: []const u8 = line[0..split_index];
         const val_str: []const u8 = line[split_index + 1 ..];
+        std.debug.assert(key_str.len >= 1);
+        std.debug.assert(key_str.len <= 100);
+        std.debug.assert(val_str.len >= 3);
+        std.debug.assert(val_str.len <= 5);
+
         const val: i32 = lib.brcIntParse(val_str);
         map.addOrUpdate(key_str, val) catch |e| std.log.err("{any}{any}", .{ e, @errorReturnTrace() });
     }
-    return linecount;
 }
 
-fn parseBlockMultiThread(map: *BRCMap, lock: *std.Thread.Mutex, block: []const u8) void {
-    lock.lock();
-    defer lock.unlock();
-    _ = parseBlock(map, block);
+inline fn getMaxBlockCount(comptime maxBlockSize: comptime_int, fileSize: u64) u64 {
+    const maxLineLen: comptime_int = 107;
+    const minBlockSize: u64 = comptime maxBlockSize - maxLineLen;
+    const a: u64 = @divFloor(fileSize, minBlockSize);
+    const b: u64 = @intFromBool(a * minBlockSize != fileSize);
+    return a + b;
 }
 
 fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
     const blocksize: comptime_int = 1024 * 1024 * 1024;
-    const BlockReader: type = lib.BlockReader(blocksize);
+    const BlockReader: type = lib.BlockReader(blocksize, '\n');
     var reader: BlockReader = try BlockReader.init(path);
     defer reader.deinit();
 
     const threadCount = (try std.Thread.getCpuCount()) - 1;
 
-    const mapCount = threadCount + 2;
+    const mapCount = getMaxBlockCount(blocksize, reader.fileSize());
     const maps: []BRCMap = try allocator.alloc(BRCMap, mapCount);
     defer allocator.free(maps);
-    const locks: []std.Thread.Mutex = try allocator.alloc(std.Thread.Mutex, mapCount);
-    for (0..mapCount) |i| {
-        maps[i] = try BRCMap.init(allocator);
-        locks[i] = std.Thread.Mutex{};
-    }
+    for (0..mapCount) |i| maps[i] = try BRCMap.init(allocator);
 
     var pool: std.Thread.Pool = undefined;
     try pool.init(.{ .allocator = allocator, .n_jobs = threadCount });
     var wg: std.Thread.WaitGroup = .{};
-    var i: usize = 0;
-    var id: usize = undefined;
-    while (reader.next()) |block| : (i += 1) {
+    var blockId: usize = 0;
+    while (reader.next()) |block| : (blockId += 1) {
         std.debug.assert(block.len <= blocksize);
         std.debug.assert(block[0] != '\n');
         std.debug.assert(block[block.len - 1] != '\n');
-        id = i % threadCount;
         if (reader.remain() == 0) {
-            parseBlockMultiThread(&maps[id], &locks[id], block);
+            parseBlock(&maps[blockId], block);
         } else {
-            pool.spawnWg(&wg, parseBlockMultiThread, .{ &maps[id], &locks[id], block });
+            pool.spawnWg(&wg, parseBlock, .{ &maps[blockId], block });
         }
     }
     wg.wait();
 
     // Merge maps
+    // TODO Multithread merging maps
     for (1..maps.len) |mi| {
         const map: *BRCMap = &maps[mi];
         for (0..map.keys.len) |ki| {
@@ -167,6 +169,6 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(static_allocator);
     defer std.process.argsFree(static_allocator, args);
     const filepath = if (args.len == 2) args[1] else debugfilepath;
-    // try bench(filepath);
-    try parseFile(static_allocator, filepath);
+    try bench(filepath);
+    // try parseFile(static_allocator, filepath);
 }
