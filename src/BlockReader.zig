@@ -3,7 +3,12 @@ const std = @import("std");
 const fileMapping = @import("fileMapping.zig");
 const MappedFile = @import("fileMapping.zig").MappedFile;
 
-pub fn BlockReader(comptime blocksize: comptime_int) type {
+pub fn BlockReader(
+    /// Maximum size of the blocks
+    comptime blocksize: comptime_int,
+    /// Delimiter to split the blocks on
+    comptime delimiter: u8,
+) type {
     return struct {
         const Self = @This();
         mappedFile: MappedFile,
@@ -17,6 +22,7 @@ pub fn BlockReader(comptime blocksize: comptime_int) type {
             fileMapping.unmap(self.mappedFile);
         }
 
+        /// reads the next block if possible
         pub fn next(self: *Self) ?[]const u8 {
             const FileLength = self.mappedFile.slice.len;
             if (self.left < FileLength) {
@@ -27,9 +33,7 @@ pub fn BlockReader(comptime blocksize: comptime_int) type {
                     length = FileLength - self.left;
                     self.left = FileLength + 1;
                 } else {
-                    while (self.mappedFile.slice[right] != '\n') {
-                        right -= 1;
-                    }
+                    while (self.mappedFile.slice[right] != delimiter) right -= 1;
                     length = right - self.left;
                     self.left = right + 1;
                 }
@@ -38,8 +42,14 @@ pub fn BlockReader(comptime blocksize: comptime_int) type {
             return null;
         }
 
+        /// remaining size not yet read from the mapped file
         pub fn remain(self: *const Self) usize {
             return self.mappedFile.slice.len - @min(self.left, self.mappedFile.slice.len);
+        }
+
+        /// size of the mapped file being read
+        pub inline fn fileSize(self: *const Self) usize {
+            return self.mappedFile.slice.len;
         }
     };
 }
