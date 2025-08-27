@@ -49,7 +49,6 @@ pub fn BRCMap(comptime capacity: comptime_int) type {
         }
 
         pub fn deinit(self: *Self) void {
-            for (0..self.keys.len) |ki| if (self.keys[ki].notEmpty()) self.keys[ki].destroy(self.allocator);
             self.allocator.free(self.keys);
             self.allocator.free(self.values);
         }
@@ -74,7 +73,6 @@ pub fn BRCMap(comptime capacity: comptime_int) type {
 
         fn findKeyIndex(self: *const Self, key: []const u8) KeyIndexResult {
             const base_index: usize = getBaseIndex(key);
-            // TODO Use switch loop here
             for (0..capacity) |offset| {
                 const index: usize = (base_index + offset) % capacity;
                 if (self.keys[index].empty()) return KeyIndexResult{ .new = index };
@@ -91,7 +89,7 @@ pub fn BRCMap(comptime capacity: comptime_int) type {
                     self.values[index].add(value);
                 },
                 .new => |index| {
-                    self.keys[index] = try sso.clone(self.allocator, key);
+                    self.keys[index].set(key);
                     self.values[index] = Stat.init(value);
                     self.count += 1;
                 },

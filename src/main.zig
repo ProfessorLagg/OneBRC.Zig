@@ -69,8 +69,8 @@ inline fn getMaxBlockCount(comptime maxBlockSize: comptime_int, fileSize: u64) u
 fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
     const blocksize: comptime_int = 1024 * 1024 * 1024;
     const BlockReader: type = lib.BlockReader(blocksize, '\n');
-    var reader: BlockReader = try BlockReader.init(path);
-    defer reader.deinit();
+    var reader: BlockReader = try BlockReader.init(path); // deinit is at the end of the function
+    
 
     const threadCount = (try std.Thread.getCpuCount()) - 1;
 
@@ -108,6 +108,8 @@ fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
     }
     defer maps[0].deinit();
     try printBrcMap(&maps[0]);
+
+    defer reader.deinit();
 }
 
 fn printBrcMap(map: *const BRCMap) !void {
