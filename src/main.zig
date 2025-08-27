@@ -45,7 +45,11 @@ fn parseBlock(map: *BRCMap, block: []const u8) void {
         std.debug.assert(line[line.len - 1] != '\n');
 
         // TODO SIMD indexOfScalar
-        const split_index: usize = std.mem.indexOfScalar(u8, line, ';') orelse @panic("line missing ';'");
+        const split_index: usize = b: {
+            var i: usize = line.len - 4;
+            while (i > 0 and line[i] != ';') : (i -= 1) {}
+            break :b i;
+        };
         const key_str: []const u8 = line[0..split_index];
         const val_str: []const u8 = line[split_index + 1 ..];
         std.debug.assert(key_str.len >= 1);
@@ -70,9 +74,6 @@ fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
     const blocksize: comptime_int = 1024 * 1024 * 1024;
     const BlockReader: type = lib.BlockReader(blocksize, '\n');
     var reader: BlockReader = try BlockReader.init(path); // deinit is at the end of the function
-    
-
-    const threadCount = (try std.Thread.getCpuCount()) - 1;
 
     const mapCount = getMaxBlockCount(blocksize, reader.fileSize());
     const maps: []BRCMap = try allocator.alloc(BRCMap, mapCount);
@@ -80,7 +81,7 @@ fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
     for (0..mapCount) |i| maps[i] = try BRCMap.init(allocator);
 
     var pool: std.Thread.Pool = undefined;
-    try pool.init(.{ .allocator = allocator, .n_jobs = threadCount });
+    try pool.init(.{ .allocator = allocator, .n_jobs = (try std.Thread.getCpuCount()) - 1 });
     var wg: std.Thread.WaitGroup = .{};
     var blockId: usize = 0;
     while (reader.next()) |block| : (blockId += 1) {
