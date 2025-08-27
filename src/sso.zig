@@ -5,7 +5,21 @@ const StructSize: comptime_int = @sizeOf(usize) + @sizeOf([*]u8);
 const MaxSmallSize: comptime_int = @sizeOf(usize) + @sizeOf([*]u8) - 1;
 
 const sso = @This();
+
+/// sso with 0 length and zeroed data
+pub const Empty: sso = b: {
+    var r: sso = .{};
+    @memset(r.data[0..], 0);
+    break :b r;
+};
 data: [StructSize]u8 = undefined,
+
+pub inline fn empty(self: *const sso) bool {
+    return self.data[0] == 0;
+}
+pub inline fn notEmpty(self: *const sso) bool {
+    return self.data[0] > 0;
+}
 
 inline fn isSmall(self: *const sso) bool {
     return self.data[0] <= MaxSmallSize;

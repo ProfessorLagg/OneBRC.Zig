@@ -32,24 +32,24 @@ pub fn BRCMap(comptime capacity: comptime_int) type {
         const Self = @This();
         allocator: std.mem.Allocator,
         count: usize = 0,
-        keys: []?sso = undefined,
-        values: []?Stat = undefined,
+        keys: []sso = undefined,
+        values: []Stat = undefined,
 
         pub fn init(allocator: std.mem.Allocator) !Self {
             const r: Self = Self{
                 .allocator = allocator,
                 .count = 0,
-                .keys = try allocator.alloc(?sso, capacity),
-                .values = try allocator.alloc(?Stat, capacity),
+                .keys = try allocator.alloc(sso, capacity),
+                .values = try allocator.alloc(Stat, capacity),
             };
 
-            @memset(r.keys, null);
-            @memset(r.values, null);
+            for (0..r.keys.len) |i| r.keys[i].data[0] = 0;
+            for (0..r.values.len) |i| r.values[i] = .{};
             return r;
         }
 
         pub fn deinit(self: *Self) void {
-            for (self.keys) |key| if (key != null) @constCast(&key.?).destroy(self.allocator);
+            for (0..self.keys.len) |ki| if (self.keys[ki].notEmpty()) self.keys[ki].destroy(self.allocator);
             self.allocator.free(self.keys);
             self.allocator.free(self.values);
         }
@@ -74,20 +74,21 @@ pub fn BRCMap(comptime capacity: comptime_int) type {
 
         fn findKeyIndex(self: *const Self, key: []const u8) KeyIndexResult {
             const base_index: usize = getBaseIndex(key);
+            // TODO Use switch loop here
             for (0..capacity) |offset| {
                 const index: usize = (base_index + offset) % capacity;
-                if (self.keys[index] == null) return KeyIndexResult{ .new = index };
-                if (memeql(key, self.keys[index].?.get())) return KeyIndexResult{ .found = index };
+                if (self.keys[index].empty()) return KeyIndexResult{ .new = index };
+                if (memeql(key, self.keys[index].get())) return KeyIndexResult{ .found = index };
             }
+            std.log.err("Could not insert key: \"{s}\" into BRCMap", .{key});
             unreachable;
         }
 
         pub fn addOrUpdate(self: *Self, key: []const u8, value: i32) !void {
             switch (self.findKeyIndex(key)) {
                 .found => |index| {
-                    std.debug.assert(self.keys[index] != null);
-                    std.debug.assert(self.values[index] != null);
-                    self.values[index].?.add(value);
+                    std.debug.assert(self.keys[index].notEmpty());
+                    self.values[index].add(value);
                 },
                 .new => |index| {
                     self.keys[index] = try sso.clone(self.allocator, key);
@@ -100,9 +101,8 @@ pub fn BRCMap(comptime capacity: comptime_int) type {
         pub fn addOrMerge(self: *Self, key: []const u8, stat: *const Stat) !void {
             switch (self.findKeyIndex(key)) {
                 .found => |index| {
-                    std.debug.assert(self.keys[index] != null);
-                    std.debug.assert(self.values[index] != null);
-                    self.values[index].?.mergeWith(stat);
+                    std.debug.assert(self.keys[index].notEmpty());
+                    self.values[index].mergeWith(stat);
                 },
                 .new => |index| {
                     self.keys[index] = try sso.clone(self.allocator, key);

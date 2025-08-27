@@ -100,8 +100,8 @@ fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
     for (1..maps.len) |mi| {
         const map: *BRCMap = &maps[mi];
         for (0..map.keys.len) |ki| {
-            if (map.keys[ki] != null) {
-                try maps[0].addOrMerge(map.keys[ki].?.get(), &map.values[ki].?);
+            if (map.keys[ki].notEmpty()) {
+                try maps[0].addOrMerge(map.keys[ki].get(), &map.values[ki]);
             }
         }
         map.deinit();
@@ -121,14 +121,14 @@ fn printBrcMap(map: *const BRCMap) !void {
     var rem: usize = map.count;
 
     for (0..map.keys.len) |i| {
-        if (map.keys[i] != null) {
+        if (map.keys[i].notEmpty()) {
             if (rem < map.count) {
                 buf[0] = ',';
                 buf = buf[1..];
             }
-            const val = map.values[i].?;
+            const val = &map.values[i];
             const record = try std.fmt.bufPrint(buf, "{s}={d:.1}/{d:.1}/{d:.1}", .{
-                map.keys[i].?.get(),
+                map.keys[i].get(),
                 val.minF(),
                 val.meanF(),
                 val.maxF(),
