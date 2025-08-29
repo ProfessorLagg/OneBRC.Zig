@@ -32,6 +32,11 @@ test sorting {
     _ = sorting;
 }
 
+pub const SplitIterator = @import("SplitIterator.zig").SplitIterator;
+test SplitIterator {
+    _ = SplitIterator('\n');
+}
+
 pub fn brcIntParse(str: []const u8) i32 {
     const isNegative: bool = str[0] == '-';
     const isNegativeInt: i32 = @intFromBool(isNegative);
