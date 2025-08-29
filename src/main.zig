@@ -176,6 +176,6 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(static_allocator);
     defer std.process.argsFree(static_allocator, args);
     const filepath = if (args.len == 2) args[1] else debugfilepath;
-    try bench(filepath);
-    // try parseFile(static_allocator, filepath);
+    // try bench(filepath);
+    try parseFile(static_allocator, filepath);
 }
