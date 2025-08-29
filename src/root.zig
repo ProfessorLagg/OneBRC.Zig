@@ -55,23 +55,6 @@ test brcIntParse {
     }
 }
 
-// export fn memeql_ex(aptr: [*]const u8, alen: usize, bptr: [*]const u8, blen: usize) bool {
-//     if (alen != blen) return false;
-//     const vlen: comptime_int = 32;
-//     const L: usize = alen;
-//     var l: usize = 0;
-//     while ((L - l) >= vlen) {
-//         const vaptr: *align(1) const @Vector(vlen, u8) = @ptrCast(&aptr[l]);
-//         const vbptr: *align(1) const @Vector(vlen, u8) = @ptrCast(&bptr[l]);
-//         const veql: @Vector(vlen, bool) = vaptr.* == vbptr.*;
-//         const eql: bool = @reduce(.And, veql);
-//         if (!eql) return false;
-//         l += vlen;
-//     }
-//     while (l < L) : (l += 1) if (aptr[l] != bptr[l]) return false;
-//     return true;
-// }
-
 inline fn splitScalarToArray(comptime T: type, buffer: []const T, delimiter: T, allocator: std.mem.Allocator) ![][]const T {
     var list = std.ArrayList([]const T).init(allocator);
     defer list.deinit();
@@ -89,6 +72,20 @@ export fn eqlmask32(a: *align(1) const anyopaque, b: *align(1) const anyopaque) 
         : [ret] "={eax}" (-> u32),
         : [a] "rsi" (a),
           [b] "rdi" (b),
+    );
+}
+
+export fn eqlmask16(a: *align(1) const anyopaque, b: *align(1) const anyopaque) u16 {
+    return asm volatile ( // NOFOLD
+        \\ xor %eax, %eax
+        \\ vmovups (%rsi), %xmm1
+        \\ vmovups (%rdi), %xmm2
+        \\ vpcmpeqb %xmm2, %xmm1, %xmm0
+        \\ vpmovmskb %xmm0, %eax
+        : [ret] "={al}" (-> bool),
+        : [a] "{rsi}" (a),
+          [b] "{rdi}" (b),
+        : "eax"
     );
 }
 
@@ -124,26 +121,22 @@ export fn eql16(a: *align(1) const anyopaque, b: *align(1) const anyopaque) bool
     );
 }
 
-pub export fn memeql_ex(aptr: [*]align(1) const u8, alen: usize, bptr: [*]align(1) const u8, blen: usize) bool {
-    if (alen != blen) return false;
-    const L: usize = alen;
+pub inline fn memeql(a: []const u8, b: []const u8) bool {
+    if (a.len != b.len) return false;
+    const L: usize = a.len;
     var i: usize = 0;
     while ((L - i) >= 32) {
-        const eql: bool = eql32(&aptr[i], &bptr[i]);
+        const eql: bool = eql32(&a[i], &b[i]);
         if (!eql) return false;
         i += 32;
     }
     while ((L - i) >= 16) {
-        const eql: bool = eql16(&aptr[i], &bptr[i]);
+        const eql: bool = eql16(&a[i], &b[i]);
         if (!eql) return false;
         i += 16;
     }
-    while (i < L) : (i += 1) if (aptr[i] != bptr[i]) return false;
+    while (i < L) : (i += 1) if (a[i] != b[i]) return false;
     return true;
-}
-
-pub inline fn memeql(a: []const u8, b: []const u8) bool {
-    return @call(.always_inline, memeql_ex, .{ a.ptr, a.len, b.ptr, b.len });
 }
 
 test memeql {
