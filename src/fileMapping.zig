@@ -5,6 +5,15 @@ const c = @import("cImport.zig");
 const fs = std.fs;
 const File = fs.File;
 
+const page_size_min: usize = std.heap.page_size_min;
+
+const hidden_allocator: std.mem.Allocator = b: {
+    if (builtin.is_test) break :b std.testing.allocator;
+    if (!builtin.single_threaded) break :b std.heap.smp_allocator;
+    if (builtin.link_libc) break :b std.heap.c_allocator;
+    break :b std.heap.page_allocator;
+};
+
 pub const MappedFile = struct {
     extra: ?*anyopaque = null,
     slice: []const u8,
@@ -26,8 +35,6 @@ pub fn unmap(mappedFile: MappedFile) void {
 }
 
 const _Windows = struct {
-    const hidden_allocator: std.mem.Allocator = std.heap.page_allocator;
-
     const MappedFileInfo = struct {
         file: std.fs.File = undefined,
         hMap: c.HANDLE = null,
@@ -77,11 +84,27 @@ const _Windows = struct {
 
 const _Posix = struct {
     fn map(path: []const u8) !MappedFile {
-        _ = &path;
-        @compileError("Not yet implemented");
+        const file: *File = try hidden_allocator.create(File);
+        file.* = try std.fs.cwd().openFile(path, .{ .mode = .read_only });
+        const file_len: u64 = file.*.getEndPos() catch (file.stat() catch unreachable).size;
+        const mapped_mem = try std.posix.mmap(
+            null,
+            file_len,
+            std.posix.PROT.READ,
+            std.posix.MAP.PRIVATE,
+            file.handle,
+            0,
+        );
+        return MappedFile{
+            .extra = file,
+            .slice = mapped_mem[0..],
+        };
     }
     fn unmap(mappedFile: MappedFile) !void {
-        _ = &mappedFile;
-        @compileError("Not yet implemented");
+        const mem: []align(page_size_min) const u8 = @alignCast(mappedFile.slice);
+        std.posix.munmap(mem);
+        const file: *File = @ptrCast(mappedFile.extra);
+        file.*.close();
+        hidden_allocator.destroy(file);
     }
 };
