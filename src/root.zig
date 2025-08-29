@@ -80,21 +80,70 @@ inline fn splitScalarToArray(comptime T: type, buffer: []const T, delimiter: T, 
     return try list.toOwnedSlice();
 }
 
-pub inline fn memeql(a: []const u8, b: []const u8) bool {
-    if (a.len != b.len) return false;
-    const vlen: comptime_int = std.simd.suggestVectorLength(u8) orelse 8;
-    const L: usize = a.len;
-    var l: usize = 0;
-    while ((L - l) >= vlen) {
-        const va_ptr: *align(1) const @Vector(vlen, u8) = @ptrCast(&a[l]);
-        const vb_ptr: *align(1) const @Vector(vlen, u8) = @ptrCast(&b[l]);
-        const veql: @Vector(vlen, bool) = va_ptr.* == vb_ptr.*;
-        const eql: bool = @reduce(.And, veql);
+export fn eqlmask32(a: *align(1) const anyopaque, b: *align(1) const anyopaque) u32 {
+    return asm volatile ( // NOFOLD
+        \\ vmovups (%rsi), %ymm1
+        \\ vmovups (%rdi), %ymm2
+        \\ vpcmpeqb %ymm2, %ymm1, %ymm0
+        \\ vpmovmskb %ymm0, %eax
+        : [ret] "={eax}" (-> u32),
+        : [a] "rsi" (a),
+          [b] "rdi" (b),
+    );
+}
+
+/// compares 32 bytes using SIMD. Returns true if all bytes match, otherwise false
+export fn eql32(a: *align(1) const anyopaque, b: *align(1) const anyopaque) bool {
+    return asm volatile ( // NOFOLD
+        \\ vmovups (%rsi), %ymm1
+        \\ vmovups (%rdi), %ymm2
+        \\ vpcmpeqb %ymm2, %ymm1, %ymm0
+        \\ vpmovmskb %ymm0, %eax
+        \\ cmp $-1, %eax
+        \\ sete %al
+        : [ret] "={al}" (-> bool),
+        : [a] "{rsi}" (a),
+          [b] "{rdi}" (b),
+        : "eax"
+    );
+}
+
+/// compares 16 bytes using SIMD. Returns true if all bytes match, otherwise false
+export fn eql16(a: *align(1) const anyopaque, b: *align(1) const anyopaque) bool {
+    return asm volatile ( // NOFOLD
+        \\ vmovups (%rsi), %xmm1
+        \\ vmovups (%rdi), %xmm2
+        \\ vpcmpeqb %xmm2, %xmm1, %xmm0
+        \\ vpmovmskb %xmm0, %eax
+        \\ cmp $-1, %ax
+        \\ sete %al
+        : [ret] "={al}" (-> bool),
+        : [a] "{rsi}" (a),
+          [b] "{rdi}" (b),
+        : "eax"
+    );
+}
+
+pub export fn memeql_ex(aptr: [*]align(1) const u8, alen: usize, bptr: [*]align(1) const u8, blen: usize) bool {
+    if (alen != blen) return false;
+    const L: usize = alen;
+    var i: usize = 0;
+    while ((L - i) >= 32) {
+        const eql: bool = eql32(&aptr[i], &bptr[i]);
         if (!eql) return false;
-        l += vlen;
+        i += 32;
     }
-    while (l < L) : (l += 1) if (a[l] != b[l]) return false;
+    while ((L - i) >= 16) {
+        const eql: bool = eql16(&aptr[i], &bptr[i]);
+        if (!eql) return false;
+        i += 16;
+    }
+    while (i < L) : (i += 1) if (aptr[i] != bptr[i]) return false;
     return true;
+}
+
+pub inline fn memeql(a: []const u8, b: []const u8) bool {
+    return @call(.always_inline, memeql_ex, .{ a.ptr, a.len, b.ptr, b.len });
 }
 
 test memeql {
