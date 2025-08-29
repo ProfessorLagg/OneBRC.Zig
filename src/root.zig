@@ -11,7 +11,7 @@ test blockReaderNs {
     _ = blockReaderNs;
 }
 
-const Stat = @import("Stat.zig");
+pub const Stat = @import("Stat.zig");
 test Stat {
     _ = Stat;
 }
@@ -25,6 +25,11 @@ test BRCMapNs {
 pub const sso = @import("sso.zig");
 test sso {
     _ = sso;
+}
+
+pub const sorting = @import("sorting.zig");
+test sorting {
+    _ = sorting;
 }
 
 pub fn brcIntParse(str: []const u8) i32 {
@@ -82,7 +87,7 @@ export fn eqlmask16(a: *align(1) const anyopaque, b: *align(1) const anyopaque) 
         \\ vmovups (%rdi), %xmm2
         \\ vpcmpeqb %xmm2, %xmm1, %xmm0
         \\ vpmovmskb %xmm0, %eax
-        : [ret] "={al}" (-> bool),
+        : [ret] "={al}" (-> u16),
         : [a] "{rsi}" (a),
           [b] "{rdi}" (b),
         : "eax"

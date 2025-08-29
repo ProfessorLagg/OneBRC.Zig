@@ -2,22 +2,9 @@ const builtin = @import("builtin");
 const std = @import("std");
 const lib = @import("brc_lib");
 const BRCMap: type = lib.BRCMap(131072);
-
-// pub const std_options: std.Options = .{
-//     // Set the log level to info to .debug. use the scope levels instead
-//     .log_level = switch (builtin.mode) {
-//         .Debug => .debug,
-//         .ReleaseSafe => .err,
-//         .ReleaseSmall => .err,
-//         .ReleaseFast => .err,
-//     },
-//     .log_scope_levels = &[_]std.log.ScopeLevel{
-//         // .{ .scope = .DelimReader, .level = .err },
-//         // .{ .scope = .BRCMap, .level = .err },
-//         // .{ .scope = .Lines, .level = .err },
-//         // .{ .scope = .BRCHashMap, .level = .err },
-//     },
-// };
+const sso = lib.sso;
+const Stat = lib.Stat;
+const sorting = lib.sorting;
 
 // following files have at most 10 000 keys, and likely more than 1 instance of each key
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100.txt";
@@ -114,36 +101,52 @@ fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
 }
 
 fn printBrcMap(map: *const BRCMap) !void {
-    const rawbuf: []u8 = try map.allocator.alloc(u8, 1160_000);
-    defer map.allocator.free(rawbuf);
+    // Sort the entries
+    const Entry = struct {
+        const Self = @This();
+        key: []const u8,
+        val: *const Stat,
+        pub fn compareR(a: *const Self, b: *const Self) sorting.CompareResult {
+            return @call(.always_inline, sorting.compareStrings, .{ a.key, b.key });
+        }
+    };
+    const entries: []Entry = try map.allocator.alloc(Entry, map.count);
+    defer map.allocator.free(entries);
+    var entryId: usize = 0;
+    for (0..map.keys.len) |i| {
+        if (map.keys[i].empty()) continue;
+        entries[entryId] = Entry{
+            .key = map.keys[i].get(),
+            .val = &map.values[i],
+        };
+        entryId += 1;
+    }
+    sorting.insertionSortR(Entry, Entry.compareR, entries);
 
+    // Print the output
+    const rawbuf: []u8 = try map.allocator.alloc(u8, entries.len * 120); // longest entry string is 120
+    defer map.allocator.free(rawbuf);
     var buf: []u8 = rawbuf[0..];
     buf[0] = '{';
     buf = buf[1..];
-
     var rem: usize = map.count;
-
-    for (0..map.keys.len) |i| {
-        if (map.keys[i].notEmpty()) {
-            if (rem < map.count) {
-                buf[0] = ',';
-                buf = buf[1..];
-            }
-            const val = &map.values[i];
-            const record = try std.fmt.bufPrint(buf, "{s}={d:.1}/{d:.1}/{d:.1}", .{
-                map.keys[i].get(),
-                val.minF(),
-                val.meanF(),
-                val.maxF(),
-            });
-            buf = buf[record.len..];
-            rem -= 1;
+    for (entries) |e| {
+        if (rem < entries.len) {
+            buf[0] = ',';
+            buf[1] = ' ';
+            buf = buf[2..];
         }
-        if (rem == 0) break;
+        const record = try std.fmt.bufPrint(buf, "{s}={d:.1}/{d:.1}/{d:.1}", .{
+            e.key,
+            e.val.minF(),
+            e.val.meanF(),
+            e.val.maxF(),
+        });
+        buf = buf[record.len..];
+        rem -= 1;
     }
     buf[0] = '}';
     buf = buf[1..];
-
     const stdout = std.io.getStdOut();
     _ = try stdout.write(rawbuf[0..(rawbuf.len - buf.len)]);
 }
