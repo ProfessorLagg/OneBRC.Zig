@@ -165,8 +165,6 @@ test memeql {
 
 pub fn eqlBytes(a: []const u8, b: []const u8) bool {
     if (a.len != b.len) return false;
-    if (a.len == 0 or a.ptr == b.ptr) return true;
-
     if (a.len <= 16) {
         if (a.len < 4) {
             const x = (a[0] ^ b[0]) | (a[a.len - 1] ^ b[a.len - 1]) | (a[a.len / 2] ^ b[a.len / 2]);
