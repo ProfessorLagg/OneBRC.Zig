@@ -31,11 +31,12 @@ fn parseBlock(map: *BRCMap, block: []const u8) void {
         std.debug.assert(line[0] != '\n');
         std.debug.assert(line[line.len - 1] != '\n');
 
-        // TODO SIMD indexOfScalar
         const split_index: usize = b: {
-            var i: usize = line.len - 4;
-            while (i > 0 and line[i] != ';') : (i -= 1) {}
-            break :b i;
+            // The ; can only be in the following positions: len - 4, len - 5, len - 6
+            if (line[line.len - 4] == ';') break :b line.len - 4;
+            if (line[line.len - 5] == ';') break :b line.len - 5;
+            if (line[line.len - 6] == ';') break :b line.len - 6;
+            unreachable;
         };
         const key_str: []const u8 = line[0..split_index];
         const val_str: []const u8 = line[split_index + 1 ..];
