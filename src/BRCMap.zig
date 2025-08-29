@@ -3,7 +3,7 @@ const std = @import("std");
 const Stat = @import("Stat.zig");
 const sso = @import("sso.zig");
 
-const memeql = @import("root.zig").memeql;
+const memeql = @import("root.zig").eqlBytes;
 
 pub fn BRCMap(comptime capacity: comptime_int) type {
     comptime {
