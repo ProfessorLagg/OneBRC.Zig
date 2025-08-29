@@ -22,14 +22,14 @@ pub const MappedFile = struct {
 pub fn map(path: []const u8) !MappedFile {
     return switch (builtin.target.os.tag) {
         .windows => try _Windows.map(path),
-        .linux => try _Posix.map(path),
+        .linux => try _Linux.map(path),
         else => unreachable,
     };
 }
 pub fn unmap(mappedFile: MappedFile) void {
     switch (builtin.target.os.tag) {
         .windows => _Windows.unmap(mappedFile),
-        .linux => _Posix.unmap(mappedFile),
+        .linux => _Linux.unmap(mappedFile),
         else => unreachable,
     }
 }
@@ -82,7 +82,7 @@ const _Windows = struct {
     }
 };
 
-const _Posix = struct {
+const _Linux = struct {
     fn map(path: []const u8) !MappedFile {
         const file: *File = try hidden_allocator.create(File);
         file.* = try std.fs.cwd().openFile(path, .{ .mode = .read_only });
@@ -90,8 +90,8 @@ const _Posix = struct {
         const mapped_mem = try std.posix.mmap(
             null,
             file_len,
-            std.posix.PROT.READ,
-            std.posix.MAP.PRIVATE,
+            std.c.PROT.READ,
+            .{.TYPE = .PRIVATE},
             file.handle,
             0,
         );
@@ -100,10 +100,10 @@ const _Posix = struct {
             .slice = mapped_mem[0..],
         };
     }
-    fn unmap(mappedFile: MappedFile) !void {
+    fn unmap(mappedFile: MappedFile) void {
         const mem: []align(page_size_min) const u8 = @alignCast(mappedFile.slice);
         std.posix.munmap(mem);
-        const file: *File = @ptrCast(mappedFile.extra);
+        const file: *align(1) File = @ptrCast(mappedFile.extra);
         file.*.close();
         hidden_allocator.destroy(file);
     }
