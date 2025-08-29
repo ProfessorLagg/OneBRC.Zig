@@ -218,3 +218,21 @@ pub fn eqlBytes(a: []const u8, b: []const u8) bool {
     const last_b_chunk: Scan.Chunk = @bitCast(b[a.len - Scan.size ..][0..Scan.size].*);
     return !Scan.isNotEqual(last_a_chunk, last_b_chunk);
 }
+test eqlBytes {
+    const cities = @embedFile("cities.txt");
+    const cityNames: [][]const u8 = try splitScalarToArray(u8, cities, '\n', std.testing.allocator);
+    defer std.testing.allocator.free(cityNames);
+
+    for (0..cityNames.len) |i| {
+        const a: []const u8 = cityNames[i];
+        for (0..cityNames.len) |j| {
+            const b: []const u8 = cityNames[j];
+            const expect: bool = std.mem.eql(u8, a, b);
+            const found: bool = eqlBytes(a, b);
+            std.testing.expectEqual(expect, found) catch |err| {
+                std.log.err("memeql failed at comparing \"{s}\" to \"{s}\". Expected {any} but found {any}", .{ a, b, expect, found });
+                return err;
+            };
+        }
+    }
+}
