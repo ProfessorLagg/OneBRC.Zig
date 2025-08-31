@@ -4,7 +4,8 @@ using namespace System.Diagnostics
 Param(
     [string]$Path = 'C:\CodeProjects\1BillionRowChallenge\data\NoHashtag\1_000_000_000.txt',
     [string]$ValidPath = 'C:\CodeProjects\1BillionRowChallenge\data\NoHashtag\1_000_000_000.val.txt',
-    [switch]$ExportCsv
+    [switch]$ExportCsv,
+    [switch]$Clean
 )
 
 cd $PSScriptRoot
@@ -13,10 +14,13 @@ $ErrorActionPreference = 'Stop'
 
 # Build the exe
 [Int64]$FileSize = Get-ItemPropertyValue -Path $Path -Name Length
-$cacheDir = [DirectoryInfo]::new(".zig-cache")
-if($cacheDir.Exists){$cacheDir | Remove-Item -Recurse -Force}
-$outDir = [DirectoryInfo]::new("zig-out")
-if($outDir.Exists){$outDir | Remove-Item -Recurse -Force}
+
+if($Clean){
+    $cacheDir = [DirectoryInfo]::new(".zig-cache")
+    if($cacheDir.Exists){$cacheDir | Remove-Item -Recurse -Force}
+    $outDir = [DirectoryInfo]::new("zig-out")
+    if($outDir.Exists){$outDir | Remove-Item -Recurse -Force}
+}
 zig build -freference-trace "-Doptimize=ReleaseFast"
 $exeFile = [FileInfo]::new('zig-out\bin\brc.exe')
 

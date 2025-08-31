@@ -5,9 +5,9 @@ Param(
     [ValidateRange(1,[int]::MaxValue)]
     [int]$RunCount = 5,
 
-    [string]$Path = "C:\CodeProjects\1BillionRowChallenge\data\NoHashtag\1_000_000_000.txt"
+    [string]$Path = "C:\CodeProjects\1BillionRowChallenge\data\NoHashtag\1_000_000_000.txt",
 
-    
+    [switch]$Clean    
 )
 
 
@@ -96,17 +96,15 @@ function Format-Throughput{
 
 [Int64]$FileSize = Get-ItemPropertyValue -Path $Path -Name Length
 
-$cacheDir = [DirectoryInfo]::new(".zig-cache")
-if($cacheDir.Exists){$cacheDir | Remove-Item -Recurse -Force}
-
-$outDir = [DirectoryInfo]::new("zig-out")
-if($outDir.Exists){$outDir | Remove-Item -Recurse -Force}
-
+if($Clean){
+    $cacheDir = [DirectoryInfo]::new(".zig-cache")
+    if($cacheDir.Exists){$cacheDir | Remove-Item -Recurse -Force}
+    $outDir = [DirectoryInfo]::new("zig-out")
+    if($outDir.Exists){$outDir | Remove-Item -Recurse -Force}
+}
 zig build -freference-trace "-Doptimize=ReleaseFast"
 
 $exeFile = [FileInfo]::new('zig-out\bin\brc.exe')
-
-
 
 $times = @()
 for($i = 0; $i -lt $RunCount; $i++){
