@@ -4,6 +4,7 @@ const Stat = @import("Stat.zig");
 const sso = @import("sso.zig");
 
 const memeql = @import("root.zig").eqlBytes;
+//const memeql = @import("_asm.zig").memeql;
 
 pub fn BRCMap(comptime capacity: comptime_int) type {
     comptime {

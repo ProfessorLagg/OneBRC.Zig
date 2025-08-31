@@ -32,11 +32,20 @@ test sorting {
     _ = sorting;
 }
 
-pub const SplitIterator = @import("SplitIterator.zig").SplitIterator;
-test SplitIterator {
-    _ = SplitIterator('\n');
+pub const LineSplitter = @import("LineSplitter.zig");
+test LineSplitter {
+    const delimiter = '\n';
+    const cities = @embedFile("cities.txt");
+    var std_iter = std.mem.splitScalar(u8, cities, delimiter);
+    var new_iter = LineSplitter{ .buffer = cities };
+    var both_null: bool = false;
+    while (!both_null) {
+        const std_item = std_iter.next();
+        const new_item = new_iter.next();
+        try std.testing.expectEqual(std_item, new_item);
+        both_null = (std_item == null) and (new_item == null);
+    }
 }
-
 pub fn brcIntParse(str: []const u8) i32 {
     const isNegative: bool = str[0] == '-';
     const isNegativeInt: i32 = @intFromBool(isNegative);
@@ -65,7 +74,7 @@ test brcIntParse {
     }
 }
 
-inline fn splitScalarToArray(comptime T: type, buffer: []const T, delimiter: T, allocator: std.mem.Allocator) ![][]const T {
+pub inline fn splitScalarToArray(comptime T: type, buffer: []const T, delimiter: T, allocator: std.mem.Allocator) ![][]const T {
     var list = std.ArrayList([]const T).init(allocator);
     defer list.deinit();
     var iter = std.mem.splitScalar(T, buffer, delimiter);
@@ -73,93 +82,20 @@ inline fn splitScalarToArray(comptime T: type, buffer: []const T, delimiter: T, 
     return try list.toOwnedSlice();
 }
 
-export fn eqlmask32(a: *align(1) const anyopaque, b: *align(1) const anyopaque) u32 {
-    return asm volatile ( // NOFOLD
-        \\ vmovups (%rsi), %ymm1
-        \\ vmovups (%rdi), %ymm2
-        \\ vpcmpeqb %ymm2, %ymm1, %ymm0
-        \\ vpmovmskb %ymm0, %eax
-        : [ret] "={eax}" (-> u32),
-        : [a] "rsi" (a),
-          [b] "rdi" (b),
-    );
-}
+const _asm = @import("_asm.zig");
+test "_asm.memeql" {
+    const allocator: std.mem.Allocator = std.testing.allocator;
 
-export fn eqlmask16(a: *align(1) const anyopaque, b: *align(1) const anyopaque) u16 {
-    return asm volatile ( // NOFOLD
-        \\ xor %eax, %eax
-        \\ vmovups (%rsi), %xmm1
-        \\ vmovups (%rdi), %xmm2
-        \\ vpcmpeqb %xmm2, %xmm1, %xmm0
-        \\ vpmovmskb %xmm0, %eax
-        : [ret] "={al}" (-> u16),
-        : [a] "{rsi}" (a),
-          [b] "{rdi}" (b),
-        : "eax"
-    );
-}
-
-/// compares 32 bytes using SIMD. Returns true if all bytes match, otherwise false
-export fn eql32(a: *align(1) const anyopaque, b: *align(1) const anyopaque) bool {
-    return asm volatile ( // NOFOLD
-        \\ vmovups (%rsi), %ymm1
-        \\ vmovups (%rdi), %ymm2
-        \\ vpcmpeqb %ymm2, %ymm1, %ymm0
-        \\ vpmovmskb %ymm0, %eax
-        \\ cmp $-1, %eax
-        \\ sete %al
-        : [ret] "={al}" (-> bool),
-        : [a] "{rsi}" (a),
-          [b] "{rdi}" (b),
-        : "eax"
-    );
-}
-
-/// compares 16 bytes using SIMD. Returns true if all bytes match, otherwise false
-export fn eql16(a: *align(1) const anyopaque, b: *align(1) const anyopaque) bool {
-    return asm volatile ( // NOFOLD
-        \\ vmovups (%rsi), %xmm1
-        \\ vmovups (%rdi), %xmm2
-        \\ vpcmpeqb %xmm2, %xmm1, %xmm0
-        \\ vpmovmskb %xmm0, %eax
-        \\ cmp $-1, %ax
-        \\ sete %al
-        : [ret] "={al}" (-> bool),
-        : [a] "{rsi}" (a),
-          [b] "{rdi}" (b),
-        : "eax"
-    );
-}
-
-pub inline fn memeql(a: []const u8, b: []const u8) bool {
-    if (a.len != b.len) return false;
-    const L: usize = a.len;
-    var i: usize = 0;
-    while ((L - i) >= 32) {
-        const eql: bool = eql32(&a[i], &b[i]);
-        if (!eql) return false;
-        i += 32;
-    }
-    while ((L - i) >= 16) {
-        const eql: bool = eql16(&a[i], &b[i]);
-        if (!eql) return false;
-        i += 16;
-    }
-    while (i < L) : (i += 1) if (a[i] != b[i]) return false;
-    return true;
-}
-
-test memeql {
     const cities = @embedFile("cities.txt");
-    const cityNames: [][]const u8 = try splitScalarToArray(u8, cities, '\n', std.testing.allocator);
-    defer std.testing.allocator.free(cityNames);
+    const cityNames: [][]const u8 = try @import("root.zig").splitScalarToArray(u8, cities, '\n', allocator);
+    defer allocator.free(cityNames);
 
     for (0..cityNames.len) |i| {
         const a: []const u8 = cityNames[i];
-        for (0..cityNames.len) |j| {
+        for (i..cityNames.len) |j| {
             const b: []const u8 = cityNames[j];
             const expect: bool = std.mem.eql(u8, a, b);
-            const found: bool = memeql(a, b);
+            const found: bool = _asm.memeql(a, b);
             std.testing.expectEqual(expect, found) catch |err| {
                 std.log.err("memeql failed at comparing \"{s}\" to \"{s}\". Expected {any} but found {any}", .{ a, b, expect, found });
                 return err;
@@ -230,14 +166,15 @@ test eqlBytes {
 
     for (0..cityNames.len) |i| {
         const a: []const u8 = cityNames[i];
-        for (0..cityNames.len) |j| {
+        for (i..cityNames.len) |j| {
             const b: []const u8 = cityNames[j];
             const expect: bool = std.mem.eql(u8, a, b);
             const found: bool = eqlBytes(a, b);
             std.testing.expectEqual(expect, found) catch |err| {
-                std.log.err("memeql failed at comparing \"{s}\" to \"{s}\". Expected {any} but found {any}", .{ a, b, expect, found });
+                std.log.err("eqlBytes failed at comparing \"{s}\" to \"{s}\". Expected {any} but found {any}", .{ a, b, expect, found });
                 return err;
             };
+            // std.log.debug("eqlBytes succeeded at comparing \"{s}\" to \"{s}\". Expected {any} but found {any}", .{ a, b, expect, found });
         }
     }
 }

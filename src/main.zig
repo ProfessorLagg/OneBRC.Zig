@@ -5,7 +5,7 @@ const BRCMap: type = lib.BRCMap(131072);
 const sso = lib.sso;
 const Stat = lib.Stat;
 const sorting = lib.sorting;
-const BlockSplitter = lib.SplitIterator('\n');
+const LineSplitter = lib.LineSplitter;
 
 // following files have at most 10 000 keys, and likely more than 1 instance of each key
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100.txt";
@@ -27,7 +27,7 @@ const static_allocator: std.mem.Allocator = b: {
 
 fn parseBlock(map: *BRCMap, block: []const u8) void {
     // var iter = std.mem.splitScalar(u8, block, '\n');
-    var iter: BlockSplitter = .{ .buffer = block };
+    var iter: LineSplitter = .{ .buffer = block };
     while (iter.next()) |line| {
         std.debug.assert(line.len >= 5);
         std.debug.assert(line[0] != '\n');
