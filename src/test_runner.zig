@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 
 const ansi_esc = "\x1b[";
 const ansi_text_reset = ansi_esc ++ "0m";
+const ansi_text_test = ansi_esc ++ "1;33m";
 const ansi_text_fail = ansi_esc ++ "1;31m";
 const ansi_text_pass = ansi_esc ++ "1;32m";
 pub fn main() !void {
@@ -14,18 +15,19 @@ pub fn main() !void {
 
     for (builtin.test_functions) |t| {
         count_test += 1;
+        try std.fmt.format(out, "{s}TEST{s}\t{s}", .{ ansi_text_test, ansi_text_reset, t.name });
         t.func() catch |err| {
             const trace = @errorReturnTrace();
             if (trace != null) {
-                try std.fmt.format(out, "{}{s}FAIL{s}\t{s}\n", .{ trace.?, ansi_text_fail, ansi_text_reset, t.name });
+                try std.fmt.format(out, "\r{}{s}FAIL{s}\t{s}\n", .{ trace.?, ansi_text_fail, ansi_text_reset, t.name });
             } else {
-                try std.fmt.format(out, "{}\n{s}FAIL{s}\t{s}\n", .{ err, ansi_text_fail, ansi_text_reset, t.name });
+                try std.fmt.format(out, "\r{}\n{s}FAIL{s}\t{s}\n", .{ err, ansi_text_fail, ansi_text_reset, t.name });
             }
             count_fail += 1;
 
             continue;
         };
-        try std.fmt.format(out, "{s}PASS{s}\t{s}\n", .{ ansi_text_pass, ansi_text_reset, t.name });
+        try std.fmt.format(out, "\r{s}PASS{s}\t{s}\n", .{ ansi_text_pass, ansi_text_reset, t.name });
         count_pass += 1;
     }
 
