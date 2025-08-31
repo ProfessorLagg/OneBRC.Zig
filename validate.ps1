@@ -26,8 +26,10 @@ $stdoutPath = Join-Path -Path $PSScriptRoot -ChildPath "stdout.txt"
 $stderrPath = Join-Path -Path $PSScriptRoot -ChildPath "stderr.txt"
 Start-Process -FilePath $exeFile.FullName -ArgumentList $Path -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -Wait
 
-$expectContent = $(Get-Content -Path $ValidPath -Raw).Trim()
-$foundContent = $(Get-Content -Path $stdoutPath -Raw).Trim()
+$expectContent = Get-Content -Path $ValidPath -Raw;
+if($null -eq $expectContent){$expectContent = ''}else{$expectContent = $expectContent.Trim()}
+$foundContent = Get-Content -Path $stdoutPath -Raw
+if($null -eq $foundContent){$foundContent = ''}else{$foundContent = $foundContent.Trim()}
 $sameContent = $expectContent -ceq $foundContent
 
 if($sameContent){
