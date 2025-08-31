@@ -24,16 +24,13 @@ fn indexOfDelim(self: *const LineSplitter) ?usize {
             inline for (0..2) |_| {
                 const block: Block = slice[i..][0..block_len].*;
                 const matches = block == mask;
-                if (@reduce(.Or, matches)) {
-                    return i + std.simd.firstTrue(matches).?;
-                }
-                // if (std.simd.firstTrue(matches)) |I| return i + I;
+                if (@reduce(.Or, matches)) return i + std.simd.firstTrue(matches).?;
                 i += block_len;
             }
             if (i + 2 * block_len >= slice.len) break;
         }
     }
-    
+
     inline for (0..2) |j| {
         const block_x_len = block_len / (1 << j);
         comptime if (block_x_len < 4) break;
@@ -43,10 +40,7 @@ fn indexOfDelim(self: *const LineSplitter) ?usize {
             const mask: BlockX = @splat('\n');
             const block: BlockX = slice[i..][0..block_x_len].*;
             const matches = block == mask;
-            if (@reduce(.Or, matches)) {
-                return i + std.simd.firstTrue(matches).?;
-            }
-            // if (std.simd.firstTrue(matches)) |I| return i + I;
+            if (@reduce(.Or, matches)) return i + std.simd.firstTrue(matches).?;
             i += block_x_len;
         }
     }
