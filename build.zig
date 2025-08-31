@@ -40,6 +40,9 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(exe);
 
+    const installAssembly = b.addInstallBinFile(exe.getEmittedAsm(), "brc.s");
+    b.getInstallStep().dependOn(&installAssembly.step);
+
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| run_cmd.addArgs(args);
