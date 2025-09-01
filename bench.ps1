@@ -3,7 +3,7 @@ using namespace System.Diagnostics
 
 Param(
     [ValidateRange(1,[int]::MaxValue)]
-    [int]$RunCount = 5,
+    [int]$Count = 5,
 
     [string]$Path = "C:\CodeProjects\1BillionRowChallenge\data\NoHashtag\1_000_000_000.txt",
 
@@ -107,9 +107,9 @@ zig build -freference-trace "-Doptimize=ReleaseFast"
 $exeFile = [FileInfo]::new('zig-out\bin\brc.exe')
 
 $times = @()
-for($i = 0; $i -lt $RunCount; $i++){
-    [double]$prog = ([double]$i / [double]$RunCount) * 100.0; 
-    [string]$stat = "$($i.ToString('0')) / $($RunCount.ToString('0')) | $($prog.ToString('n'))%"
+for($i = 0; $i -lt $Count; $i++){
+    [double]$prog = ([double]$i / [double]$Count) * 100.0; 
+    [string]$stat = "$($i.ToString('0')) / $($Count.ToString('0')) | $($prog.ToString('n'))%"
     Write-Progress "Benchmarking $($exeFile.FullName)" -Status $stat -PercentComplete $prog
 
     $proc = Start-Process -FilePath $exeFile.FullName -ArgumentList $Path -WorkingDirectory $PSScriptRoot -PassThru -WindowStyle Hidden
@@ -136,7 +136,7 @@ Write-Host "Best : $($minTime | Format-LargestUnitString) | $(Format-Throughput 
 Write-Host "Mean : $($avgTime | Format-LargestUnitString) | $(Format-Throughput -Duration $avgTime -Size $FileSize)"
 Write-Host "Worst: $($maxTime | Format-LargestUnitString) | $(Format-Throughput -Duration $maxTime -Size $FileSize)"
 
-if($RunCount -ceq 5){
+if($Count -ceq 5){
     $brcTicks = $times | %{[Convert]::ToDouble($_.Ticks)} | Sort-Object | Select -Skip 1 | select -SkipLast 1 | Measure-Object -Average | select -ExpandProperty Average
     $brcTime = [TimeSpan]::FromTicks($brcTicks);
     Write-Host "BRC  : $($brcTime | Format-LargestUnitString) | $(Format-Throughput -Duration $brcTime -Size $FileSize)"
