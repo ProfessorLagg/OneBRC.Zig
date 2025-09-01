@@ -1,7 +1,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const lib = @import("brc_lib");
-const BRCMap: type = lib.BRCMap(131072);
+const BRCMap: type = lib.BRCMap(1 << 16);
 const sso = lib.sso;
 const Stat = lib.Stat;
 const sorting = lib.sorting;
@@ -264,8 +264,9 @@ pub fn main() !void {
     const filepath = if (args.len == 2) args[1] else debugfilepath;
     //try bench(filepath);
     try parseFile(static_allocator, filepath);
-    //try debug();
-    //_ = &filepath;
+    // try debug();
+    //try debug_hash();
+    _ = &filepath;
 }
 
 fn debug() !void {
@@ -286,17 +287,21 @@ fn debug_hash() !void {
     const allocator: std.mem.Allocator = static_allocator;
 
     const capacity: comptime_int = comptime 1 << 17;
-    const IndexMask: u64 = capacity - 1;
-    _ = &IndexMask;
+    // const capacity: comptime_int = comptime 1024 * 1024;
+    const count: comptime_int = 10_000;
 
-    const cities: [][]const u8 = try lib.splitScalarToArray(u8, @embedFile("cities.txt")[0..], '\n', allocator);
+    const rawCities = @embedFile("cities.txt");
+    const cities: [][]const u8 = try lib.splitScalarToArray(u8, rawCities, '\n', allocator);
     defer allocator.free(cities);
 
-    var lists: [capacity]List = undefined;
-    for (0..capacity) |i| lists[i] = List.init(allocator);
-    defer {
-        for (0..capacity) |i| lists[i] = List.init(allocator);
-    }
+    // var prng = std.Random.DefaultPrng.init(@truncate(@abs(std.time.nanoTimestamp())));
+    var prng = std.Random.DefaultPrng.init(2025_09_01);
+    const rand = prng.random();
+    rand.shuffle([]const u8, cities);
+
+    var keys: [][]const u8 = try static_allocator.alloc([]const u8, capacity);
+    defer static_allocator.free(keys);
+    for (0..capacity) |i| keys[i].len = 0;
 
     const Context = struct {
         fn getKeyHash(key: []const u8) u64 {
@@ -305,8 +310,28 @@ fn debug_hash() !void {
 
         fn getBaseIndex(key: []const u8) usize {
             const hash: usize = getKeyHash(key);
-            // return hash % capacity;
-            return hash & IndexMask;
+            //return hash & comptime (capacity - 1);
+            return hash % capacity;
+        }
+
+        fn findKeyIndex_linear(ks: [][]const u8, k: []const u8, collision_counter: *usize) usize {
+            const base_index: usize = getBaseIndex(k);
+            for (0..capacity) |offset| {
+                const index: usize = (base_index + offset) % capacity;
+                if (ks[index].len == 0) return index;
+                collision_counter.* += 1;
+            }
+            unreachable;
+        }
+
+        fn findKeyIndex_quadratic(ks: *[capacity][]const u8, k: []const u8, collision_counter: *usize) usize {
+            const base_index: usize = getBaseIndex(k);
+            for (0..capacity) |offset| {
+                const index: usize = (base_index + offset + offset * offset) % capacity;
+                if (ks[index].len == 0) return index;
+                collision_counter.* += 1;
+            }
+            unreachable;
         }
 
         fn listLessThan(_: @TypeOf(.{}), a: List, b: List) bool {
@@ -314,24 +339,20 @@ fn debug_hash() !void {
         }
     };
 
-    for (cities) |city| {
-        const idx = Context.getBaseIndex(city);
-        try lists[idx].append(city);
+    var collisionCount: usize = 0;
+    for (cities[0..count]) |city| {
+        keys[Context.findKeyIndex_linear(keys, city, &collisionCount)] = city;
     }
-
-    std.mem.sort(List, lists[0..], .{}, Context.listLessThan);
 
     const stderr = std.io.getStdErr().writer();
-    var collisionCount: usize = 0;
-    for (lists) |list| {
-        collisionCount += list.items.len - @intFromBool(list.items.len > 0);
-        if (list.items.len > 1) {
-            try std.fmt.format(stderr, "{d} keys collided:", .{list.items.len});
-            for (list.items) |key| try std.fmt.format(stderr, "\n\t{s}", .{key});
-            try stderr.writeByte('\n');
-        }
-    }
-
-    const collisionRate: f64 = (@as(f64, @floatFromInt(collisionCount)) / @as(f64, @floatFromInt(cities.len))) * 100.0;
-    try std.fmt.format(stderr, "collisions: {d} / {d} | {d}%", .{ collisionCount, cities.len, collisionRate });
+    const collisionRate: f64 = (@as(f64, @floatFromInt(collisionCount)) / @as(f64, @floatFromInt(count))) * 100.0;
+    const loadFactor: f64 = @as(f64, @floatFromInt(count)) / @as(f64, @floatFromInt(capacity)) * 100.0;
+    try std.fmt.format(stderr, "collisions: {d} / {d} ({d:.2}%) | LF: {d} / {d} = {d:.2}%", .{
+        collisionCount,
+        count,
+        @round(collisionRate * 100.0) / 100.0,
+        count,
+        capacity,
+        @round(loadFactor * 100.0) / 100.0,
+    });
 }
