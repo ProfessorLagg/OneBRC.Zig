@@ -167,18 +167,24 @@ inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
 
     // cancel the remaining contexts
     while (id < contexts.len) : (id += 1) contexts[id].setCancel();
-    // wait for all contexts to finish while merging maps
-    for (0..contexts.len) |i| {
-        const ctx: *ThreadContext = &contexts[i];
+
+    // wait for all contexts to finish
+    for (contexts) |*ctx| {
         while (ctx.hasData.isSet()) {}
-        if (i == 0) continue;
+    }
+
+    // merging maps
+    const finalcontext: *ThreadContext = &contexts[0];
+    defer finalcontext.deinit();
+    const finalmap: *BRCMap = &finalcontext.map;
+    for (contexts[1..]) |*ctx| {
         if (ctx.block.len > 0) {
-            for (ctx.map.keys, ctx.map.values) |*k, *v| if (k.notEmpty()) try contexts[0].map.addOrMerge(k.get(), v);
+            for (ctx.map.keys, ctx.map.values) |*k, *v| if (k.notEmpty()) try finalmap.addOrMerge(k.get(), v);
         }
         ctx.deinit();
     }
-    defer contexts[0].deinit();
-    try printBrcMap(&contexts[0].map);
+
+    try printBrcMap(finalmap);
     defer reader.deinit();
 }
 
