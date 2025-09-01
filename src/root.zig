@@ -21,6 +21,7 @@ test Stat {
 
 const BRCMapNs = @import("BRCMap.zig");
 pub const BRCMap = BRCMapNs.BRCMap;
+pub const BRCMapUnmanaged = BRCMapNs.BRCMapUnmanaged;
 test BRCMapNs {
     _ = BRCMapNs;
 }
