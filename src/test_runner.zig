@@ -1,11 +1,12 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const ansi_esc = "\x1b[";
-const ansi_text_reset = ansi_esc ++ "0m";
-const ansi_text_test = ansi_esc ++ "1;33m";
-const ansi_text_fail = ansi_esc ++ "1;31m";
-const ansi_text_pass = ansi_esc ++ "1;32m";
+const _esc = "\x1b[";
+const _text_reset = _esc ++ "0m";
+const _text_test = _esc ++ "1;33m";
+const _text_fail = _esc ++ "1;31m";
+const _text_pass = _esc ++ "1;32m";
+const _move_up_1 = _esc ++ "A";
 pub fn main() !void {
     const out = std.io.getStdOut().writer();
 
@@ -15,25 +16,20 @@ pub fn main() !void {
 
     for (builtin.test_functions) |t| {
         count_test += 1;
-        try std.fmt.format(out, "{s}TEST{s}\t{s}", .{ ansi_text_test, ansi_text_reset, t.name });
+        // try std.fmt.format(out, "{s}TEST{s}    {s}\n", .{ _text_test, _text_reset, t.name });
         t.func() catch |err| {
-            const trace = @errorReturnTrace();
-            if (trace != null) {
-                try std.fmt.format(out, "\r{}{s}FAIL{s}\t{s}\n", .{ trace.?, ansi_text_fail, ansi_text_reset, t.name });
-            } else {
-                try std.fmt.format(out, "\r{}\n{s}FAIL{s}\t{s}\n", .{ err, ansi_text_fail, ansi_text_reset, t.name });
-            }
+            try std.fmt.format(out, _text_fail ++ "FAIL\t" ++ _text_reset ++ "{s}\n", .{ t.name });
+            try std.fmt.format(out, "{any}\n{any}\n", .{ err, @errorReturnTrace() });
             count_fail += 1;
-
             continue;
         };
-        try std.fmt.format(out, "\r{s}PASS{s}\t{s}\n", .{ ansi_text_pass, ansi_text_reset, t.name });
+        try std.fmt.format(out, _text_pass ++ "PASS\t" ++ _text_reset ++ "{s}\n", .{ t.name });
         count_pass += 1;
     }
 
     try std.fmt.format(out, "\n=== SUMMARY ===\n", .{});
-    try std.fmt.format(out, "{s}PASSED{s}\t{d}/{d}\n", .{ ansi_text_pass, ansi_text_reset, count_pass, count_test });
-    if (count_fail > 0) try std.fmt.format(out, "{s}FAILED{s}\t{d}/{d}\n", .{ ansi_text_fail, ansi_text_reset, count_fail, count_test });
+    try std.fmt.format(out, "{s}PASSED{s}\t{d}/{d}\n", .{ _text_pass, _text_reset, count_pass, count_test });
+    if (count_fail > 0) try std.fmt.format(out, "{s}FAILED{s}\t{d}/{d}\n", .{ _text_fail, _text_reset, count_fail, count_test });
 }
 
 fn setCursorLineStart(writer: anytype) !void {
