@@ -31,7 +31,7 @@ function Get-TotalNanoSeconds{
     )
 
     [decimal]$ticks_f80 = [Convert]::ToDecimal($duration.Ticks)
-    [decimal]$ticks_per_ns_f80 = [Convert]::ToDecimal([TimeSpan]::TicksPerMillisecond * [Int64]1000 * [Int64]1000)
+    [decimal]$ticks_per_ns_f80 = [Convert]::ToDecimal([TimeSpan]::TicksPerMillisecond) / $([decimal]1000000)
     return [Convert]::ToDouble($ticks_f80 / $ticks_per_ns_f80)
 }
 
@@ -147,3 +147,10 @@ if($Count -ceq 5){
     $brcTime = [TimeSpan]::FromTicks($brcTicks);
     Write-Host "BRC  : $($brcTime | Format-LargestUnitString) | $(Format-Throughput -Duration $brcTime -Size $FileSize)"
 }
+
+
+$dataObj = [PSCustomObject]@{
+    Length = $FileSize;
+    Nanoseconds = @($times | %{$_ | Get-TotalNanoSeconds})
+}
+return $($dataObj | ConvertTo-Json -Compress)
