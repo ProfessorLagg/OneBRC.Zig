@@ -178,10 +178,7 @@ inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
     defer finalcontext.deinit();
     const finalmap: *BRCMap = &finalcontext.map;
     for (contexts[1..]) |*ctx| {
-        if (ctx.block.len > 0) {
-            // for (ctx.map.keys, ctx.map.values) |*k, *v| if (k.notEmpty()) try finalmap.addOrMerge(k.get(), v);
-            try finalmap.merge(&ctx.map);
-        }
+        if (ctx.block.len > 0) try finalmap.merge(&ctx.map);
         ctx.deinit();
     }
 

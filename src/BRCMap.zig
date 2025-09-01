@@ -96,19 +96,8 @@ pub fn BRCMap(comptime capacity: comptime_int) type {
 
         /// Merges the key / value pairs from `other` into `self`
         pub fn merge(self: *Self, other: *Self) !void {
-            var found: usize = 0;
-            for (0..other.keys.len, other.keys, other.values) |i, *k, *v| {
-                if (k.empty()) continue;
-                found += 1;
-                const oks = k.get();
-                if (self.keys[i].notEmpty() and memeql(self.keys[i].get(), oks)) {
-                    self.values[i].mergeWith(v);
-                } else {
-                    try self.addOrMerge(oks, v);
-                }
-
-                if (found == other.count) break;
-            }
+            @setRuntimeSafety(false);
+            for (other.keys, other.values) |*k, *v| if (k.notEmpty()) try self.addOrMerge(k.get(), v);
         }
     };
 }
