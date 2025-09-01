@@ -217,3 +217,27 @@ pub fn memeql(a: []const u8, b: []const u8) bool {
           [len] "{rcx}" (a.len),
     );
 }
+
+/// computes dst.* +%= src in one action.
+/// Avoids race conditions when muliple threads are trying to update `dst.*` without impacting performance
+pub inline fn add_direct(dst: *usize, src: usize) void {
+    return asm volatile (
+        \\ add %rax, (%rdi)
+        :
+        : [dst] "{rdi}" (dst),
+          [src] "{rax}" (src),
+        : "rax"
+    );
+}
+
+/// computes dst.* -%= src in one action.
+/// Avoids race conditions when muliple threads are trying to update `dst.*` without impacting performance
+pub inline fn sub_direct(dst: *usize, src: usize) void {
+    return asm volatile (
+        \\ sub %rax, (%rdi)
+        :
+        : [dst] "{rdi}" (dst),
+          [src] "{rax}" (src),
+        : "rax"
+    );
+}
