@@ -14,10 +14,10 @@ const ResetEvent = std.Thread.ResetEvent;
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\10_000.txt";
 
 // following files have 10 000 keys, and likely more than 1 instance of each key
-var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000.txt";
+// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\10_000_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100_000_000.txt";
-// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000_000.txt";
+var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000_000.txt";
 
 const static_allocator: std.mem.Allocator = b: {
     if (builtin.is_test) break :b std.testing.allocator;
@@ -146,15 +146,11 @@ inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
     };
     var reader: BlockReader = try BlockReader.init(path); // deinit is at the end of the function
 
-    const cpuCount: usize = @min((try std.Thread.getCpuCount()) - 1, lib.getAffinityCpuCount());
-    var pool: std.Thread.Pool = undefined;
-    try pool.init(.{ .allocator = allocator, .n_jobs = cpuCount });
-
     const maxBlockCount = getMaxBlockCount(blocksize, reader.fileSize());
     const contexts: []ThreadContext = try ThreadContext.initMany(maxBlockCount);
     defer allocator.free(contexts);
     // Start the tasks
-    for (contexts) |*ctx| try pool.spawn(ThreadContext.run, .{ctx});
+    for (contexts) |*ctx| (try std.Thread.spawn(.{},ThreadContext.run,.{ctx})).detach();
 
     var id: usize = 0;
     while (reader.next()) |block| : (id += 1) {
