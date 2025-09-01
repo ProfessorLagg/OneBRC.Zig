@@ -43,7 +43,7 @@ pub fn BRCMap(comptime capacity: comptime_int) type {
 
         inline fn getBaseIndex(key: []const u8) usize {
             const hash: usize = getKeyHash(key);
-            return hash & comptime(capacity - 1);
+            return hash & comptime (capacity - 1);
         }
 
         const KeyIndexResultType = enum {
@@ -91,6 +91,23 @@ pub fn BRCMap(comptime capacity: comptime_int) type {
                     self.values[index] = stat.*;
                     self.count += 1;
                 },
+            }
+        }
+
+        /// Merges the key / value pairs from `other` into `self`
+        pub fn merge(self: *Self, other: *Self) !void {
+            var found: usize = 0;
+            for (0..other.keys.len, other.keys, other.values) |i, *k, *v| {
+                if (k.empty()) continue;
+                found += 1;
+                const oks = k.get();
+                if (self.keys[i].notEmpty() and memeql(self.keys[i].get(), oks)) {
+                    self.values[i].mergeWith(v);
+                } else {
+                    try self.addOrMerge(oks, v);
+                }
+
+                if (found == other.count) break;
             }
         }
     };
