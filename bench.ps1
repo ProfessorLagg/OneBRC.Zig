@@ -7,7 +7,9 @@ Param(
 
     [string]$Path = "C:\CodeProjects\1BillionRowChallenge\data\NoHashtag\1_000_000_000.txt",
 
-    [switch]$Clean    
+    [switch]$Clean,
+
+    [IntPtr]$Affinity = 0
 )
 
 
@@ -95,6 +97,7 @@ function Format-Throughput{
 }
 
 [Int64]$FileSize = Get-ItemPropertyValue -Path $Path -Name Length
+[Int64]$Affinity64 = [Int64]::Parse($Affinity.ToString());
 
 if($Clean){
     $cacheDir = [DirectoryInfo]::new(".zig-cache")
@@ -113,6 +116,10 @@ for($i = 0; $i -lt $Count; $i++){
     Write-Progress "Benchmarking $($exeFile.FullName)" -Status $stat -PercentComplete $prog
 
     $proc = Start-Process -FilePath $exeFile.FullName -ArgumentList $Path -WorkingDirectory $PSScriptRoot -PassThru -WindowStyle Hidden
+    if($Affinity64 -gt [uint64]0){
+        $proc.ProcessorAffinity = $Affinity;    
+    }
+    
     $proc.PriorityClass = [ProcessPriorityClass]::AboveNormal;
     $proc.WaitForExit() | Out-Null
     
