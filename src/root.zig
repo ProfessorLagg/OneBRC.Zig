@@ -1,4 +1,7 @@
+const builtin = @import("builtin");
 const std = @import("std");
+
+pub const c = @import("cImport.zig");
 
 pub const fileMapping = @import("fileMapping.zig");
 test fileMapping {
@@ -177,4 +180,36 @@ test eqlBytes {
             // std.log.debug("eqlBytes succeeded at comparing \"{s}\" to \"{s}\". Expected {any} but found {any}", .{ a, b, expect, found });
         }
     }
+}
+
+/// Returns the number of cores, taking the current thread's cpu affinity into account
+pub fn getAffinityCpuCount() usize {
+    return @popCount(getCurrentProcessAffinity());
+}
+
+test getAffinityCpuCount {
+    const cpuCount = try std.Thread.getCpuCount();
+    const affinityCpuCount = getAffinityCpuCount();
+
+    try std.testing.expectEqual(cpuCount, affinityCpuCount);
+}
+
+pub const getCurrentProcessAffinity = switch (builtin.target.os.tag) {
+    .windows => getCurrentProcessAffinity_windows,
+    .linux => getCurrentProcessAffinity_linux,
+    else => @compileError("Not Implemented"),
+};
+
+fn getCurrentProcessAffinity_windows() c.DWORD64 {
+    comptime if (builtin.target.os.tag != .windows) unreachable;
+
+    var dwProcessAffinity: c.DWORD64 = undefined;
+    var dwSystemAffinity: c.DWORD64 = undefined;
+    _ = c.GetProcessAffinityMask(c.GetCurrentProcess(), &dwProcessAffinity, &dwSystemAffinity);
+    return @intCast(dwProcessAffinity);
+}
+
+fn getCurrentProcessAffinity_linux() usize {
+    comptime if (builtin.target.os.tag != .linux) unreachable;
+    @compileError("WiP");
 }

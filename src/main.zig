@@ -156,6 +156,7 @@ fn printBrcMap(map: *const BRCMap) !void {
 
 inline fn bench(filepath: []const u8) !void {
     const stderr = std.io.getStdErr().writer();
+
     try std.fmt.format(stderr, "Parsing file: {s}\n", .{filepath});
 
     const fileSize = (try (try std.fs.cwd().openFile(filepath, .{})).stat()).size;
@@ -179,12 +180,25 @@ pub fn main() !void {
     defer std.process.argsFree(static_allocator, args);
     const filepath = if (args.len == 2) args[1] else debugfilepath;
     //try bench(filepath);
-    try parseFile(static_allocator, filepath);
-    //try debug();
+    //try parseFile(static_allocator, filepath);
+    try debug();
     _ = &filepath;
 }
 
 fn debug() !void {
+    var dwProcessAffinity: lib.c.DWORD64 = undefined;
+    var dwSystemAffinity: lib.c.DWORD64 = undefined;
+    _ = lib.c.GetProcessAffinityMask(lib.c.GetCurrentProcess(), &dwProcessAffinity, &dwSystemAffinity);
+
+    const stderr = std.io.getStdErr().writer();
+    try std.fmt.format(stderr, "\nProcess Affinity: 0x{X:0>16} | count: {d}\nSystem Affinity: 0x{X:0>16} | count: {d}\n", .{
+        dwProcessAffinity,
+        @popCount(dwProcessAffinity),
+        dwSystemAffinity,
+        @popCount(dwSystemAffinity),
+    });
+}
+fn debug_hash() !void {
     const List = std.ArrayList([]const u8);
     const allocator: std.mem.Allocator = static_allocator;
 
