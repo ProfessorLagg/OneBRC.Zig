@@ -6,6 +6,7 @@ const sso = lib.sso;
 const Stat = lib.Stat;
 const sorting = lib.sorting;
 const LineSplitter = lib.LineSplitter;
+const ResetEvent = std.Thread.ResetEvent;
 
 // following files have at most 10 000 keys, and likely more than 1 instance of each key
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100.txt";
@@ -13,10 +14,10 @@ const LineSplitter = lib.LineSplitter;
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\10_000.txt";
 
 // following files have 10 000 keys, and likely more than 1 instance of each key
-// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000.txt";
+var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\10_000_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100_000_000.txt";
-var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000_000.txt";
+// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000_000.txt";
 
 const static_allocator: std.mem.Allocator = b: {
     if (builtin.is_test) break :b std.testing.allocator;
@@ -60,7 +61,7 @@ inline fn getMaxBlockCount(comptime maxBlockSize: comptime_int, fileSize: u64) u
     return a + b;
 }
 
-inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
+inline fn parseFile_old(allocator: std.mem.Allocator, path: []const u8) !void {
     const blocksize: comptime_int = 1024 * 1024 * 1024;
     const BlockReader: type = lib.BlockReader(blocksize, '\n');
     var reader: BlockReader = try BlockReader.init(path); // deinit is at the end of the function
@@ -72,7 +73,7 @@ inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
 
     const cpuCount: usize = @min((try std.Thread.getCpuCount()) - 1, lib.getAffinityCpuCount());
     var pool: std.Thread.Pool = undefined;
-    try pool.init(.{ .allocator = allocator, .n_jobs = cpuCount});
+    try pool.init(.{ .allocator = allocator, .n_jobs = cpuCount });
     var wg: std.Thread.WaitGroup = .{};
     var blockId: usize = 0;
     while (reader.next()) |block| : (blockId += 1) {
@@ -100,6 +101,88 @@ inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
     }
     defer maps[0].deinit();
     try printBrcMap(&maps[0]);
+
+    defer reader.deinit();
+}
+
+inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
+    const blocksize: comptime_int = 1024 * 1024 * 1024;
+    const BlockReader: type = lib.BlockReader(blocksize, '\n');
+    const ThreadContext = struct {
+        const Self = @This();
+        hasData: ResetEvent,
+        block: []const u8,
+        map: BRCMap,
+
+        fn init(self: *Self) !void {
+            self.hasData = .{};
+            self.block.ptr = @ptrFromInt(@sizeOf(u8));
+            self.block.len = 0;
+            self.map = try BRCMap.init(allocator);
+        }
+        fn initMany(count: usize) ![]Self {
+            const result: []Self = try allocator.alloc(Self, count);
+            for (0..result.len) |i| try result[i].init();
+            return result;
+        }
+
+        fn run(self: *Self) void {
+            self.hasData.wait();
+            defer self.hasData.reset();
+            if (self.block.len > 0) parseBlock(&self.map, self.block);
+        }
+
+        fn set(self: *Self, block: []const u8) void {
+            self.block = block;
+            self.hasData.set();
+        }
+        fn setCancel(self: *Self) void {
+            self.block.len = 0;
+            self.hasData.set();
+        }
+    };
+    var reader: BlockReader = try BlockReader.init(path); // deinit is at the end of the function
+
+    const cpuCount: usize = @min((try std.Thread.getCpuCount()) - 1, lib.getAffinityCpuCount());
+    var pool: std.Thread.Pool = undefined;
+    try pool.init(.{ .allocator = allocator, .n_jobs = cpuCount });
+
+    const maxBlockCount = getMaxBlockCount(blocksize, reader.fileSize());
+    const contexts: []ThreadContext = try ThreadContext.initMany(maxBlockCount);
+    defer allocator.free(contexts);
+    // Start the tasks
+    for (contexts) |*ctx| try pool.spawn(ThreadContext.run, .{ctx});
+
+    var id: usize = 0;
+    while (reader.next()) |block| : (id += 1) {
+        std.debug.assert(id < contexts.len);
+        std.debug.assert(block.len <= blocksize);
+        std.debug.assert(block[0] != '\n');
+        std.debug.assert(block[block.len - 1] != '\n');
+        contexts[id].set(block);
+    }
+
+    // cancel the remaining contexts
+    while (id < contexts.len) : (id += 1) contexts[id].setCancel();
+    // wait for all contexts to finish
+    for (contexts) |*ctx| {
+        while (ctx.hasData.isSet()) {}
+    }
+
+    // Merge maps
+    // TODO Multithread merging maps
+    const finalmap: *BRCMap = &contexts[0].map;
+    for (1..contexts.len) |mi| {
+        const map: *BRCMap = &contexts[mi].map;
+        for (0..map.keys.len) |ki| {
+            if (map.keys[ki].notEmpty()) {
+                try finalmap.addOrMerge(map.keys[ki].get(), &map.values[ki]);
+            }
+        }
+        map.deinit();
+    }
+    defer finalmap.deinit();
+    try printBrcMap(finalmap);
 
     defer reader.deinit();
 }
@@ -180,8 +263,8 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(static_allocator);
     defer std.process.argsFree(static_allocator, args);
     const filepath = if (args.len == 2) args[1] else debugfilepath;
-    //try bench(filepath);
-    try parseFile(static_allocator, filepath);
+    try bench(filepath);
+    //try parseFile(static_allocator, filepath);
     //try debug();
     //_ = &filepath;
 }
