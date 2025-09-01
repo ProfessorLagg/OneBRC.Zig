@@ -125,6 +125,9 @@ inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
             for (0..result.len) |i| try result[i].init();
             return result;
         }
+        fn deinit(self: *Self) void {
+            self.map.deinit();
+        }
 
         fn run(self: *Self) void {
             self.hasData.wait();
@@ -164,26 +167,18 @@ inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
 
     // cancel the remaining contexts
     while (id < contexts.len) : (id += 1) contexts[id].setCancel();
-    // wait for all contexts to finish
-    for (contexts) |*ctx| {
+    // wait for all contexts to finish while merging maps
+    for (0..contexts.len) |i| {
+        const ctx: *ThreadContext = &contexts[i];
         while (ctx.hasData.isSet()) {}
-    }
-
-    // Merge maps
-    // TODO Multithread merging maps
-    const finalmap: *BRCMap = &contexts[0].map;
-    for (1..contexts.len) |mi| {
-        const map: *BRCMap = &contexts[mi].map;
-        for (0..map.keys.len) |ki| {
-            if (map.keys[ki].notEmpty()) {
-                try finalmap.addOrMerge(map.keys[ki].get(), &map.values[ki]);
-            }
+        if (i == 0) continue;
+        if (ctx.block.len > 0) {
+            for (ctx.map.keys, ctx.map.values) |*k, *v| if (k.notEmpty()) try contexts[0].map.addOrMerge(k.get(), v);
         }
-        map.deinit();
+        ctx.deinit();
     }
-    defer finalmap.deinit();
-    try printBrcMap(finalmap);
-
+    defer contexts[0].deinit();
+    try printBrcMap(&contexts[0].map);
     defer reader.deinit();
 }
 
@@ -263,8 +258,8 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(static_allocator);
     defer std.process.argsFree(static_allocator, args);
     const filepath = if (args.len == 2) args[1] else debugfilepath;
-    try bench(filepath);
-    //try parseFile(static_allocator, filepath);
+    //try bench(filepath);
+    try parseFile(static_allocator, filepath);
     //try debug();
     //_ = &filepath;
 }
