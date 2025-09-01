@@ -1,7 +1,9 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const lib = @import("brc_lib");
-const BRCMap: type = lib.BRCMap(1 << 16);
+const BRCmapCapacity: comptime_int = 1 << 16;
+const BRCMap: type = lib.BRCMap(BRCmapCapacity);
+const BRCMapUnmanaged: type = lib.BRCMapUnmanaged(BRCmapCapacity);
 const sso = lib.sso;
 const Stat = lib.Stat;
 const sorting = lib.sorting;
@@ -26,7 +28,7 @@ const static_allocator: std.mem.Allocator = b: {
     @compileError("Requires either single-threading to be disabled or lib-c to be linked");
 };
 
-fn parseBlock(map: *BRCMap, block: []const u8) void {
+fn parseBlock(map: *BRCMapUnmanaged, block: []const u8) void {
     // var iter = std.mem.splitScalar(u8, block, '\n');
     var iter: LineSplitter = .{ .buffer = block };
     while (iter.next()) |line| {
@@ -112,13 +114,13 @@ inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
         const Self = @This();
         hasData: ResetEvent,
         block: []const u8,
-        map: BRCMap,
+        map: BRCMapUnmanaged,
 
         fn init(self: *Self) !void {
             self.hasData = .{};
             self.block.ptr = @ptrFromInt(@sizeOf(u8));
             self.block.len = 0;
-            self.map = try BRCMap.init(allocator);
+            self.map = try BRCMapUnmanaged.init(allocator);
         }
         fn initMany(count: usize) ![]Self {
             const result: []Self = try allocator.alloc(Self, count);
@@ -126,7 +128,7 @@ inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
             return result;
         }
         fn deinit(self: *Self) void {
-            self.map.deinit();
+            self.map.deinit(allocator);
         }
 
         fn run(self: *Self) void {
@@ -172,17 +174,17 @@ inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
     // merging maps
     const finalcontext: *ThreadContext = &contexts[0];
     defer finalcontext.deinit();
-    const finalmap: *BRCMap = &finalcontext.map;
+    const finalmap: *BRCMapUnmanaged = &finalcontext.map;
     for (contexts[1..]) |*ctx| {
         if (ctx.block.len > 0) finalmap.merge(&ctx.map);
         ctx.deinit();
     }
 
-    try printBrcMap(finalmap);
+    try printBrcMapUnmanaged(allocator, finalmap);
     defer reader.deinit();
 }
 
-fn printBrcMap(map: *const BRCMap) !void {
+fn printBrcMapUnmanaged(allocator: std.mem.Allocator, map: *BRCMapUnmanaged) !void {
     // Sort the entries
     const Entry = struct {
         const Self = @This();
@@ -192,26 +194,26 @@ fn printBrcMap(map: *const BRCMap) !void {
             return @call(.always_inline, sorting.compareStrings, .{ a.key, b.key });
         }
     };
-    const entries: []Entry = try map.allocator.alloc(Entry, map.count());
-    defer map.allocator.free(entries);
+    const entries: []Entry = try allocator.alloc(Entry, map.count);
+    defer allocator.free(entries);
     var entryId: usize = 0;
-    for (0..map.unmanaged.keys.len) |i| {
-        if (map.unmanaged.keys[i].empty()) continue;
+    for (0..map.keys.len) |i| {
+        if (map.keys[i].empty()) continue;
         entries[entryId] = Entry{
-            .key = map.unmanaged.keys[i].get(),
-            .val = &map.unmanaged.values[i],
+            .key = map.keys[i].get(),
+            .val = &map.values[i],
         };
         entryId += 1;
     }
     sorting.insertionSortR(Entry, Entry.compareR, entries);
 
     // Print the output
-    const rawbuf: []u8 = try map.allocator.alloc(u8, entries.len * 120); // longest entry string is 120
-    defer map.allocator.free(rawbuf);
+    const rawbuf: []u8 = try allocator.alloc(u8, entries.len * 120); // longest entry string is 120
+    defer allocator.free(rawbuf);
     var buf: []u8 = rawbuf[0..];
     buf[0] = '{';
     buf = buf[1..];
-    var rem: usize = map.count();
+    var rem: usize = map.count;
     for (entries) |e| {
         if (rem < entries.len) {
             buf[0] = ',';
@@ -231,6 +233,10 @@ fn printBrcMap(map: *const BRCMap) !void {
     buf = buf[1..];
     const stdout = std.io.getStdOut();
     _ = try stdout.write(rawbuf[0..(rawbuf.len - buf.len)]);
+}
+
+fn printBrcMap(map: *const BRCMap) !void {
+    try printBrcMapUnmanaged(map.allocator, &map.unmanaged);
 }
 
 inline fn bench(filepath: []const u8) !void {
