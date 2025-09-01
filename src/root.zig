@@ -87,7 +87,7 @@ test "_asm.memeql" {
     const allocator: std.mem.Allocator = std.testing.allocator;
 
     const cities = @embedFile("cities.txt");
-    const cityNames: [][]const u8 = try @import("root.zig").splitScalarToArray(u8, cities, '\n', allocator);
+    const cityNames: [][]const u8 = try splitScalarToArray(u8, cities, '\n', allocator);
     defer allocator.free(cityNames);
 
     for (0..cityNames.len) |i| {
