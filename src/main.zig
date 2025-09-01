@@ -60,7 +60,7 @@ inline fn getMaxBlockCount(comptime maxBlockSize: comptime_int, fileSize: u64) u
     return a + b;
 }
 
-fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
+inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
     const blocksize: comptime_int = 1024 * 1024 * 1024;
     const BlockReader: type = lib.BlockReader(blocksize, '\n');
     var reader: BlockReader = try BlockReader.init(path); // deinit is at the end of the function
@@ -178,6 +178,63 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(static_allocator);
     defer std.process.argsFree(static_allocator, args);
     const filepath = if (args.len == 2) args[1] else debugfilepath;
-    // try bench(filepath);
+    //try bench(filepath);
     try parseFile(static_allocator, filepath);
+    //try debug();
+    _ = &filepath;
+}
+
+fn debug() !void {
+    const List = std.ArrayList([]const u8);
+    const allocator: std.mem.Allocator = static_allocator;
+
+    const capacity: comptime_int = comptime 1 << 17;
+    const IndexMask: u64 = capacity - 1;
+    _ = &IndexMask;
+
+    const cities: [][]const u8 = try lib.splitScalarToArray(u8, @embedFile("cities.txt")[0..], '\n', allocator);
+    defer allocator.free(cities);
+
+    var lists: [capacity]List = undefined;
+    for (0..capacity) |i| lists[i] = List.init(allocator);
+    defer {
+        for (0..capacity) |i| lists[i] = List.init(allocator);
+    }
+
+    const Context = struct {
+        fn getKeyHash(key: []const u8) u64 {
+            return std.hash.XxHash3.hash(0, key);
+        }
+
+        fn getBaseIndex(key: []const u8) usize {
+            const hash: usize = getKeyHash(key);
+            // return hash % capacity;
+            return hash & IndexMask;
+        }
+
+        fn listLessThan(_: @TypeOf(.{}), a: List, b: List) bool {
+            return a.items.len > b.items.len;
+        }
+    };
+
+    for (cities) |city| {
+        const idx = Context.getBaseIndex(city);
+        try lists[idx].append(city);
+    }
+
+    std.mem.sort(List, lists[0..], .{}, Context.listLessThan);
+
+    const stderr = std.io.getStdErr().writer();
+    var collisionCount: usize = 0;
+    for (lists) |list| {
+        collisionCount += list.items.len - @intFromBool(list.items.len > 0);
+        if (list.items.len > 1) {
+            try std.fmt.format(stderr, "{d} keys collided:", .{list.items.len});
+            for (list.items) |key| try std.fmt.format(stderr, "\n\t{s}", .{key});
+            try stderr.writeByte('\n');
+        }
+    }
+
+    const collisionRate: f64 = (@as(f64, @floatFromInt(collisionCount)) / @as(f64, @floatFromInt(cities.len))) * 100.0;
+    try std.fmt.format(stderr, "collisions: {d} / {d} | {d}%", .{ collisionCount, cities.len, collisionRate });
 }

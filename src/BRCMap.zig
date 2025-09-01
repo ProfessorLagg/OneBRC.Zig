@@ -43,7 +43,8 @@ pub fn BRCMap(comptime capacity: comptime_int) type {
 
         inline fn getBaseIndex(key: []const u8) usize {
             const hash: usize = getKeyHash(key);
-            return hash % capacity;
+            // return hash % capacity;
+            return hash & (capacity - 1);
         }
 
         const KeyIndexResultType = enum {
