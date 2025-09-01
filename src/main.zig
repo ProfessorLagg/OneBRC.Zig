@@ -49,7 +49,7 @@ fn parseBlock(map: *BRCMap, block: []const u8) void {
         std.debug.assert(val_str.len <= 5);
 
         const val: i32 = lib.brcIntParse(val_str);
-        map.addOrUpdate(key_str, val) catch |e| std.log.err("{any}{any}", .{ e, @errorReturnTrace() });
+        map.addOrUpdate(key_str, val);
     }
 }
 
@@ -150,7 +150,7 @@ inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
     const contexts: []ThreadContext = try ThreadContext.initMany(maxBlockCount);
     defer allocator.free(contexts);
     // Start the tasks
-    for (contexts) |*ctx| (try std.Thread.spawn(.{},ThreadContext.run,.{ctx})).detach();
+    for (contexts) |*ctx| (try std.Thread.spawn(.{}, ThreadContext.run, .{ctx})).detach();
 
     var id: usize = 0;
     while (reader.next()) |block| : (id += 1) {
@@ -174,7 +174,7 @@ inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
     defer finalcontext.deinit();
     const finalmap: *BRCMap = &finalcontext.map;
     for (contexts[1..]) |*ctx| {
-        if (ctx.block.len > 0) try finalmap.merge(&ctx.map);
+        if (ctx.block.len > 0) finalmap.merge(&ctx.map);
         ctx.deinit();
     }
 
@@ -192,14 +192,14 @@ fn printBrcMap(map: *const BRCMap) !void {
             return @call(.always_inline, sorting.compareStrings, .{ a.key, b.key });
         }
     };
-    const entries: []Entry = try map.allocator.alloc(Entry, map.count);
+    const entries: []Entry = try map.allocator.alloc(Entry, map.count());
     defer map.allocator.free(entries);
     var entryId: usize = 0;
-    for (0..map.keys.len) |i| {
-        if (map.keys[i].empty()) continue;
+    for (0..map.unmanaged.keys.len) |i| {
+        if (map.unmanaged.keys[i].empty()) continue;
         entries[entryId] = Entry{
-            .key = map.keys[i].get(),
-            .val = &map.values[i],
+            .key = map.unmanaged.keys[i].get(),
+            .val = &map.unmanaged.values[i],
         };
         entryId += 1;
     }
@@ -211,7 +211,7 @@ fn printBrcMap(map: *const BRCMap) !void {
     var buf: []u8 = rawbuf[0..];
     buf[0] = '{';
     buf = buf[1..];
-    var rem: usize = map.count;
+    var rem: usize = map.count();
     for (entries) |e| {
         if (rem < entries.len) {
             buf[0] = ',';

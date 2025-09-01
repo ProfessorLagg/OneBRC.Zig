@@ -15,13 +15,48 @@ pub fn BRCMap(comptime capacity: comptime_int) type {
     return struct {
         const Self = @This();
         allocator: std.mem.Allocator,
+        unmanaged: BRCMapUnmanaged(capacity),
+
+        pub inline fn count(self: *const Self) usize {
+            return self.unmanaged.count;
+        }
+
+        pub fn init(allocator: std.mem.Allocator) !Self {
+            return Self{
+                .allocator = allocator,
+                .unmanaged = try BRCMapUnmanaged(capacity).init(allocator),
+            };
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.unmanaged.deinit(self.allocator);
+        }
+
+        pub fn addOrUpdate(self: *Self, key: []const u8, value: i32) void {
+            self.unmanaged.addOrUpdate(key, value);
+        }
+
+        pub fn addOrMerge(self: *Self, key: []const u8, stat: *const Stat) !void {
+            self.unmanaged.addOrMerge(key, stat);
+        }
+
+        /// Merges the key / value pairs from `other` into `self`
+        pub fn merge(self: *Self, other: *Self) void {
+            self.unmanaged.merge(&other.unmanaged);
+        }
+    };
+}
+
+pub fn BRCMapUnmanaged(comptime capacity: comptime_int) type {
+    return struct {
+        const Self = @This();
         count: usize = 0,
+        // TODO Test if it's better to keep these directly on the struct
         keys: []sso = undefined,
         values: []Stat = undefined,
 
         pub fn init(allocator: std.mem.Allocator) !Self {
             const r: Self = Self{
-                .allocator = allocator,
                 .count = 0,
                 .keys = try allocator.alloc(sso, capacity),
                 .values = try allocator.alloc(Stat, capacity),
@@ -32,9 +67,9 @@ pub fn BRCMap(comptime capacity: comptime_int) type {
             return r;
         }
 
-        pub fn deinit(self: *Self) void {
-            self.allocator.free(self.keys);
-            self.allocator.free(self.values);
+        pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+            allocator.free(self.keys);
+            allocator.free(self.values);
         }
 
         inline fn getKeyHash(key: []const u8) u64 {
@@ -66,7 +101,7 @@ pub fn BRCMap(comptime capacity: comptime_int) type {
             unreachable;
         }
 
-        pub fn addOrUpdate(self: *Self, key: []const u8, value: i32) !void {
+        pub fn addOrUpdate(self: *Self, key: []const u8, value: i32) void {
             switch (self.findKeyIndex(key)) {
                 .found => |index| {
                     std.debug.assert(self.keys[index].notEmpty());
@@ -80,14 +115,14 @@ pub fn BRCMap(comptime capacity: comptime_int) type {
             }
         }
 
-        pub fn addOrMerge(self: *Self, key: []const u8, stat: *const Stat) !void {
+        pub fn addOrMerge(self: *Self, key: []const u8, stat: *const Stat) void {
             switch (self.findKeyIndex(key)) {
                 .found => |index| {
                     std.debug.assert(self.keys[index].notEmpty());
                     self.values[index].mergeWith(stat);
                 },
                 .new => |index| {
-                    self.keys[index] = try sso.clone(self.allocator, key);
+                    self.keys[index].set(key);
                     self.values[index] = stat.*;
                     self.count += 1;
                 },
@@ -95,9 +130,9 @@ pub fn BRCMap(comptime capacity: comptime_int) type {
         }
 
         /// Merges the key / value pairs from `other` into `self`
-        pub fn merge(self: *Self, other: *Self) !void {
+        pub fn merge(self: *Self, other: *Self) void {
             @setRuntimeSafety(false);
-            for (other.keys, other.values) |*k, *v| if (k.notEmpty()) try self.addOrMerge(k.get(), v);
+            for (other.keys, other.values) |*k, *v| if (k.notEmpty()) self.addOrMerge(k.get(), v);
         }
     };
 }
