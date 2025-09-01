@@ -122,13 +122,12 @@ for($i = 0; $i -lt $Count; $i++){
     [GC]::Collect([GC]::MaxGeneration, [GCCollectionMode]::Optimized, $true, $true)
 }
 
+$times = $times | Sort-Object -Descending
+
 $tickMeasure = $times | %{[Convert]::ToDouble($_.Ticks)} | Measure-Object -Minimum -Average -Maximum
 $minTime = [TimeSpan]::FromTicks($tickMeasure.Minimum);
 $avgTime = [TimeSpan]::FromTicks($tickMeasure.Average);
 $maxTime = [TimeSpan]::FromTicks($tickMeasure.Maximum);
-
-
-
 
 Write-Host "Times:"
 $times | %{Write-Host "`t$($_ | Format-LargestUnitString) | $(Format-Throughput -Duration $_ -Size $FileSize)"}
