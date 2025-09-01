@@ -70,8 +70,9 @@ inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
     defer allocator.free(maps);
     for (0..mapCount) |i| maps[i] = try BRCMap.init(allocator);
 
+    const cpuCount: usize = @min((try std.Thread.getCpuCount()) - 1, lib.getAffinityCpuCount());
     var pool: std.Thread.Pool = undefined;
-    try pool.init(.{ .allocator = allocator, .n_jobs = lib.getAffinityCpuCount() - 1 });
+    try pool.init(.{ .allocator = allocator, .n_jobs = cpuCount});
     var wg: std.Thread.WaitGroup = .{};
     var blockId: usize = 0;
     while (reader.next()) |block| : (blockId += 1) {
@@ -180,9 +181,9 @@ pub fn main() !void {
     defer std.process.argsFree(static_allocator, args);
     const filepath = if (args.len == 2) args[1] else debugfilepath;
     //try bench(filepath);
-    //try parseFile(static_allocator, filepath);
-    try debug();
-    _ = &filepath;
+    try parseFile(static_allocator, filepath);
+    //try debug();
+    //_ = &filepath;
 }
 
 fn debug() !void {
