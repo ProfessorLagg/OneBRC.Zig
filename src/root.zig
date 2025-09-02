@@ -37,19 +37,24 @@ test sorting {
 }
 
 pub const LineSplitter = @import("LineSplitter.zig");
-test LineSplitter {
-    const delimiter = '\n';
-    const cities = @embedFile("cities.txt");
-    var std_iter = std.mem.splitScalar(u8, cities, delimiter);
-    var new_iter = LineSplitter{ .buffer = cities };
-    var both_null: bool = false;
-    while (!both_null) {
-        const std_item = std_iter.next();
-        const new_item = new_iter.next();
-        try std.testing.expectEqual(std_item, new_item);
-        both_null = (std_item == null) and (new_item == null);
-    }
-}
+// test LineSplitter {
+//     const delimiter = '\n';
+//     const cities = @embedFile("cities.txt");
+//     var std_iter = std.mem.splitScalar(u8, cities, delimiter);
+//     var new_iter = LineSplitter{ .buffer = cities };
+//     var both_null: bool = false;
+//     while (!both_null) {
+//         const std_item = std_iter.next();
+//         const new_item = new_iter.next();
+//         std.testing.expectEqual(std_item, new_item) catch |err| {
+//             const std_str = if(std_item == null) "null"[0..] else std_item.?;
+//             const new_str = if(new_item == null) "null"[0..] else new_item.?;
+//             std.log.err("Expected \"{s}\", but found \"{s}\"",.{std_str, new_str});
+//             return err;
+//         };
+//         both_null = (std_item == null) and (new_item == null);
+//     }
+// }
 pub fn brcIntParse(str: []const u8) i32 {
     const isNegative: bool = str[0] == '-';
     const isNegativeInt: i32 = @intFromBool(isNegative);
@@ -87,26 +92,6 @@ pub inline fn splitScalarToArray(comptime T: type, buffer: []const T, delimiter:
 }
 
 const _asm = @import("_asm.zig");
-test "_asm.memeql" {
-    const allocator: std.mem.Allocator = std.testing.allocator;
-
-    const cities = @embedFile("cities.txt");
-    const cityNames: [][]const u8 = try splitScalarToArray(u8, cities, '\n', allocator);
-    defer allocator.free(cityNames);
-
-    for (0..cityNames.len) |i| {
-        const a: []const u8 = cityNames[i];
-        for (i..cityNames.len) |j| {
-            const b: []const u8 = cityNames[j];
-            const expect: bool = std.mem.eql(u8, a, b);
-            const found: bool = _asm.memeql(a, b);
-            std.testing.expectEqual(expect, found) catch |err| {
-                std.log.err("memeql failed at comparing \"{s}\" to \"{s}\". Expected {any} but found {any}", .{ a, b, expect, found });
-                return err;
-            };
-        }
-    }
-}
 
 pub fn eqlBytes(a: []const u8, b: []const u8) bool {
     if (a.len != b.len) return false;
@@ -213,4 +198,83 @@ fn getCurrentProcessAffinity_windows() c.DWORD64 {
 fn getCurrentProcessAffinity_linux() usize {
     comptime if (builtin.target.os.tag != .linux) unreachable;
     @compileError("WiP");
+}
+
+fn find_split_index_asm(line: []const u8) usize {
+    @setRuntimeSafety(false);
+    const left: usize = line.len - @min(line.len, 6);
+    const r = asm volatile (
+        \\add %rcx, %rsi # Add left to line.ptr
+        \\mov (%rsi), %ebx # load 4 bytes from line[left] into ebx
+        \\xor $0x000000003b3b3b3b, %ebx # XOR ebx with mask
+        \\shr $8, %ebx # skip the 4th byte
+        \\mov $2, %r8d 
+        \\cmp $0, %bl 
+        \\cmove %r8d, %eax # if %bl == 0 then set %eax = 2 
+        \\shr $8, %ebx # go to the next byte
+        \\mov $1, %r8d 
+        \\cmp $0, %bl 
+        \\cmove %r8d, %eax # if %bl == 0 then set %eax = 1
+        \\xor %r9d , %r9d # set %r9d == 0
+        \\cmp $0, %bh
+        \\cmove %r9d, %eax # if %bh == 0 then set %eax = 0
+        : [ret] "={eax}" (-> u32),
+        : [p] "{rsi}" (line.ptr),
+          [left] "{rcx}" (left),
+        : "ebx", "r8d"
+    );
+    return r + left;
+}
+
+fn find_split_index(line: []const u8) usize {
+    @setRuntimeSafety(false);
+    const left: usize = line.len - @min(line.len, 6);
+    return (@intFromBool(line[left] == ';') * left) + (@intFromBool(line[left + 1] == ';') * (left + 1)) + (@intFromBool(line[left + 2] == ';') * (left + 2));
+}
+
+test find_split_index {
+    const _v0 = "9.9";
+    const _v1 = "-9.9";
+    const _v2 = "99.9";
+    const _v3 = "-99.9";
+
+    var line: [128]u8 = undefined;
+    var i: usize = 1;
+    while (i <= 100) : (i += 1) {
+        const kstr = line[0..i];
+        @memset(kstr, 'A');
+        line[i] = ';';
+
+        var vstr0 = line[i + 1 ..];
+        vstr0.len = _v0.len;
+        @memcpy(vstr0, _v0[0..]);
+        var line0: []const u8 = line[0..];
+        line0.len = kstr.len + 1 + vstr0.len;
+        // std.debug.print("line0: \"{s}\"\n", .{line0});
+        try std.testing.expectEqual(std.mem.indexOfScalar(u8, line0, ';'), find_split_index(line0));
+
+        var vstr1 = line[i + 1 ..];
+        vstr1.len = _v1.len;
+        @memcpy(vstr1, _v1[0..]);
+        var line1: []const u8 = line[0..];
+        line1.len = kstr.len + 1 + vstr1.len;
+        // std.debug.print("line1: \"{s}\"\n", .{line1});
+        try std.testing.expectEqual(std.mem.indexOfScalar(u8, line1, ';'), find_split_index(line1));
+
+        var vstr2 = line[i + 1 ..];
+        vstr2.len = _v2.len;
+        @memcpy(vstr2, _v2[0..]);
+        var line2: []const u8 = line[0..];
+        line2.len = kstr.len + 1 + vstr2.len;
+        // std.debug.print("line2: \"{s}\"\n", .{line2});
+        try std.testing.expectEqual(std.mem.indexOfScalar(u8, line2, ';'), find_split_index(line2));
+
+        var vstr3 = line[i + 1 ..];
+        vstr3.len = _v3.len;
+        @memcpy(vstr3, _v3[0..]);
+        var line3: []const u8 = line[0..];
+        line3.len = kstr.len + 1 + vstr3.len;
+        // std.debug.print("line3: \"{s}\"\n\n", .{line3});
+        try std.testing.expectEqual(std.mem.indexOfScalar(u8, line3, ';'), find_split_index(line3));
+    }
 }

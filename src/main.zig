@@ -28,7 +28,7 @@ const static_allocator: std.mem.Allocator = b: {
     @compileError("Requires either single-threading to be disabled or lib-c to be linked");
 };
 
-fn parseBlock(map: *BRCMapUnmanaged, block: []const u8) void {
+fn parseBlockUnmanaged(map: *BRCMapUnmanaged, block: []const u8) void {
     // var iter = std.mem.splitScalar(u8, block, '\n');
     var iter: LineSplitter = .{ .buffer = block };
     while (iter.next()) |line| {
@@ -36,12 +36,12 @@ fn parseBlock(map: *BRCMapUnmanaged, block: []const u8) void {
         std.debug.assert(line[0] != '\n');
         std.debug.assert(line[line.len - 1] != '\n');
 
+        // TODO this turns into to jumps. I can probably use some inline asm cmov to massively improve performance
         const split_index: usize = b: {
-            // The ; can only be in the following positions: len - 4, len - 5, len - 6
-            if (line[line.len - 4] == ';') break :b line.len - 4;
-            if (line[line.len - 5] == ';') break :b line.len - 5;
-            if (line[line.len - 6] == ';') break :b line.len - 6;
-            unreachable;
+            @setRuntimeSafety(false);
+            const left: usize = line.len - @min(line.len, 6);
+            const r: usize = (@intFromBool(line[left] == ';') * left) + (@intFromBool(line[left + 1] == ';') * (left + 1)) + (@intFromBool(line[left + 2] == ';') * (left + 2));
+            break :b r;
         };
         const key_str: []const u8 = line[0..split_index];
         const val_str: []const u8 = line[split_index + 1 ..];
@@ -53,6 +53,10 @@ fn parseBlock(map: *BRCMapUnmanaged, block: []const u8) void {
         const val: i32 = lib.brcIntParse(val_str);
         map.addOrUpdate(key_str, val);
     }
+}
+
+fn parseBlock(map: *BRCMap, block: []const u8) void {
+    @call(.always_inline, parseBlockUnmanaged, .{ &map.unmanaged, block });
 }
 
 inline fn getMaxBlockCount(comptime maxBlockSize: comptime_int, fileSize: u64) u64 {
@@ -83,9 +87,9 @@ inline fn parseFile_old(allocator: std.mem.Allocator, path: []const u8) !void {
         std.debug.assert(block[0] != '\n');
         std.debug.assert(block[block.len - 1] != '\n');
         if (reader.remain() == 0) {
-            parseBlock(&maps[blockId], block);
+            parseBlockUnmanaged(&maps[blockId], block);
         } else {
-            pool.spawnWg(&wg, parseBlock, .{ &maps[blockId], block });
+            pool.spawnWg(&wg, parseBlockUnmanaged, .{ &maps[blockId], block });
         }
     }
     wg.wait();
@@ -134,7 +138,7 @@ inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
         fn run(self: *Self) void {
             self.hasData.wait();
             defer self.hasData.reset();
-            if (self.block.len > 0) parseBlock(&self.map, self.block);
+            if (self.block.len > 0) parseBlockUnmanaged(&self.map, self.block);
         }
 
         fn set(self: *Self, block: []const u8) void {
@@ -266,23 +270,20 @@ pub fn main() !void {
     const filepath = if (args.len == 2) args[1] else debugfilepath;
     //try bench(filepath);
     try parseFile(static_allocator, filepath);
-    // try debug();
+    //try debug();
     //try debug_hash();
     _ = &filepath;
 }
 
 fn debug() !void {
-    var dwProcessAffinity: lib.c.DWORD64 = undefined;
-    var dwSystemAffinity: lib.c.DWORD64 = undefined;
-    _ = lib.c.GetProcessAffinityMask(lib.c.GetCurrentProcess(), &dwProcessAffinity, &dwSystemAffinity);
+    const xormask: u32 = comptime b: {
+        var r: u32 = 0;
+        const rb: *[4]u8 = std.mem.asBytes(&r);
+        @memset(rb[0..], ';');
+        break :b r;
+    };
 
-    const stderr = std.io.getStdErr().writer();
-    try std.fmt.format(stderr, "\nProcess Affinity: 0x{X:0>16} | count: {d}\nSystem Affinity: 0x{X:0>16} | count: {d}\n", .{
-        dwProcessAffinity,
-        @popCount(dwProcessAffinity),
-        dwSystemAffinity,
-        @popCount(dwSystemAffinity),
-    });
+    std.debug.print("xormask: 0x{x:0>16}", .{xormask});
 }
 fn debug_hash() !void {
     const List = std.ArrayList([]const u8);
