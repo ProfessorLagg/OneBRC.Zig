@@ -3,7 +3,8 @@ const std = @import("std");
 
 pub const c = @import("cImport.zig");
 
-pub const fileMapping = @import("fileMapping.zig");
+const fileMapping = @import("fileMapping.zig");
+pub const MappedFile = fileMapping.MappedFile;
 test fileMapping {
     _ = fileMapping;
 }

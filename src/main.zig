@@ -67,7 +67,7 @@ inline fn getMaxBlockCount(comptime maxBlockSize: comptime_int, fileSize: u64) u
     return a + b;
 }
 
-inline fn parseFile_old(allocator: std.mem.Allocator, path: []const u8) !void {
+inline fn parseFile_v1(allocator: std.mem.Allocator, path: []const u8) !void {
     const blocksize: comptime_int = 1024 * 1024 * 1024;
     const BlockReader: type = lib.BlockReader(blocksize, '\n');
     var reader: BlockReader = try BlockReader.init(path); // deinit is at the end of the function
@@ -186,6 +186,85 @@ inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
 
     try printBrcMapUnmanaged(allocator, finalmap);
     defer reader.deinit();
+}
+
+fn parseFile_v3(allocator: std.mem.Allocator, path: []const u8) !void {
+    var mappedFile = try lib.MappedFile.init(path);
+    defer mappedFile.deinit();
+
+    const ThreadContext = struct {
+        const Self = @This();
+        finished: ResetEvent,
+        blockptr: ?[*]const u8,
+        blocklen: usize,
+        map: BRCMapUnmanaged,
+
+        fn init(self: *Self, alc: std.mem.Allocator) !void {
+            self.finished = .{};
+            self.blockptr = null;
+            self.blocklen = 0;
+            self.map = try BRCMapUnmanaged.init(alc);
+        }
+        fn initMany(count: usize, alc: std.mem.Allocator) ![]Self {
+            const result: []Self = try alc.alloc(Self, count);
+            for (result) |*ctx| try ctx.init(alc);
+            return result;
+        }
+        fn deinit(self: *Self, alc: std.mem.Allocator) void {
+            self.map.deinit(alc);
+        }
+
+        fn getBlock(taskIndex: usize, blocksize: usize, bytes: []const u8) []const u8 {
+            var start: usize = taskIndex * blocksize;
+            if (start >= bytes.len) return std.mem.zeroes([]const u8);
+            startLoop: while (start > 0) {
+                if (bytes[start] == '\n') {
+                    start += 1;
+                    break :startLoop;
+                }
+                start -= 1;
+            }
+            var end: usize = @min(bytes.len, (taskIndex + 1) * blocksize);
+            if (end < bytes.len) {
+                while (end > start and bytes[end] != '\n') : (end -= 1) {}
+            }
+            return bytes[start..end];
+        }
+
+        fn run(self: *Self, taskIndex: usize, blocksize: usize, bytes: []const u8) void {
+            defer self.finished.set();
+            const block = getBlock(taskIndex, blocksize, bytes);
+            if (block.len > 0) {
+                self.blocklen = @intCast(block.len);
+                self.blockptr = block.ptr;
+                std.debug.assert(block[0] != '\n');
+                std.debug.assert(block[block.len - 1] != '\n');
+                parseBlockUnmanaged(&self.map, block);
+            }
+        }
+    };
+
+    const threadCount: usize = lib.getAffinityCpuCount();
+    const blocksize: usize = try std.math.divCeil(usize, mappedFile.slice.len, threadCount);
+
+    const contexts: []ThreadContext = try ThreadContext.initMany(threadCount, allocator);
+    defer allocator.free(contexts);
+    // Start the tasks
+    for (contexts, 0..contexts.len) |*ctx, id| (try std.Thread.spawn(.{}, ThreadContext.run, .{ ctx, id, blocksize, mappedFile.slice })).detach();
+
+    // wait for all contexts to finish
+    for (contexts) |*ctx| ctx.finished.wait();
+
+    // merging maps
+    const finalcontext: *ThreadContext = &contexts[0];
+    defer finalcontext.deinit(allocator);
+    const finalmap: *BRCMapUnmanaged = &finalcontext.map;
+    for (contexts[1..]) |*ctx| {
+        if (ctx.blocklen > 0) finalmap.merge(&ctx.map);
+        ctx.deinit(allocator);
+    }
+
+    try printBrcMapUnmanaged(allocator, finalmap);
 }
 
 fn printBrcMapUnmanaged(allocator: std.mem.Allocator, map: *BRCMapUnmanaged) !void {

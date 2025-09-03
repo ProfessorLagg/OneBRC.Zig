@@ -17,6 +17,14 @@ const hidden_allocator: std.mem.Allocator = b: {
 pub const MappedFile = struct {
     extra: ?*anyopaque = null,
     slice: []const u8,
+
+    pub fn init(path: []const u8) !MappedFile {
+        return map(path);
+    }
+
+    pub fn deinit(self: *MappedFile) void {
+        unmap(self.*);
+    }
 };
 
 pub fn map(path: []const u8) !MappedFile {
@@ -91,7 +99,7 @@ const _Linux = struct {
             null,
             file_len,
             std.c.PROT.READ,
-            .{.TYPE = .PRIVATE},
+            .{ .TYPE = .PRIVATE },
             file.handle,
             0,
         );
