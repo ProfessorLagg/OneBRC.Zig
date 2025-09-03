@@ -16,7 +16,7 @@ fn indexOfDelim(self: *const LineSplitter) ?usize {
     std.debug.assert(!@inComptime());
     const block_len = 16;
     const slice: []const u8 = self.buffer[0..];
-    var i: usize = 5;
+    var i: usize = 2;
     const Block: type = @Vector(block_len, u8);
     if (i + 2 * block_len < slice.len) {
         const mask: Block = @splat('\n');
@@ -53,7 +53,6 @@ fn indexOfDelim(self: *const LineSplitter) ?usize {
 pub fn next(self: *LineSplitter) ?[]const u8 {
     if (self.buffer.len == 0) return null;
     // TODO i can optimize this better because i know the delimiter at comptime
-    // const si: usize = std.mem.indexOfScalarPos(u8, self.buffer, 5, '\n') orelse self.buffer.len;
     const si: usize = self.indexOfDelim() orelse self.buffer.len;
     const result: []const u8 = self.buffer[0..si];
     self.buffer = self.buffer[@min(self.buffer.len, si + 1)..];

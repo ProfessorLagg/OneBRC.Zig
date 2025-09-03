@@ -37,24 +37,25 @@ test sorting {
 }
 
 pub const LineSplitter = @import("LineSplitter.zig");
-// test LineSplitter {
-//     const delimiter = '\n';
-//     const cities = @embedFile("cities.txt");
-//     var std_iter = std.mem.splitScalar(u8, cities, delimiter);
-//     var new_iter = LineSplitter{ .buffer = cities };
-//     var both_null: bool = false;
-//     while (!both_null) {
-//         const std_item = std_iter.next();
-//         const new_item = new_iter.next();
-//         std.testing.expectEqual(std_item, new_item) catch |err| {
-//             const std_str = if(std_item == null) "null"[0..] else std_item.?;
-//             const new_str = if(new_item == null) "null"[0..] else new_item.?;
-//             std.log.err("Expected \"{s}\", but found \"{s}\"",.{std_str, new_str});
-//             return err;
-//         };
-//         both_null = (std_item == null) and (new_item == null);
-//     }
-// }
+test LineSplitter {
+    const delimiter = '\n';
+    const cities = @embedFile("cities.txt");
+    var std_iter = std.mem.splitScalar(u8, cities, delimiter);
+    var new_iter = LineSplitter{ .buffer = cities };
+    var both_null: bool = false;
+    while (!both_null) {
+        const std_item = std_iter.next();
+        const new_item = new_iter.next();
+        std.testing.expectEqual(std_item, new_item) catch |err| {
+            const std_str = if(std_item == null) "null"[0..] else std_item.?;
+            const new_str = if(new_item == null) "null"[0..] else new_item.?;
+            std.log.err("Expected \"{s}\", but found \"{s}\"",.{std.fmt.fmtSliceEscapeLower(std_str), std.fmt.fmtSliceEscapeLower(new_str)});
+            
+            return err;
+        };
+        both_null = (std_item == null) and (new_item == null);
+    }
+}
 pub fn brcIntParse(str: []const u8) i32 {
     const isNegative: bool = str[0] == '-';
     const isNegativeInt: i32 = @intFromBool(isNegative);
@@ -226,10 +227,28 @@ fn find_split_index_asm(line: []const u8) usize {
     return r + left;
 }
 
-fn find_split_index(line: []const u8) usize {
+fn find_split_index_old(line: []const u8) usize {
     @setRuntimeSafety(false);
     const left: usize = line.len - @min(line.len, 6);
     return (@intFromBool(line[left] == ';') * left) + (@intFromBool(line[left + 1] == ';') * (left + 1)) + (@intFromBool(line[left + 2] == ';') * (left + 2));
+}
+
+fn find_split_index(line: []const u8) usize {
+    @setRuntimeSafety(false);
+    const left: usize = line.len - @min(line.len, 6);
+    return left + @intFromBool(line[left + 1] == ';') + @as(usize, @intFromBool(line[left + 2] == ';')) * 2;
+}
+
+fn find_split_index2(line: []const u8) usize {
+    @setRuntimeSafety(false);
+    const left: usize = line.len - @min(line.len, 6);
+    var r: usize = 0;
+    var bytes_int: u32 = @as(*align(1) const u32, @ptrCast(&line[left])).*;
+    bytes_int ^= 0x3b_3b_3b_3b;
+    r += @as(u8, @truncate(bytes_int >> 1)) * 2;
+    r += @as(u8, @truncate(bytes_int >> 2)) * 1;
+    //r += @as(u8, @truncate(bytes_int >> 3)) * 0;
+    return left + r;
 }
 
 test find_split_index {
