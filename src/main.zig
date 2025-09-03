@@ -272,7 +272,7 @@ pub fn main() !void {
     try parseFile(static_allocator, filepath);
     //try debug();
     //try debug_hash();
-    // _ = &filepath;
+    _ = &filepath;
 }
 
 fn debug() !void {
