@@ -1,5 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std");
+const memeql = @import("root.zig").eqlBytes;
 
 comptime {
     if (@sizeOf(usize) > std.math.maxInt(u8)) unreachable;
@@ -77,43 +78,50 @@ pub const sso9 = struct {
     pub fn destroy(self: *sso9, allocator: std.mem.Allocator) void {
         if (sso9.isLargeLen(self.len)) allocator.free(self.get_large());
     }
-
-    // Unit tests
-    test "set_get" {
-        const cities = @embedFile("cities.txt");
-        var iter = std.mem.splitScalar(u8, cities, '\n');
-        var str: sso9 = .{};
-        while (iter.next()) |city| {
-            str.set(city);
-            try std.testing.expectEqual(sso9.isSmallLen(city.len), sso9.isSmallLen(str.len));
-            try std.testing.expectEqual(sso9.isLargeLen(city.len), sso9.isLargeLen(str.len));
-            try std.testing.expectEqualStrings(city, str.get());
-        }
-    }
-
-    test clone {
-        const allocator = std.testing.allocator;
-        const cities = @embedFile("cities.txt");
-        var iter = std.mem.splitScalar(u8, cities, '\n');
-
-        var str: sso9 = .{};
-        while (iter.next()) |city| {
-            str = try sso9.clone(allocator, city);
-            defer str.destroy(allocator);
-            try std.testing.expectEqual(isSmallLen(city.len), isSmallLen(str.len));
-            try std.testing.expectEqual(isLargeLen(city.len), isLargeLen(str.len));
-            try std.testing.expectEqualStrings(city, str.get());
-        }
-    }
 };
+
+test "sso9.set_get" {
+    const cities = @embedFile("cities.txt");
+    var iter = std.mem.splitScalar(u8, cities, '\n');
+    var str: sso9 = .{};
+    var sCount: usize = 0;
+    var lCount: usize = 0;
+    while (iter.next()) |city| {
+        str.set(city);
+        sCount += @intFromBool(sso9.isSmallLen(city.len));
+        lCount += @intFromBool(sso9.isLargeLen(city.len));
+        try std.testing.expectEqual(sso9.isSmallLen(city.len), sso9.isSmallLen(str.len));
+        try std.testing.expectEqual(sso9.isLargeLen(city.len), sso9.isLargeLen(str.len));
+        try std.testing.expectEqualStrings(city, str.get());
+    }
+
+    try std.testing.expect(sCount > 0);
+    try std.testing.expect(lCount > 0);
+}
+test "sso9.clone" {
+    const allocator = std.testing.allocator;
+    const cities = @embedFile("cities.txt");
+    var iter = std.mem.splitScalar(u8, cities, '\n');
+
+    var str: sso9 = .{};
+    while (iter.next()) |city| {
+        str = try sso9.clone(allocator, city);
+        defer str.destroy(allocator);
+        try std.testing.expectEqual(sso9.isSmallLen(city.len), sso9.isSmallLen(str.len));
+        try std.testing.expectEqual(sso9.isLargeLen(city.len), sso9.isLargeLen(str.len));
+        try std.testing.expectEqualStrings(city, str.get());
+    }
+}
 
 /// 16 or 8 byte sso for 64-bit and 32-bit systems respectively.
 /// 8 or 4 bytes for data for 64-bit and 32-bit systems respectively.
 /// Cannot store strings longer than 255 bytes
 pub const sso16 = struct {
     const DataSize: comptime_int = @sizeOf(usize) + @sizeOf([*]u8);
+    const TVec: type = @Vector(DataSize, u8);
+    const DataAlign: comptime_int = @alignOf(TVec);
     const MaxSmallLen: comptime_int = DataSize - 1;
-    data: [DataSize]u8 = undefined,
+    data: TVec = @splat(0),
 
     // Private functions
     inline fn isSmallLen(len: usize) bool {
@@ -124,8 +132,9 @@ pub const sso16 = struct {
     }
     inline fn set_small(self: *sso16, str: []const u8) void {
         std.debug.assert(str.len <= MaxSmallLen);
-        self.data[0] = @truncate(str.len);
-        @memcpy(self.data[1..][0..str.len], str);
+        const dataptr: *align(DataAlign) [DataSize]u8 = @ptrCast(&self.data);
+        dataptr[0] = @truncate(str.len);
+        @memcpy(dataptr[1..][0..str.len], str);
     }
     inline fn set_large(self: *sso16, str: []const u8) void {
         std.debug.assert(str.len > MaxSmallLen);
@@ -136,7 +145,8 @@ pub const sso16 = struct {
     }
     inline fn get_small(self: *const sso16) []const u8 {
         std.debug.assert(self.data[0] < DataSize);
-        return self.data[1..][0..self.data[0]];
+        const dataptr: *align(DataAlign) const [DataSize]u8 = @ptrCast(&self.data);
+        return dataptr[1..][0..dataptr[0]];
     }
     inline fn get_large(self: *const sso16) []const u8 {
         const len_ptr: *align(1) const usize = @ptrCast(&self.data[0]);
@@ -145,6 +155,16 @@ pub const sso16 = struct {
         const ptr: [*]align(1) const u8 = @ptrFromInt(ptr_ptr.*);
         std.debug.assert(len_ptr.* > MaxSmallLen);
         return ptr[0..len];
+    }
+    inline fn eql_small(a: *const sso16, b: *const sso16) bool {
+        std.debug.assert(isSmallLen(a.data[0]));
+        std.debug.assert(isSmallLen(b.data[0]));
+        return @reduce(.And, a.data == b.data);
+    }
+    inline fn eql_large(a: *const sso16, b: *const sso16) bool {
+        std.debug.assert(isLargeLen(a.data[0]));
+        std.debug.assert(isLargeLen(b.data[0]));
+        return memeql(a.get_large(), b.get_large());
     }
 
     // Public functions
@@ -173,39 +193,116 @@ pub const sso16 = struct {
     pub fn free(self: *sso16, allocator: std.mem.Allocator) void {
         if (isLargeLen(self.data[0])) allocator.free(self.get_large());
     }
-    // Unit tests
-    test "set_get" {
-        const cities = @embedFile("cities.txt");
-        var iter = std.mem.splitScalar(u8, cities, '\n');
-        var str: sso16 = .{};
-        while (iter.next()) |city| {
-            str.set(city);
-            try std.testing.expectEqual(sso16.isSmallLen(city.len), sso16.isSmallLen(str.data[0]));
-            try std.testing.expectEqual(sso16.isLargeLen(city.len), sso16.isLargeLen(str.data[0]));
-            try std.testing.expectEqualStrings(city, str.get());
-        }
-    }
-
-    test clone {
-        const allocator = std.testing.allocator;
-        const cities = @embedFile("cities.txt");
-        var iter = std.mem.splitScalar(u8, cities, '\n');
-
-        var str: sso16 = .{};
-        while (iter.next()) |city| {
-            str = try sso16.clone(allocator, city);
-            defer str.free(allocator);
-            try std.testing.expectEqual(isSmallLen(city.len), isSmallLen(str.data[0]));
-            try std.testing.expectEqual(isLargeLen(city.len), isLargeLen(str.data[0]));
-            try std.testing.expectEqualStrings(city, str.get());
-        }
+    pub fn eql(a: *const sso16, b: *const sso16) bool {
+        // 0: both are small, 1: one is small the other is large, 2: both are large
+        // const magicnumber: u8 = @as(u8, @intFromBool(isLargeLen(a.data[0]))) + @as(u8, @intFromBool(isLargeLen(b.data[0])));
+        const magicnumber: u8 = asm volatile ( // NO FOLD
+                \\ cmp $15, %al
+                \\ setg %al
+                \\ and $1, %al
+                \\ cmp $15, %bl
+                \\ setg %bl
+                \\ and $1, %bl
+                \\ add %bl, %al
+                : [ret] "={al}" (-> u8),
+                : [a] "{al}" (a.data[0]),
+                  [b] "{bl}" (b.data[0]),
+            );
+        return switch (magicnumber) {
+            0 => eql_small(a, b),
+            1 => false,
+            2 => eql_large(a, b),
+            else => unreachable,
+        };
     }
 };
 
-test sso9 {
-    _ = sso9;
+test "sso16.set_get" {
+    const cities = @embedFile("cities.txt");
+    var iter = std.mem.splitScalar(u8, cities, '\n');
+    var str: sso16 = .{};
+    var sCount: usize = 0;
+    var lCount: usize = 0;
+    while (iter.next()) |city| {
+        str.set(city);
+        sCount += @intFromBool(sso16.isSmallLen(city.len));
+        lCount += @intFromBool(sso16.isLargeLen(city.len));
+        try std.testing.expectEqual(sso16.isSmallLen(city.len), sso16.isSmallLen(str.data[0]));
+        try std.testing.expectEqual(sso16.isLargeLen(city.len), sso16.isLargeLen(str.data[0]));
+        try std.testing.expectEqualStrings(city, str.get());
+    }
+
+    try std.testing.expect(sCount > 0);
+    try std.testing.expect(lCount > 0);
+}
+test "sso16.clone" {
+    const allocator = std.testing.allocator;
+    const cities = @embedFile("cities.txt");
+    var iter = std.mem.splitScalar(u8, cities, '\n');
+
+    var str: sso16 = .{};
+    while (iter.next()) |city| {
+        str = try sso16.clone(allocator, city);
+        defer str.free(allocator);
+        try std.testing.expectEqual(sso16.isSmallLen(city.len), sso16.isSmallLen(str.data[0]));
+        try std.testing.expectEqual(sso16.isLargeLen(city.len), sso16.isLargeLen(str.data[0]));
+        try std.testing.expectEqualStrings(city, str.get());
+    }
 }
 
-test sso16 {
-    _ = sso16;
+test "magicnumber.asm" {
+    const Context = struct {
+        noinline fn magicnumber(alen: u8, blen: u8) u8 {
+            const aLarge: bool = sso16.isLargeLen(alen);
+            const bLarge: bool = sso16.isLargeLen(blen);
+            if (aLarge and bLarge) return 2;
+            if (!aLarge and bLarge) return 1;
+            if (aLarge and !bLarge) return 1;
+            if (!aLarge and !bLarge) return 0;
+            unreachable;
+        }
+        noinline fn magicnumber_branchless(alen: u8, blen: u8) u8 {
+            return @as(u8, @intFromBool(sso16.isLargeLen(alen))) + @as(u8, @intFromBool(sso16.isLargeLen(blen)));
+        }
+        noinline fn magicnumber_asm(alen: u8, blen: u8) u8 {
+            return asm volatile ( // NO FOLD
+                \\ cmp $15, %al
+                \\ setg %al
+                \\ and $1, %al
+                \\ cmp $15, %bl
+                \\ setg %bl
+                \\ and $1, %bl
+                \\ add %bl, %al
+                : [ret] "={al}" (-> u8),
+                : [a] "{al}" (alen),
+                  [b] "{bl}" (blen),
+            );
+        }
+
+        fn splitScalarToArray(comptime T: type, buffer: []const T, delimiter: T, allocator: std.mem.Allocator) ![][]const T {
+            var list = std.ArrayList([]const T).init(allocator);
+            defer list.deinit();
+            var iter = std.mem.splitScalar(T, buffer, delimiter);
+            while (iter.next()) |item| try list.append(item);
+            return try list.toOwnedSlice();
+        }
+    };
+
+    const cities = try Context.splitScalarToArray(u8, @embedFile("cities.txt"), '\n', std.testing.allocator);
+    defer std.testing.allocator.free(cities);
+
+    var str_a: sso16 = .{};
+    var str_b: sso16 = .{};
+    for (0..cities.len) |i| {
+        str_a.set(cities[i]);
+        for (i..cities.len) |j| {
+            str_b.set(cities[j]);
+            const magicnumber_a = Context.magicnumber(str_a.data[0], str_b.data[0]);
+            const magicnumber_b = Context.magicnumber_branchless(str_a.data[0], str_b.data[0]);
+            const magicnumber_c = Context.magicnumber_asm(str_a.data[0], str_b.data[0]);
+
+            try std.testing.expectEqual(magicnumber_a, magicnumber_b);
+            try std.testing.expectEqual(magicnumber_a, magicnumber_c);
+        }
+    }
 }

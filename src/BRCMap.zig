@@ -1,7 +1,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const Stat = @import("Stat.zig");
-const sso = @import("sso.zig").sso9;
+const sso = @import("sso.zig").sso16;
 
 const memeql = @import("root.zig").eqlBytes;
 
@@ -89,6 +89,21 @@ pub fn BRCMapUnmanaged(comptime capacity: comptime_int) type {
         };
 
         fn findKeyIndex(self: *const Self, key: []const u8) KeyIndexResult {
+            const base_index: usize = getBaseIndex(key);
+            if (self.keys[base_index].empty()) return KeyIndexResult{ .new = base_index };
+            if (memeql(key, self.keys[base_index].get())) return KeyIndexResult{ .found = base_index };
+
+            const key_sso: sso = sso.initFrom(key);
+            for (1..capacity) |offset| {
+                const index: usize = (base_index + offset) % capacity;
+                if (self.keys[index].empty()) return KeyIndexResult{ .new = index };
+                if (sso.eql(&key_sso, &self.keys[index])) return KeyIndexResult{ .found = index };
+            }
+            std.log.err("Could not insert key: \"{s}\" into BRCMap", .{key});
+            unreachable;
+        }
+
+        fn findKeyIndex_old(self: *const Self, key: []const u8) KeyIndexResult {
             const base_index: usize = getBaseIndex(key);
             for (0..capacity) |offset| {
                 const index: usize = (base_index + offset) % capacity;
