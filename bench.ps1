@@ -110,10 +110,19 @@ zig build -freference-trace "-Doptimize=ReleaseFast"
 $exeFile = [FileInfo]::new('zig-out\bin\brc.exe')
 
 $times = @()
+[Stopwatch]$timer = [Stopwatch]::StartNew()
 for($i = 0; $i -lt $Count; $i++){
     [double]$prog = ([double]$i / [double]$Count) * 100.0; 
     [string]$stat = "$($i.ToString('0')) / $($Count.ToString('0')) | $($prog.ToString('n'))%"
-    Write-Progress "Benchmarking $($exeFile.FullName)" -Status $stat -PercentComplete $prog
+
+
+    [double]$secondsLeft = 0;
+    if($i -gt 0){
+        [double]$itemsLeft = [Convert]::ToDouble($Count - $i);
+        [double]$secondsPerItem = $timer.Elapsed.TotalSeconds / [double]$i;
+        $secondsLeft = $secondsPerItem * $itemsLeft;
+    }
+    Write-Progress "Benchmarking $($exeFile.FullName)" -Status $stat -PercentComplete $prog -SecondsRemaining $secondsLeft
 
     $proc = Start-Process -FilePath $exeFile.FullName -ArgumentList $Path -WorkingDirectory $PSScriptRoot -PassThru -WindowStyle Hidden
     if($Affinity64 -gt [uint64]0){
