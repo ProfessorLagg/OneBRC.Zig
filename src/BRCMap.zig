@@ -1,10 +1,9 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const Stat = @import("Stat.zig");
-const sso = @import("sso.zig");
+const sso = @import("sso.zig").sso9;
 
 const memeql = @import("root.zig").eqlBytes;
-//const memeql = @import("_asm.zig").memeql;
 
 pub fn BRCMap(comptime capacity: comptime_int) type {
     comptime {
@@ -61,9 +60,8 @@ pub fn BRCMapUnmanaged(comptime capacity: comptime_int) type {
                 .keys = try allocator.alloc(sso, capacity),
                 .values = try allocator.alloc(Stat, capacity),
             };
-
-            for (0..r.keys.len) |i| r.keys[i].data[0] = 0;
-            for (0..r.values.len) |i| r.values[i] = .{};
+            @memset(r.keys, sso{});
+            @memset(r.values, Stat{});
             return r;
         }
 

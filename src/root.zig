@@ -48,10 +48,10 @@ test LineSplitter {
         const std_item = std_iter.next();
         const new_item = new_iter.next();
         std.testing.expectEqual(std_item, new_item) catch |err| {
-            const std_str = if(std_item == null) "null"[0..] else std_item.?;
-            const new_str = if(new_item == null) "null"[0..] else new_item.?;
-            std.log.err("Expected \"{s}\", but found \"{s}\"",.{std.fmt.fmtSliceEscapeLower(std_str), std.fmt.fmtSliceEscapeLower(new_str)});
-            
+            const std_str = if (std_item == null) "null"[0..] else std_item.?;
+            const new_str = if (new_item == null) "null"[0..] else new_item.?;
+            std.log.err("Expected \"{s}\", but found \"{s}\"", .{ std.fmt.fmtSliceEscapeLower(std_str), std.fmt.fmtSliceEscapeLower(new_str) });
+
             return err;
         };
         both_null = (std_item == null) and (new_item == null);
