@@ -103,17 +103,6 @@ pub fn BRCMapUnmanaged(comptime capacity: comptime_int) type {
             unreachable;
         }
 
-        fn findKeyIndex_old(self: *const Self, key: []const u8) KeyIndexResult {
-            const base_index: usize = getBaseIndex(key);
-            for (0..capacity) |offset| {
-                const index: usize = (base_index + offset) % capacity;
-                if (self.keys[index].empty()) return KeyIndexResult{ .new = index };
-                if (memeql(key, self.keys[index].get())) return KeyIndexResult{ .found = index };
-            }
-            std.log.err("Could not insert key: \"{s}\" into BRCMap", .{key});
-            unreachable;
-        }
-
         pub fn addOrUpdate(self: *Self, key: []const u8, value: i32) void {
             switch (self.findKeyIndex(key)) {
                 .found => |index| {

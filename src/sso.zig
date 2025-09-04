@@ -195,7 +195,6 @@ pub const sso16 = struct {
     }
     pub fn eql(a: *const sso16, b: *const sso16) bool {
         // 0: both are small, 1: one is small the other is large, 2: both are large
-        // const magicnumber: u8 = @as(u8, @intFromBool(isLargeLen(a.data[0]))) + @as(u8, @intFromBool(isLargeLen(b.data[0])));
         const magicnumber: u8 = asm volatile ( // NO FOLD
                 \\ cmp $15, %al
                 \\ setg %al
