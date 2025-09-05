@@ -63,6 +63,15 @@ pub const BenchmarkResult = struct {
     pub fn getStandardDeviation(self: BenchmarkResult) f64 {
         return @sqrt(self.getVariance());
     }
+
+    pub fn format(self: BenchmarkResult, writer: *std.io.Writer) std.io.Writer.Error!void {
+        return writer.print("count: {d}, time: {D}, mean: {D}/run, standard deviation: {D}", .{
+            self.getCount(),
+            self.getSum(),
+            @as(u64, @intFromFloat(@round(self.getMean()))),
+            @as(u64, @intFromFloat(@round(self.getStandardDeviation()))),
+        });
+    }
 };
 pub const BenchmarkOptions = struct {
     /// Number of times the function is run per batch
@@ -70,7 +79,7 @@ pub const BenchmarkOptions = struct {
     batchSize: comptime_int = 1,
     /// The minimum number of batches to run.
     /// The function will be run atleast `batchSize * minBatches` times
-    minBatches: comptime_int = 1,
+    minBatches: comptime_int = 2,
     /// The minimum total time to benchmark for
     minNs: comptime_int = std.time.ns_per_s,
 };
@@ -85,12 +94,15 @@ pub fn runBenchmark(
     allocator: std.mem.Allocator,
     context: T,
 ) BenchmarkResult {
+    comptime {
+        if ((opt.batchSize * opt.minBatches) <= 1) @compileError("batchSize * minBatches must be >= 2");
+    }
     const Ti: std.builtin.Type = comptime @typeInfo(T);
 
     var count: u64 = 0;
     var time: u64 = 0;
-    var batchTimes = std.ArrayList(u64).init(allocator);
-    defer batchTimes.deinit();
+    var batchTimes = std.ArrayList(u64){};
+    defer batchTimes.deinit(allocator);
 
     var batch: u64 = 0;
     // TODO Build custom timer from RDTSC
@@ -110,8 +122,8 @@ pub fn runBenchmark(
         if (comptime (Ti == .@"struct" and std.meta.hasMethod(T, "batchCleanup"))) context.batchCleanup();
         count += opt.batchSize;
         time += timeNs;
-        batchTimes.append(timeNs / opt.batchSize) catch |err| panic("{any}{any}", .{ err, @errorReturnTrace() });
+        batchTimes.append(allocator, timeNs / opt.batchSize) catch |err| panic("{any}{any}", .{ err, @errorReturnTrace() });
     }
 
-    return BenchmarkResult.init(batchTimes.toOwnedSlice() catch |err| panic("{any}{any}", .{ err, @errorReturnTrace() }));
+    return BenchmarkResult.init(batchTimes.toOwnedSlice(allocator) catch |err| panic("{any}{any}", .{ err, @errorReturnTrace() }));
 }

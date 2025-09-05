@@ -277,8 +277,8 @@ fn printBrcMapUnmanaged(allocator: std.mem.Allocator, map: *BRCMapUnmanaged) !vo
             return @call(.always_inline, sorting.compareStrings, .{ a.key, b.key });
         }
         pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
-            try writer.print("{s}={d:.1}/{d:.1}/{d:.1}", .{
-                self.key,
+            _ = try writer.write(self.key);
+            try writer.print("={d:.1}/{d:.1}/{d:.1}", .{
                 self.val.minF(),
                 self.val.meanF(),
                 self.val.maxF(),
@@ -299,23 +299,18 @@ fn printBrcMapUnmanaged(allocator: std.mem.Allocator, map: *BRCMapUnmanaged) !vo
     sorting.insertionSortR(Entry, Entry.compareR, entries);
 
     // Print the output
-    const rawbuf: []u8 = try allocator.alloc(u8, entries.len * 120); // longest entry string is 120
-    defer allocator.free(rawbuf);
-    var buf: []u8 = rawbuf[0..];
-    buf[0] = '{';
-    buf = buf[1..];
-    for (0..entries.len) |i| {
-        if (i > 0) {
-            buf[0] = ',';
-            buf[1] = ' ';
-            buf = buf[2..];
-        }
-        const record = try std.fmt.bufPrint(buf, "{f}", .{entries[i]});
-        buf = buf[record.len..];
+    var stdout_buffer: [std.math.maxInt(u16)]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    const stdout = &stdout_writer.interface;
+    defer stdout.flush() catch |err| std.debug.panic("{any}{any}", .{ err, @errorReturnTrace() });
+    try stdout.print("{{{f}", .{entries[0]});
+
+    for (1..(entries.len - 1)) |i| {
+        if (stdout.unusedCapacityLen() < (entries[i].key.len + 15)) try stdout.flush();
+        try stdout.print(", {f}", .{entries[i]});
     }
-    buf[0] = '}';
-    buf = buf[1..];
-    _ = try std.fs.File.stdout().write(rawbuf[0..(rawbuf.len - buf.len)]);
+    if (stdout.unusedCapacityLen() < (entries[entries.len - 1].key.len + 15)) try stdout.flush();
+    try stdout.print(", {f}}}", .{entries[entries.len - 1]});
 }
 
 fn printBrcMap(map: *const BRCMap) !void {
@@ -323,9 +318,11 @@ fn printBrcMap(map: *const BRCMap) !void {
 }
 
 inline fn bench(filepath: []const u8) !void {
-    const stderr = std.io.getStdErr().writer();
+    var stderr_buffer: [1024]u8 = undefined;
+    var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
+    const stderr = &stderr_writer.interface;
 
-    try std.fmt.format(stderr, "Parsing file: {s}\n", .{filepath});
+    try stderr.print("Parsing file: {s}\n", .{filepath});
 
     const fileSize = (try (try std.fs.cwd().openFile(filepath, .{})).stat()).size;
     var timer = try std.time.Timer.start();
@@ -337,18 +334,19 @@ inline fn bench(filepath: []const u8) !void {
     const perf_f: f64 = @round(fileSize_f / s_f);
     const perf: u64 = @intFromFloat(perf_f);
 
-    try std.fmt.format(stderr, "\n\nparsed {} in {} at {}/s\n", .{
-        std.fmt.fmtIntSizeBin(fileSize),
-        std.fmt.fmtDuration(ns),
-        std.fmt.fmtIntSizeBin(perf),
+    try stderr.print("\n\nparsed {Bi} in {D} at {Bi}/s\n", .{
+        fileSize,
+        ns,
+        perf,
     });
 }
 pub fn main() !void {
     const args = try std.process.argsAlloc(static_allocator);
     defer std.process.argsFree(static_allocator, args);
     const filepath = if (args.len == 2) args[1] else debugfilepath;
-    //try bench(filepath);
-    try parseFile(static_allocator, filepath);
+    // try bench(filepath);
+    try benchmarkReadingMany(filepath);
+    //try parseFile(static_allocator, filepath);
     //try debug();
     //try debug_hash();
     //try benchmarkLineSplitter();
@@ -463,11 +461,52 @@ fn benchmarkLineSplitter() !void {
     }, Context.run, allocator, void{});
     defer result.deinit(allocator);
 
-    const stdout = std.io.getStdOut().writer();
-    try stdout.print("count: {d}, time: {}, mean: {d}/run, standard deviation: {d}", .{
-        result.getCount(),
-        std.fmt.fmtDuration(result.getSum()),
-        std.fmt.fmtDuration(@intFromFloat(@round(result.getMean()))),
-        std.fmt.fmtDuration(@intFromFloat(@round(result.getStandardDeviation()))),
-    });
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    const stdout = &stdout_writer.interface;
+    try stdout.print("{f}", .{result});
+    try stdout.flush();
+}
+
+fn benchmarkReadingMany(filepath: []const u8) !void {
+    const maxSize: comptime_int = 1024 * 1024 * 1024;
+    var size: usize = 4096;
+    while (size <= maxSize) : (size *= 2) try benchmarkReading(size, filepath);
+}
+
+fn benchmarkReading(blockSize: usize, filepath: []const u8) !void {
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    const stdout = &stdout_writer.interface;
+
+    try stdout.print("benchmarkReading({Bi:>6}, \"{s}\")", .{ blockSize, filepath });
+    try stdout.flush();
+
+    const Context = struct {
+        const Self = @This();
+        file: std.fs.File,
+        block: []u8,
+        pub fn init(path: []const u8, size: usize) !Self {
+            return Self{
+                .file = try std.fs.cwd().openFile(path, .{ .mode = .read_only, .lock = .exclusive }),
+                .block = try std.heap.page_allocator.alloc(u8, size),
+            };
+        }
+        pub fn deinit(self: *Self) void {
+            self.file.close();
+            std.heap.page_allocator.free(self.block);
+        }
+
+        pub fn run(self: Self) void {
+            self.file.seekTo(0) catch unreachable;
+            while ((self.file.read(self.block) catch unreachable) > 0) {}
+        }
+    };
+
+    var ctx: Context = try Context.init(filepath, blockSize);
+    defer ctx.deinit();
+    const result = lib.benchmarking.runBenchmark(Context, .{ .minNs = 30 * std.time.ns_per_s }, Context.run, static_allocator, ctx);
+
+    try stdout.print("\rbenchmarkReading({Bi:>6}, \"{s}\"): {f}\n", .{ blockSize, filepath, result });
+    try stdout.flush();
 }
