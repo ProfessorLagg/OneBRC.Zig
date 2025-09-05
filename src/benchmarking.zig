@@ -79,7 +79,7 @@ pub const BenchmarkOptions = struct {
     batchSize: comptime_int = 1,
     /// The minimum number of batches to run.
     /// The function will be run atleast `batchSize * minBatches` times
-    minBatches: comptime_int = 2,
+    minBatches: comptime_int = 1,
     /// The minimum total time to benchmark for
     minNs: comptime_int = std.time.ns_per_s,
 };
@@ -94,9 +94,6 @@ pub fn runBenchmark(
     allocator: std.mem.Allocator,
     context: T,
 ) BenchmarkResult {
-    comptime {
-        if ((opt.batchSize * opt.minBatches) <= 1) @compileError("batchSize * minBatches must be >= 2");
-    }
     const Ti: std.builtin.Type = comptime @typeInfo(T);
 
     var count: u64 = 0;

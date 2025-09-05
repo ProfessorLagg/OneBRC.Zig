@@ -67,72 +67,28 @@ inline fn getMaxBlockCount(comptime maxBlockSize: comptime_int, fileSize: u64) u
     return a + b;
 }
 
-inline fn parseFile_v1(allocator: std.mem.Allocator, path: []const u8) !void {
+inline fn parseFileContent(allocator: std.mem.Allocator, content: []const u8) !void {
     const blocksize: comptime_int = 1024 * 1024 * 1024;
-    const MappedFileBlockReader: type = lib.MappedFileBlockReader(blocksize, '\n');
-    var reader: MappedFileBlockReader = try MappedFileBlockReader.init(path); // deinit is at the end of the function
-
-    const mapCount = getMaxBlockCount(blocksize, reader.fileSize());
-    const maps: []BRCMap = try allocator.alloc(BRCMap, mapCount);
-    defer allocator.free(maps);
-    for (0..mapCount) |i| maps[i] = try BRCMap.init(allocator);
-
-    const cpuCount: usize = @min((try std.Thread.getCpuCount()) - 1, lib.getAffinityCpuCount());
-    var pool: std.Thread.Pool = undefined;
-    try pool.init(.{ .allocator = allocator, .n_jobs = cpuCount });
-    var wg: std.Thread.WaitGroup = .{};
-    var blockId: usize = 0;
-    while (reader.next()) |block| : (blockId += 1) {
-        std.debug.assert(block.len <= blocksize);
-        std.debug.assert(block[0] != '\n');
-        std.debug.assert(block[block.len - 1] != '\n');
-        if (reader.remain() == 0) {
-            parseBlockUnmanaged(&maps[blockId], block);
-        } else {
-            pool.spawnWg(&wg, parseBlockUnmanaged, .{ &maps[blockId], block });
-        }
-    }
-    wg.wait();
-
-    // Merge maps
-    // TODO Multithread merging maps
-    for (1..maps.len) |mi| {
-        const map: *BRCMap = &maps[mi];
-        for (0..map.keys.len) |ki| {
-            if (map.keys[ki].notEmpty()) {
-                try maps[0].addOrMerge(map.keys[ki].get(), &map.values[ki]);
-            }
-        }
-        map.deinit();
-    }
-    defer maps[0].deinit();
-    try printBrcMap(&maps[0]);
-
-    defer reader.deinit();
-}
-
-inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
-    const blocksize: comptime_int = 1024 * 1024 * 1024;
-    const BlockReader: type = lib.MappedFileBlockReader(blocksize, '\n');
+    const BlockReader: type = lib.BlockReader(blocksize, '\n');
     const ThreadContext = struct {
         const Self = @This();
         hasData: ResetEvent,
         block: []const u8,
         map: BRCMapUnmanaged,
 
-        fn init(self: *Self) !void {
+        fn init(self: *Self, alc: std.mem.Allocator) !void {
             self.hasData = .{};
             self.block.ptr = @ptrFromInt(@sizeOf(u8));
             self.block.len = 0;
-            self.map = try BRCMapUnmanaged.init(allocator);
+            self.map = try BRCMapUnmanaged.init(alc);
         }
-        fn initMany(count: usize) ![]Self {
-            const result: []Self = try allocator.alloc(Self, count);
-            for (0..result.len) |i| try result[i].init();
+        fn initMany(alc: std.mem.Allocator, count: usize) ![]Self {
+            const result: []Self = try alc.alloc(Self, count);
+            for (0..result.len) |i| try result[i].init(alc);
             return result;
         }
-        fn deinit(self: *Self) void {
-            self.map.deinit(allocator);
+        fn deinit(self: *Self, alc: std.mem.Allocator) void {
+            self.map.deinit(alc);
         }
 
         fn run(self: *Self) void {
@@ -150,10 +106,9 @@ inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
             self.hasData.set();
         }
     };
-    var reader: BlockReader = try BlockReader.init(path); // deinit is at the end of the function
-
-    const maxBlockCount = getMaxBlockCount(blocksize, reader.fileSize());
-    const contexts: []ThreadContext = try ThreadContext.initMany(maxBlockCount);
+    var reader: BlockReader = BlockReader.init(content); // deinit is at the end of the function
+    const maxBlockCount = getMaxBlockCount(blocksize, content.len);
+    const contexts: []ThreadContext = try ThreadContext.initMany(allocator, maxBlockCount);
     defer allocator.free(contexts);
     // Start the tasks
     for (contexts) |*ctx| (try std.Thread.spawn(.{}, ThreadContext.run, .{ctx})).detach();
@@ -177,94 +132,20 @@ inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
 
     // merging maps
     const finalcontext: *ThreadContext = &contexts[0];
-    defer finalcontext.deinit();
-    const finalmap: *BRCMapUnmanaged = &finalcontext.map;
-    for (contexts[1..]) |*ctx| {
-        if (ctx.block.len > 0) finalmap.merge(&ctx.map);
-        ctx.deinit();
-    }
-
-    try printBrcMapUnmanaged(allocator, finalmap);
-    defer reader.deinit();
-}
-
-fn parseFile_v3(allocator: std.mem.Allocator, path: []const u8) !void {
-    var mappedFile = try lib.MappedFile.init(path);
-    defer mappedFile.deinit();
-
-    const ThreadContext = struct {
-        const Self = @This();
-        finished: ResetEvent,
-        blockptr: ?[*]const u8,
-        blocklen: usize,
-        map: BRCMapUnmanaged,
-
-        fn init(self: *Self, alc: std.mem.Allocator) !void {
-            self.finished = .{};
-            self.blockptr = null;
-            self.blocklen = 0;
-            self.map = try BRCMapUnmanaged.init(alc);
-        }
-        fn initMany(count: usize, alc: std.mem.Allocator) ![]Self {
-            const result: []Self = try alc.alloc(Self, count);
-            for (result) |*ctx| try ctx.init(alc);
-            return result;
-        }
-        fn deinit(self: *Self, alc: std.mem.Allocator) void {
-            self.map.deinit(alc);
-        }
-
-        fn getBlock(taskIndex: usize, blocksize: usize, bytes: []const u8) []const u8 {
-            var start: usize = taskIndex * blocksize;
-            if (start >= bytes.len) return std.mem.zeroes([]const u8);
-            startLoop: while (start > 0) {
-                if (bytes[start] == '\n') {
-                    start += 1;
-                    break :startLoop;
-                }
-                start -= 1;
-            }
-            var end: usize = @min(bytes.len, (taskIndex + 1) * blocksize);
-            if (end < bytes.len) {
-                while (end > start and bytes[end] != '\n') : (end -= 1) {}
-            }
-            return bytes[start..end];
-        }
-
-        fn run(self: *Self, taskIndex: usize, blocksize: usize, bytes: []const u8) void {
-            defer self.finished.set();
-            const block = getBlock(taskIndex, blocksize, bytes);
-            if (block.len > 0) {
-                self.blocklen = @intCast(block.len);
-                self.blockptr = block.ptr;
-                std.debug.assert(block[0] != '\n');
-                std.debug.assert(block[block.len - 1] != '\n');
-                parseBlockUnmanaged(&self.map, block);
-            }
-        }
-    };
-
-    const threadCount: usize = lib.getAffinityCpuCount();
-    const blocksize: usize = try std.math.divCeil(usize, mappedFile.slice.len, threadCount);
-
-    const contexts: []ThreadContext = try ThreadContext.initMany(threadCount, allocator);
-    defer allocator.free(contexts);
-    // Start the tasks
-    for (contexts, 0..contexts.len) |*ctx, id| (try std.Thread.spawn(.{}, ThreadContext.run, .{ ctx, id, blocksize, mappedFile.slice })).detach();
-
-    // wait for all contexts to finish
-    for (contexts) |*ctx| ctx.finished.wait();
-
-    // merging maps
-    const finalcontext: *ThreadContext = &contexts[0];
     defer finalcontext.deinit(allocator);
     const finalmap: *BRCMapUnmanaged = &finalcontext.map;
     for (contexts[1..]) |*ctx| {
-        if (ctx.blocklen > 0) finalmap.merge(&ctx.map);
+        if (ctx.block.len > 0) finalmap.merge(&ctx.map);
         ctx.deinit(allocator);
     }
 
     try printBrcMapUnmanaged(allocator, finalmap);
+}
+
+inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
+    var mappedFile: lib.MappedFile = lib.MappedFile.init(path);
+    defer mappedFile.deinit();
+    try parseFileContent(allocator, mappedFile.slice);
 }
 
 fn printBrcMapUnmanaged(allocator: std.mem.Allocator, map: *BRCMapUnmanaged) !void {
@@ -345,12 +226,13 @@ pub fn main() !void {
     defer std.process.argsFree(static_allocator, args);
     const filepath = if (args.len == 2) args[1] else debugfilepath;
     // try bench(filepath);
-    try benchmarkReadingMany(filepath);
+    //try benchmarkReading(8 * 1024 * 1024, filepath);
     //try parseFile(static_allocator, filepath);
     //try debug();
     //try debug_hash();
     //try benchmarkLineSplitter();
-    _ = &filepath;
+    try benchmarkParsing(filepath);
+    //_ = &filepath;
 }
 
 fn debug() !void {
@@ -505,8 +387,45 @@ fn benchmarkReading(blockSize: usize, filepath: []const u8) !void {
 
     var ctx: Context = try Context.init(filepath, blockSize);
     defer ctx.deinit();
-    const result = lib.benchmarking.runBenchmark(Context, .{ .minNs = 30 * std.time.ns_per_s }, Context.run, static_allocator, ctx);
+    const result = lib.benchmarking.runBenchmark(Context, .{}, Context.run, static_allocator, ctx);
 
     try stdout.print("\rbenchmarkReading({Bi:>6}, \"{s}\"): {f}\n", .{ blockSize, filepath, result });
     try stdout.flush();
+}
+
+fn benchmarkParsing(path: []const u8) !void {
+    const allocator: std.mem.Allocator = static_allocator;
+    const file = try std.fs.cwd().openFile(path, .{});
+    defer file.close();
+    const stat = try file.stat();
+    const Context = struct {
+        const Self = @This();
+        content: []const u8,
+
+        pub fn run(self: Self) void {
+            parseFileContent(static_allocator, self.content) catch |err| {
+                std.log.err("{any}{any}", .{ err, @errorReturnTrace() });
+            };
+        }
+    };
+
+    const content: []u8 = try std.heap.page_allocator.alloc(u8, stat.size);
+    defer std.heap.page_allocator.free(content);
+    const readSize = try file.readAll(content[0..]);
+    std.debug.assert(readSize <= content.len);
+    const ctx: Context = .{ .content = content[0..readSize] };
+
+    const result = lib.benchmarking.runBenchmark(
+        Context,
+        .{ .batchSize = 1, .minBatches = 1, .minNs = 15 * std.time.s_per_min * std.time.ns_per_s },
+        Context.run,
+        allocator,
+        ctx,
+    );
+
+    var stderr_buffer: [4096]u8 = undefined;
+    var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
+    const stderr = &stderr_writer.interface;
+    try stderr.print("\rbenchmarkReading(\"{s}\"): {f}\n", .{ path, result });
+    try stderr.flush();
 }
