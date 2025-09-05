@@ -37,6 +37,11 @@ test sorting {
     _ = sorting;
 }
 
+pub const benchmarking = @import("benchmarking.zig");
+test benchmarking {
+    _ = benchmarking;
+}
+
 pub const LineSplitter = @import("LineSplitter.zig");
 test LineSplitter {
     const delimiter = '\n';

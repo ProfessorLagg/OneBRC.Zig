@@ -1,7 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
-
 /// Uses `mask` to transfer either contiguous or non-contiguous bits in `x` to contiguous low order bit positions in the result.
 /// For each bit set in `mask`, extracts the corresponding bits `x` and writes them into contiguous lower bits of the result.
 /// The remaining upper bits of the result are zeroed.
@@ -47,5 +46,43 @@ pub inline fn sub_direct(dst: *usize, src: usize) void {
         : [dst] "{rdi}" (dst),
           [src] "{rax}" (src),
         : "rax"
+    );
+}
+
+/// Performs a serializing operation on all load-from-memory and store-to-memory instructions that were issued prior the MFENCE instruction
+pub inline fn mfence() void {
+    asm volatile ("mfence");
+}
+
+/// Performs a serializing operation on all load-from-memory instructions that were issued prior the LFENCE instruction
+pub inline fn lfence() void {
+    asm volatile ("lfence");
+}
+
+/// Returns current TSC. Syncronizes before and after by using mfence and lfence
+pub fn rdtsc_fenced() u64 {
+    return asm volatile ( // NO FOLD
+        \\mfence
+        \\lfence
+        \\rdtsc
+        \\lfence
+        \\shl , %rdx
+        \\or %rax, %rdx
+        \\lfence
+        : [ret] "={rax}" (-> u64),
+        :
+        : "rax", "rdx"
+    );
+}
+
+/// Returns current TSC
+pub fn rdtsc() u64 {
+    return asm volatile ( // NO FOLD
+        \\rdtsc
+        \\shl $32, %rdx
+        \\or %rdx, %rax
+        : [ret] "={rax}" (-> u64),
+        :
+        : "rax", "rdx"
     );
 }

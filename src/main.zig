@@ -348,9 +348,10 @@ pub fn main() !void {
     defer std.process.argsFree(static_allocator, args);
     const filepath = if (args.len == 2) args[1] else debugfilepath;
     //try bench(filepath);
-    try parseFile(static_allocator, filepath);
+    //try parseFile(static_allocator, filepath);
     //try debug();
     //try debug_hash();
+    try benchmarkLineSplitter();
     _ = &filepath;
 }
 
@@ -436,5 +437,37 @@ fn debug_hash() !void {
         count,
         capacity,
         @round(loadFactor * 100.0) / 100.0,
+    });
+}
+
+fn benchmarkLineSplitter() !void {
+    const allocator: std.mem.Allocator = static_allocator;
+
+    const Context = struct {
+        const Self = @This();
+        const cities = @embedFile("cities.txt");
+        splitter: lib.LineSplitter,
+
+        pub fn run(_: void) void {
+            var splitter: lib.LineSplitter = .{ .buffer = cities[0..] };
+            while (splitter.next()) |line| {
+                _ = &line;
+            }
+        }
+    };
+
+    var result = lib.benchmarking.runBenchmark(void, .{
+        .batchSize = 1,
+        .minBatches = 1,
+        .minNs = 600 * std.time.ns_per_s,
+    }, Context.run, allocator, void{});
+    defer result.deinit(allocator);
+
+    const stdout = std.io.getStdOut().writer();
+    try stdout.print("count: {d}, time: {}, mean: {d}/run, standard deviation: {d}", .{
+        result.getCount(),
+        std.fmt.fmtDuration(result.getSum()),
+        std.fmt.fmtDuration(@intFromFloat(@round(result.getMean()))),
+        std.fmt.fmtDuration(@intFromFloat(@round(result.getStandardDeviation()))),
     });
 }
