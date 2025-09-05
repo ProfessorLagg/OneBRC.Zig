@@ -33,7 +33,7 @@ pub inline fn add_direct(dst: *usize, src: usize) void {
         :
         : [dst] "{rdi}" (dst),
           [src] "{rax}" (src),
-        : "rax"
+        : .{ .rcx = true }
     );
 }
 
@@ -45,8 +45,7 @@ pub inline fn sub_direct(dst: *usize, src: usize) void {
         :
         : [dst] "{rdi}" (dst),
           [src] "{rax}" (src),
-        : "rax"
-    );
+        : .{ .rax = true });
 }
 
 /// Performs a serializing operation on all load-from-memory and store-to-memory instructions that were issued prior the MFENCE instruction
@@ -71,8 +70,7 @@ pub fn rdtsc_fenced() u64 {
         \\lfence
         : [ret] "={rax}" (-> u64),
         :
-        : "rax", "rdx"
-    );
+        : .{ .rax = true, .rdx = true });
 }
 
 /// Returns current TSC
@@ -83,6 +81,5 @@ pub fn rdtsc() u64 {
         \\or %rdx, %rax
         : [ret] "={rax}" (-> u64),
         :
-        : "rax", "rdx"
-    );
+        : .{ .rax = true, .rdx = true });
 }

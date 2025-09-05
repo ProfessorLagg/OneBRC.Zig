@@ -314,7 +314,12 @@ fn printBrcMapUnmanaged(allocator: std.mem.Allocator, map: *BRCMapUnmanaged) !vo
     }
     buf[0] = '}';
     buf = buf[1..];
-    const stdout = std.io.getStdOut();
+
+    // TODO Upgrade to just using stdout
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    const stdout = &stdout_writer.interface;
+    defer stdout.flush() catch unreachable;
     _ = try stdout.write(rawbuf[0..(rawbuf.len - buf.len)]);
 }
 

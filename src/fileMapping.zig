@@ -1,6 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std");
-const c = @import("cImport.zig");
+const c = @import("cImport.zig").c;
 
 const fs = std.fs;
 const File = fs.File;

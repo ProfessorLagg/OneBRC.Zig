@@ -1,7 +1,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
-pub const c = @import("cImport.zig");
+pub const c = @import("cImport.zig").c;
 
 const fileMapping = @import("fileMapping.zig");
 pub const MappedFile = fileMapping.MappedFile;
@@ -229,8 +229,7 @@ fn find_split_index_asm(line: []const u8) usize {
         : [ret] "={eax}" (-> u32),
         : [p] "{rsi}" (line.ptr),
           [left] "{rcx}" (left),
-        : "ebx", "r8d"
-    );
+        : .{ .ebx = true, .r8d = true });
     return r + left;
 }
 
