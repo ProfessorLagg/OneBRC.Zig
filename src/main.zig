@@ -276,6 +276,14 @@ fn printBrcMapUnmanaged(allocator: std.mem.Allocator, map: *BRCMapUnmanaged) !vo
         pub fn compareR(a: *const Self, b: *const Self) sorting.CompareResult {
             return @call(.always_inline, sorting.compareStrings, .{ a.key, b.key });
         }
+        pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+            try writer.print("{s}={d:.1}/{d:.1}/{d:.1}", .{
+                self.key,
+                self.val.minF(),
+                self.val.meanF(),
+                self.val.maxF(),
+            });
+        }
     };
     const entries: []Entry = try allocator.alloc(Entry, map.count);
     defer allocator.free(entries);
@@ -296,31 +304,18 @@ fn printBrcMapUnmanaged(allocator: std.mem.Allocator, map: *BRCMapUnmanaged) !vo
     var buf: []u8 = rawbuf[0..];
     buf[0] = '{';
     buf = buf[1..];
-    var rem: usize = map.count;
-    for (entries) |e| {
-        if (rem < entries.len) {
+    for (0..entries.len) |i| {
+        if (i > 0) {
             buf[0] = ',';
             buf[1] = ' ';
             buf = buf[2..];
         }
-        const record = try std.fmt.bufPrint(buf, "{s}={d:.1}/{d:.1}/{d:.1}", .{
-            e.key,
-            e.val.minF(),
-            e.val.meanF(),
-            e.val.maxF(),
-        });
+        const record = try std.fmt.bufPrint(buf, "{f}", .{entries[i]});
         buf = buf[record.len..];
-        rem -= 1;
     }
     buf[0] = '}';
     buf = buf[1..];
-
-    // TODO Upgrade to just using stdout
-    var stdout_buffer: [1024]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
-    const stdout = &stdout_writer.interface;
-    defer stdout.flush() catch unreachable;
-    _ = try stdout.write(rawbuf[0..(rawbuf.len - buf.len)]);
+    _ = try std.fs.File.stdout().write(rawbuf[0..(rawbuf.len - buf.len)]);
 }
 
 fn printBrcMap(map: *const BRCMap) !void {
