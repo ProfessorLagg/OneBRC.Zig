@@ -10,6 +10,7 @@ test fileMapping {
 }
 
 const blockReaderNs = @import("BlockReader.zig");
+pub const MappedFileBlockReader = blockReaderNs.MappedFileBlockReader;
 pub const BlockReader = blockReaderNs.BlockReader;
 test blockReaderNs {
     _ = blockReaderNs;

@@ -69,8 +69,8 @@ inline fn getMaxBlockCount(comptime maxBlockSize: comptime_int, fileSize: u64) u
 
 inline fn parseFile_v1(allocator: std.mem.Allocator, path: []const u8) !void {
     const blocksize: comptime_int = 1024 * 1024 * 1024;
-    const BlockReader: type = lib.BlockReader(blocksize, '\n');
-    var reader: BlockReader = try BlockReader.init(path); // deinit is at the end of the function
+    const MappedFileBlockReader: type = lib.MappedFileBlockReader(blocksize, '\n');
+    var reader: MappedFileBlockReader = try MappedFileBlockReader.init(path); // deinit is at the end of the function
 
     const mapCount = getMaxBlockCount(blocksize, reader.fileSize());
     const maps: []BRCMap = try allocator.alloc(BRCMap, mapCount);
@@ -113,7 +113,7 @@ inline fn parseFile_v1(allocator: std.mem.Allocator, path: []const u8) !void {
 
 inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
     const blocksize: comptime_int = 1024 * 1024 * 1024;
-    const BlockReader: type = lib.BlockReader(blocksize, '\n');
+    const BlockReader: type = lib.MappedFileBlockReader(blocksize, '\n');
     const ThreadContext = struct {
         const Self = @This();
         hasData: ResetEvent,
@@ -348,10 +348,10 @@ pub fn main() !void {
     defer std.process.argsFree(static_allocator, args);
     const filepath = if (args.len == 2) args[1] else debugfilepath;
     //try bench(filepath);
-    //try parseFile(static_allocator, filepath);
+    try parseFile(static_allocator, filepath);
     //try debug();
     //try debug_hash();
-    try benchmarkLineSplitter();
+    //try benchmarkLineSplitter();
     _ = &filepath;
 }
 
