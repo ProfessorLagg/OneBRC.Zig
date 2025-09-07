@@ -2,6 +2,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 
 pub const c = @import("cImport.zig").c;
+pub const _asm = @import("_asm.zig");
 
 const fileMapping = @import("fileMapping.zig");
 pub const MappedFile = fileMapping.MappedFile;
@@ -56,7 +57,7 @@ test LineSplitter {
         std.testing.expectEqual(std_item, new_item) catch |err| {
             const std_str = if (std_item == null) "null"[0..] else std_item.?;
             const new_str = if (new_item == null) "null"[0..] else new_item.?;
-            std.log.err("Expected \"{s}\", but found \"{s}\"", .{ std.fmt.fmtSliceEscapeLower(std_str), std.fmt.fmtSliceEscapeLower(new_str) });
+            std.log.err("Expected \"{any}\", but found \"{any}\"", .{ std.ascii.hexEscape(std_str, std.fmt.Case.lower), std.ascii.hexEscape(new_str, std.fmt.Case.lower) });
 
             return err;
         };
@@ -92,14 +93,12 @@ test brcIntParse {
 }
 
 pub inline fn splitScalarToArray(comptime T: type, buffer: []const T, delimiter: T, allocator: std.mem.Allocator) ![][]const T {
-    var list = std.ArrayList([]const T).init(allocator);
-    defer list.deinit();
+    var list = std.ArrayList([]const T){};
+    defer list.deinit(allocator);
     var iter = std.mem.splitScalar(T, buffer, delimiter);
-    while (iter.next()) |item| try list.append(item);
-    return try list.toOwnedSlice();
+    while (iter.next()) |item| try list.append(allocator, item);
+    return try list.toOwnedSlice(allocator);
 }
-
-const _asm = @import("_asm.zig");
 
 pub fn eqlBytes(a: []const u8, b: []const u8) bool {
     if (a.len != b.len) return false;

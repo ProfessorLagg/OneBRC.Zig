@@ -279,11 +279,11 @@ test "magicnumber.asm" {
         }
 
         fn splitScalarToArray(comptime T: type, buffer: []const T, delimiter: T, allocator: std.mem.Allocator) ![][]const T {
-            var list = std.ArrayList([]const T).init(allocator);
-            defer list.deinit();
+            var list = std.ArrayList([]const T){};
+            defer list.deinit(allocator);
             var iter = std.mem.splitScalar(T, buffer, delimiter);
-            while (iter.next()) |item| try list.append(item);
-            return try list.toOwnedSlice();
+            while (iter.next()) |item| try list.append(allocator, item);
+            return try list.toOwnedSlice(allocator);
         }
     };
 

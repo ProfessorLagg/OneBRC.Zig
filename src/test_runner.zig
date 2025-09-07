@@ -8,7 +8,9 @@ const _text_fail = _esc ++ "1;31m";
 const _text_pass = _esc ++ "1;32m";
 const _move_up_1 = _esc ++ "A";
 pub fn main() !void {
-    const out = std.io.getStdOut().writer();
+    var out_buffer: [4096]u8 = undefined;
+    var out_writer = std.fs.File.stdout().writer(&out_buffer);
+    const out = &out_writer.interface;
 
     var count_test: usize = 0;
     var count_pass: usize = 0;
@@ -18,18 +20,25 @@ pub fn main() !void {
         count_test += 1;
         // try std.fmt.format(out, "{s}TEST{s}    {s}\n", .{ _text_test, _text_reset, t.name });
         t.func() catch |err| {
-            try std.fmt.format(out, _text_fail ++ "FAIL\t" ++ _text_reset ++ "{s}\n", .{ t.name });
-            try std.fmt.format(out, "{any}\n{any}\n", .{ err, @errorReturnTrace() });
+            try forcePrint(out, _text_fail ++ "FAIL\t" ++ _text_reset ++ "{s}\n", .{t.name});
+
+            try forcePrint(out, "{any}\n{any}\n", .{ err, @errorReturnTrace() });
             count_fail += 1;
             continue;
         };
-        try std.fmt.format(out, _text_pass ++ "PASS\t" ++ _text_reset ++ "{s}\n", .{ t.name });
+        try forcePrint(out, _text_pass ++ "PASS\t" ++ _text_reset ++ "{s}\n", .{t.name});
         count_pass += 1;
     }
 
-    try std.fmt.format(out, "\n=== SUMMARY ===\n", .{});
-    try std.fmt.format(out, "{s}PASSED{s}\t{d}/{d}\n", .{ _text_pass, _text_reset, count_pass, count_test });
-    if (count_fail > 0) try std.fmt.format(out, "{s}FAILED{s}\t{d}/{d}\n", .{ _text_fail, _text_reset, count_fail, count_test });
+    try forcePrint(out, "\n=== SUMMARY ===\n", .{});
+    try forcePrint(out, "{s}PASSED{s}\t{d}/{d}\n", .{ _text_pass, _text_reset, count_pass, count_test });
+    if (count_fail > 0) try forcePrint(out, "{s}FAILED{s}\t{d}/{d}\n", .{ _text_fail, _text_reset, count_fail, count_test });
+}
+
+fn forcePrint(w: *std.io.Writer, comptime fmt: []const u8, args: anytype) !void {
+    try w.flush();
+    try w.print(fmt, args);
+    try w.flush();
 }
 
 fn setCursorLineStart(writer: anytype) !void {
