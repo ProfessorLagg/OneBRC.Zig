@@ -9,7 +9,7 @@ export fn pext32(x: u32, mask: u32) u32 {
         \\ pext %[mask], %[x], %[r]
         : [r] "={eax}" (-> u32),
         : [x] "{ebx}" (x),
-          [mask] "{exc}" (mask),
+          [mask] "{ecx}" (mask),
     );
 }
 
@@ -33,7 +33,6 @@ pub inline fn add_direct(dst: *usize, src: usize) void {
         :
         : [dst] "{rdi}" (dst),
           [src] "{rax}" (src),
-        : .{ .rcx = true }
     );
 }
 
@@ -45,17 +44,39 @@ pub inline fn sub_direct(dst: *usize, src: usize) void {
         :
         : [dst] "{rdi}" (dst),
           [src] "{rax}" (src),
-        : .{ .rax = true });
+    );
 }
 
-/// Performs a serializing operation on all load-from-memory and store-to-memory instructions that were issued prior the MFENCE instruction
+pub noinline fn store_direct(dst: *usize, src: usize) void {
+    return asm volatile (
+        \\ mov %rax, (%rdi)
+        :
+        : [dst] "{rdi}" (dst),
+          [src] "{rax}" (src),
+    );
+}
+
+pub noinline fn load_direct(src: *const usize) usize {
+    return asm volatile (
+        \\ mov (%rdi), %rax
+        : [ret] "={rax}" (-> usize),
+        : [src] "{rdi}" (src),
+    );
+}
+
+/// Performs a serializing operation on all load-from-memory and store-to-memory instructions that were issued prior the mfence
 pub inline fn mfence() void {
     asm volatile ("mfence");
 }
 
-/// Performs a serializing operation on all load-from-memory instructions that were issued prior the LFENCE instruction
+/// Performs a serializing operation on all load-from-memory instructions that were issued prior the lfence
 pub inline fn lfence() void {
     asm volatile ("lfence");
+}
+
+/// Performs a serializing operation on all store-to-memory instructions that were issued prior the sfence
+pub inline fn sfence() void {
+    asm volatile ("sfence");
 }
 
 /// Returns current TSC. Syncronizes before and after by using mfence and lfence

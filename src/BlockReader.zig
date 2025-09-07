@@ -60,21 +60,20 @@ pub fn BlockReader(
 
         /// reads the next block if possible
         pub fn next(self: *Self) ?[]const u8 {
-            if (self.left < self.buffer.len) {
-                var length: usize = 0;
-                var right: usize = self.left + blocksize;
-                const offset: usize = self.left;
-                if (right >= self.buffer.len) {
-                    length = self.buffer.len - self.left;
-                    self.left = self.buffer.len + 1;
-                } else {
-                    while (self.buffer[right] != delimiter) right -= 1;
-                    length = right - self.left;
-                    self.left = right + 1;
-                }
-                return self.buffer[offset..(offset + length)];
+            if (self.left >= self.buffer.len) return null;
+
+            var length: usize = 0;
+            var right: usize = @min(self.left + blocksize, self.buffer.len);
+            const offset: usize = self.left;
+            if (right == self.buffer.len) {
+                self.left = self.buffer.len;
+                return self.buffer[offset..right];
             }
-            return null;
+            
+            while (self.buffer[right] != delimiter) right -= 1;
+            length = right - self.left;
+            self.left = right + 1;
+            return self.buffer[offset..(offset + length)];
         }
 
         /// remaining size not yet read from the mapped file
