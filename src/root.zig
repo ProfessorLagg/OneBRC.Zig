@@ -207,31 +207,6 @@ fn getCurrentProcessAffinity_linux() usize {
     @compileError("WiP");
 }
 
-fn find_split_index_asm(line: []const u8) usize {
-    @setRuntimeSafety(false);
-    const left: usize = line.len - @min(line.len, 6);
-    const r = asm volatile (
-        \\add %rcx, %rsi # Add left to line.ptr
-        \\mov (%rsi), %ebx # load 4 bytes from line[left] into ebx
-        \\xor $0x000000003b3b3b3b, %ebx # XOR ebx with mask
-        \\shr $8, %ebx # skip the 4th byte
-        \\mov $2, %r8d 
-        \\cmp $0, %bl 
-        \\cmove %r8d, %eax # if %bl == 0 then set %eax = 2 
-        \\shr $8, %ebx # go to the next byte
-        \\mov $1, %r8d 
-        \\cmp $0, %bl 
-        \\cmove %r8d, %eax # if %bl == 0 then set %eax = 1
-        \\xor %r9d , %r9d # set %r9d == 0
-        \\cmp $0, %bh
-        \\cmove %r9d, %eax # if %bh == 0 then set %eax = 0
-        : [ret] "={eax}" (-> u32),
-        : [p] "{rsi}" (line.ptr),
-          [left] "{rcx}" (left),
-        : .{ .ebx = true, .r8d = true });
-    return r + left;
-}
-
 fn find_split_index_old(line: []const u8) usize {
     @setRuntimeSafety(false);
     const left: usize = line.len - @min(line.len, 6);
@@ -302,3 +277,36 @@ test find_split_index {
         try std.testing.expectEqual(std.mem.indexOfScalar(u8, line3, ';'), find_split_index(line3));
     }
 }
+
+pub const windows = struct {
+    pub fn GetCurrentProcessToken() !c.HANDLE {
+        var result: c.HANDLE = null;
+        if (c.OpenProcessToken(c.GetCurrentProcess(), c.TOKEN_ADJUST_PRIVILEGES, &result) == 0) return std.os.windows.unexpectedError(std.os.windows.GetLastError());
+        return result;
+    }
+    pub fn SetPrivilege(hToken: c.HANDLE, lpszPrivilege: c.LPCSTR, enable: bool) !void {
+        var luid: c.LUID = undefined;
+        var tp: c.TOKEN_PRIVILEGES = .{};
+
+        if (c.LookupPrivilegeValueA(null, lpszPrivilege, &luid) == 0) return std.os.windows.unexpectedError(std.os.windows.GetLastError());
+
+        tp.PrivilegeCount = 1;
+        tp.Privileges[0].Luid = luid;
+        tp.Privileges[0].Attributes = if (enable) c.SE_PRIVILEGE_ENABLED else 0;
+
+        if (c.AdjustTokenPrivileges(hToken, 1, &tp, @sizeOf(c.TOKEN_PRIVILEGES), null, null) == 0) return std.os.windows.unexpectedError(std.os.windows.GetLastError());
+    }
+    pub fn SetPrivilegeCurrentProcess(lpszPrivilege: c.LPCSTR, enable: bool) !void {
+        const hToken: c.HANDLE = try GetCurrentProcessToken();
+        defer _ = c.CloseHandle(hToken);
+        return SetPrivilege(hToken, lpszPrivilege, enable);
+    }
+
+    pub fn disable_file_cache() !void {
+        comptime {
+            if (builtin.target.os.tag != .windows) @compileError("This only works on windows");
+        }
+        try SetPrivilegeCurrentProcess(c.SE_INCREASE_QUOTA_NAME, true);
+        if (c.SetSystemFileCacheSize(0, 0, c.FILE_CACHE_MAX_HARD_ENABLE | c.FILE_CACHE_MIN_HARD_ENABLE) == 0) return std.os.windows.unexpectedError(std.os.windows.GetLastError());
+    }
+};

@@ -142,8 +142,131 @@ inline fn parseFileContent(allocator: std.mem.Allocator, content: []const u8) !v
     try printBrcMapUnmanaged(allocator, finalmap);
 }
 
-inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
-    var mappedFile: lib.MappedFile = lib.MappedFile.init(path);
+inline fn parseFile(allocator: std.mem.Allocator, filepath: []const u8) !void {
+    const readsize: comptime_int = comptime 8 * 1024 * 1024;
+    const blocksize: comptime_int = comptime 1024 * 1024 * 1024;
+    const BlockReader = lib.BlockReader(blocksize, '\n');
+    const Alignment = std.mem.Alignment;
+    const ThreadContext = struct {
+        fn run(map: *BRCMapUnmanaged, lock: *std.Thread.Mutex, block: []const u8, free: ?[]const u8) void {
+            lock.lock();
+            defer lock.unlock();
+            parseBlockUnmanaged(map, block);
+            if (free != null) std.heap.page_allocator.free(free.?);
+        }
+    };
+    const ReaderContext = struct {
+        const Self = @This();
+        file: std.fs.File,
+        buffer: []align(4096) u8,
+        progress: usize,
+
+        pub fn init(path: []const u8) !Self {
+            const file = try std.fs.cwd().openFile(path, .{});
+            const fileSize: u64 = file.getEndPos() catch (try file.stat()).size;
+            const buffer: []align(4096) u8 = try std.heap.page_allocator.alignedAlloc(u8, Alignment.fromByteUnits(4096), fileSize);
+            @memset(buffer, 0);
+            return Self{
+                .file = file,
+                .buffer = buffer[0..],
+                .progress = 0,
+            };
+        }
+        pub fn deinit(self: *Self) void {
+            std.heap.page_allocator.free(self.buffer);
+            self.file.close();
+        }
+        pub fn read(self: *Self) !void {
+            while (self.progress < self.buffer.len) {
+                const left = self.progress;
+                const right = @min(left + readsize, self.buffer.len);
+                const buf: []u8 = self.buffer[left..right];
+                _ = try self.file.read(buf);
+                lib._asm.lfence();
+                self.progress = right;
+                lib._asm.sfence();
+            }
+        }
+        pub fn run(self: *Self) void {
+            self.read() catch |err| std.debug.panic("{any}{any}", .{ err, @errorReturnTrace() });
+        }
+    };
+    const IteratorContext = struct {
+        const Self = @This();
+        reader: BlockReader,
+
+        pub fn init(buffer: []const u8) Self {
+            return Self{
+                .reader = BlockReader.init(buffer),
+            };
+        }
+        inline fn ensureCanRead(self: *const Self) void {
+            const testIdx: usize = @min(self.reader.left + blocksize, self.reader.buffer.len - 1);
+            const testPtr: *const u8 = &self.reader.buffer[testIdx];
+            var testVal: u8 = 0;
+            while (testVal == 0) {
+                lib._asm.sfence();
+                testVal = lib._asm.load_direct_8(testPtr);
+            }
+        }
+        pub fn next(self: *Self) ?[]const u8 {
+            self.ensureCanRead();
+            return self.reader.next();
+        }
+    };
+
+    const threadCount = lib.getAffinityCpuCount();
+    var pool: std.Thread.Pool = undefined;
+    try pool.init(.{ .allocator = allocator, .n_jobs = threadCount });
+    var wgrp: std.Thread.WaitGroup = .{};
+
+    var reader: ReaderContext = try ReaderContext.init(filepath);
+    defer reader.deinit();
+    pool.spawnWg(&wgrp, ReaderContext.run, .{&reader});
+
+    const maxBlockCount = getMaxBlockCount(blocksize, reader.buffer.len);
+    const maps: []BRCMapUnmanaged = try allocator.alloc(BRCMapUnmanaged, maxBlockCount);
+    defer allocator.free(maps);
+    const locks: []std.Thread.Mutex = try allocator.alloc(std.Thread.Mutex, maxBlockCount);
+    defer allocator.free(locks);
+
+    for (0..maps.len) |i| {
+        maps[i] = try BRCMapUnmanaged.init(allocator);
+        locks[i] = .{};
+    }
+
+    var iter: IteratorContext = IteratorContext{ .reader = BlockReader.init(reader.buffer) };
+    const buffer_ptr_int: usize = @intFromPtr(reader.buffer.ptr);
+
+    var blockId: usize = 0;
+    while (iter.next()) |block| : (blockId += 1) {
+        std.debug.assert(block.len <= blocksize);
+        std.debug.assert(block[0] != '\n');
+        std.debug.assert(block[block.len - 1] != '\n');
+
+        const left_ptr_int: usize = std.mem.Alignment.forward(Alignment.fromByteUnits(4096), @intFromPtr(&block[0]));
+        const right_ptr_int: usize = std.mem.Alignment.backward(Alignment.fromByteUnits(4096), @intFromPtr(&block[block.len - 1]));
+        const left = left_ptr_int - buffer_ptr_int;
+        const right = @min(right_ptr_int - buffer_ptr_int + 1, reader.buffer.len);
+
+        const free = if (left_ptr_int > buffer_ptr_int) reader.buffer[left..right] else null;
+        pool.spawnWg(&wgrp, ThreadContext.run, .{ &maps[blockId], &locks[blockId], block, free });
+    }
+
+    wgrp.wait();
+
+    const finalmap: *BRCMapUnmanaged = &maps[0];
+    defer finalmap.deinit(allocator);
+    for (maps[1..]) |*map| {
+        finalmap.merge(map);
+        map.deinit(allocator);
+    }
+
+    try printBrcMapUnmanaged(allocator, finalmap);
+}
+
+inline fn parseFile_old(allocator: std.mem.Allocator, path: []const u8) !void {
+    var mappedFile: lib.MappedFile = try lib.MappedFile.init(path);
     defer mappedFile.deinit();
     try parseFileContent(allocator, mappedFile.slice);
 }
@@ -202,8 +325,10 @@ inline fn bench(filepath: []const u8) !void {
     var stderr_buffer: [1024]u8 = undefined;
     var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
     const stderr = &stderr_writer.interface;
+    defer stderr.flush() catch unreachable;
 
     try stderr.print("Parsing file: {s}\n", .{filepath});
+    try stderr.flush();
 
     const fileSize = (try (try std.fs.cwd().openFile(filepath, .{})).stat()).size;
     var timer = try std.time.Timer.start();
@@ -225,18 +350,16 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(static_allocator);
     defer std.process.argsFree(static_allocator, args);
     const filepath = if (args.len == 2) args[1] else debugfilepath;
-    // try bench(filepath);
+
+    //try bench(filepath);
     //try benchmarkReading(8 * 1024 * 1024, filepath);
-    //try parseFile(static_allocator, filepath);
+    try parseFile_old(static_allocator, filepath);
     //try debug();
     //try debug_hash();
     //try benchmarkLineSplitter();
     // try benchmarkParsing(filepath);
-    debugProgressiveBlockReader(filepath) catch |err| {
-        std.log.err("{any}{any}", .{ err, @errorReturnTrace() });
-        return err;
-    };
-    //_ = &filepath;
+    // try debugProgressiveBlockReader(filepath);
+    _ = &filepath;
 }
 
 fn debug() !void {
@@ -334,16 +457,22 @@ fn debugProgressiveBlockReader(filepath: []const u8) !void {
         const Self = @This();
         allocator: std.mem.Allocator,
         file: std.fs.File,
-        buffer: []u8,
+        buffer: []align(4096) u8,
         progress: usize,
 
         pub fn init(allocator: std.mem.Allocator, path: []const u8) !Self {
             const file = try std.fs.cwd().openFile(path, .{});
             const fileSize: u64 = file.getEndPos() catch (try file.stat()).size;
+            const buffer: []align(4096) u8 = try allocator.alignedAlloc(u8, Alignment.fromByteUnits(4096), fileSize);
+            // @memset(buffer, 0);
+            if (builtin.mode == .Debug) {
+                std.debug.print("Asserting that buffer is zeroed\n", .{});
+                for (buffer) |byte| if (byte != 0) return error.NotZeroed;
+            }
             return Self{
                 .allocator = allocator,
                 .file = file,
-                .buffer = try allocator.alignedAlloc(u8, Alignment.fromByteUnits(4096), fileSize),
+                .buffer = buffer[0..],
                 .progress = 0,
             };
         }
@@ -354,15 +483,15 @@ fn debugProgressiveBlockReader(filepath: []const u8) !void {
 
         pub fn read(self: *Self) !void {
             const start = std.time.nanoTimestamp();
+            std.debug.print("begun reading {0Bi:.3} ({0d} bytes)\n", .{self.buffer.len});
             while (self.progress < self.buffer.len) {
                 const left = self.progress;
                 const right = @min(left + readsize, self.buffer.len);
                 const buf: []u8 = self.buffer[left..right];
                 _ = try self.file.read(buf);
-                lib._asm.mfence();
+                lib._asm.lfence();
                 self.progress = right;
-                lib._asm.mfence();
-                // @atomicStore(@TypeOf(self.progress), &self.progress, right, .release);
+                lib._asm.sfence();
             }
             const end = std.time.nanoTimestamp();
             const dur: u64 = @truncate(@abs(start - end));
@@ -371,12 +500,6 @@ fn debugProgressiveBlockReader(filepath: []const u8) !void {
             const bytes_per_sec_f: f64 = bytes_f / s_f;
             const bytes_per_sec: u64 = @intFromFloat(@round(bytes_per_sec_f));
             std.debug.print("finished reading {0Bi:.3} ({0d} bytes) in {1D} | {2Bi:.3}/s\n", .{ self.buffer.len, dur, bytes_per_sec });
-        }
-
-        pub fn getInUse(self: *const Self) []const u8 {
-            const P = @atomicLoad(usize, &self.progress, .acquire);
-            const right = @min(P + 1, self.buffer.len);
-            return self.buffer[0..right];
         }
 
         pub fn run(self: *Self) void {
@@ -395,10 +518,24 @@ fn debugProgressiveBlockReader(filepath: []const u8) !void {
             };
         }
 
-        pub fn next(self: *Self) ?[]const u8 {
+        pub fn next_old(self: *Self) ?[]const u8 {
             const min_right = @min(self.reader.left + blocksize, self.reader.buffer.len);
             var cur_right: usize = @atomicLoad(usize, self.progress, .acquire);
             while (cur_right < min_right) : (cur_right = @atomicLoad(usize, self.progress, .acquire)) std.Thread.yield() catch continue;
+            return self.reader.next();
+        }
+
+        inline fn ensureRead(self: *const Self) void {
+            const testIdx: usize = @min(self.reader.left + blocksize, self.reader.buffer.len - 1);
+            const testPtr: *const u8 = &self.reader.buffer[testIdx];
+            var testVal: u8 = 0;
+            while (testVal == 0) {
+                lib._asm.sfence();
+                testVal = lib._asm.load_direct_8(testPtr);
+            }
+        }
+        pub fn next(self: *Self) ?[]const u8 {
+            self.ensureRead();
             return self.reader.next();
         }
     };
@@ -410,23 +547,32 @@ fn debugProgressiveBlockReader(filepath: []const u8) !void {
     var iter: BlockIterator = BlockIterator.init(reader.buffer[0..], &reader.progress);
     var blockId: usize = 0;
 
-    // const buffer_ptr_int: usize = @intFromPtr(reader.buffer.ptr);
+    const buffer_ptr_int: usize = @intFromPtr(reader.buffer.ptr);
+    const start = std.time.nanoTimestamp();
     while (iter.next()) |block| : (blockId += 1) {
         std.debug.assert(block.len <= blocksize);
         std.debug.assert(block[0] != '\n');
         std.debug.assert(block[block.len - 1] != '\n');
 
         std.log.debug("handling block{d}", .{blockId});
-        // const left_ptr_int: usize = std.mem.Alignment.forward(Alignment.fromByteUnits(4096), @intFromPtr(&block[0]));
-        // const right_ptr_int: usize = std.mem.Alignment.backward(Alignment.fromByteUnits(4096), @intFromPtr(&block[block.len - 1]));
-        // const left = left_ptr_int - buffer_ptr_int;
-        // const right = @min(right_ptr_int - buffer_ptr_int + 1, reader.buffer.len);
+        const left_ptr_int: usize = std.mem.Alignment.forward(Alignment.fromByteUnits(4096), @intFromPtr(&block[0]));
+        const right_ptr_int: usize = std.mem.Alignment.backward(Alignment.fromByteUnits(4096), @intFromPtr(&block[block.len - 1]));
+        const left = left_ptr_int - buffer_ptr_int;
+        const right = @min(right_ptr_int - buffer_ptr_int + 1, reader.buffer.len);
 
-        // if (blockId > 0) {
-        //     reader.allocator.free(reader.buffer[left..right]);
-        //     std.log.debug("freed block{d}", .{blockId});
-        // }
+        if (left_ptr_int > buffer_ptr_int) {
+            reader.allocator.free(reader.buffer[left..right]);
+            std.log.debug("freed block{d}", .{blockId});
+        }
     }
+    const end = std.time.nanoTimestamp();
+    const dur: u64 = @truncate(@abs(start - end));
+    const bytes: u64 = reader.buffer.len;
+    const bytes_f: f64 = @floatFromInt(bytes);
+    const s_f: f64 = @as(f64, @floatFromInt(dur)) / @as(f64, std.time.ns_per_s);
+    const bytes_per_sec_f: f64 = bytes_f / s_f;
+    const bytes_per_sec: u64 = @intFromFloat(@round(bytes_per_sec_f));
+    std.debug.print("finished reading, splitting and freeing blocks {0Bi:.3} ({0d} bytes) in {1D} | {2Bi:.3}/s\n", .{ bytes, dur, bytes_per_sec });
 }
 
 fn benchmarkLineSplitter() !void {

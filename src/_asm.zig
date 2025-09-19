@@ -47,7 +47,7 @@ pub inline fn sub_direct(dst: *usize, src: usize) void {
     );
 }
 
-pub noinline fn store_direct(dst: *usize, src: usize) void {
+pub fn store_direct(dst: *usize, src: usize) void {
     return asm volatile (
         \\ mov %rax, (%rdi)
         :
@@ -56,10 +56,34 @@ pub noinline fn store_direct(dst: *usize, src: usize) void {
     );
 }
 
-pub noinline fn load_direct(src: *const usize) usize {
+pub fn load_direct_64(src: *const u64) u64 {
     return asm volatile (
         \\ mov (%rdi), %rax
-        : [ret] "={rax}" (-> usize),
+        : [ret] "={rax}" (-> u64),
+        : [src] "{rdi}" (src),
+    );
+}
+
+pub fn load_direct_32(src: *const u32) u32 {
+    return asm volatile (
+        \\ mov (%rdi), %eax
+        : [ret] "={eax}" (-> u32),
+        : [src] "{rdi}" (src),
+    );
+}
+
+pub fn load_direct_16(src: *const u16) u16 {
+    return asm volatile (
+        \\ mov (%rdi), %ax
+        : [ret] "={ax}" (-> u16),
+        : [src] "{rdi}" (src),
+    );
+}
+
+pub fn load_direct_8(src: *const u8) u8 {
+    return asm volatile (
+        \\ mov (%rdi), %al
+        : [ret] "={al}" (-> u8),
         : [src] "{rdi}" (src),
     );
 }
