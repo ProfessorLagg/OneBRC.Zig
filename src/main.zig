@@ -158,7 +158,7 @@ fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
     const WaitGroup = std.Thread.WaitGroup;
     const Mutex = lib.SpinningMutex;
     const File = std.fs.File;
-    const blocksize: comptime_int = 1024 * 1024 * 8;
+    const blocksize: comptime_int = 1024 * 1024 * 1024;
     const BlockReader: type = lib.BlockReader(blocksize, '\n');
 
     const Context = struct {
@@ -171,12 +171,12 @@ fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
         file: File = undefined,
         readbuffer: []u8 = undefined,
 
-        map: BRCMap,
-        map_lock: Mutex = .{},
+        maps: std.ArrayList(BRCMapUnmanaged) = .{},
+        maps_lock: Mutex = .{},
+
         pub fn init(gpa: Allocator) !Self {
             var r: Self = .{
                 .gpa = gpa,
-                .map = try BRCMap.init(gpa),
                 .pool = try gpa.create(ThreadPool),
             };
             try r.pool.init(.{ .allocator = gpa });
@@ -187,6 +187,7 @@ fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
             self.pool.deinit();
             self.file.close();
             self.gpa.free(self.readbuffer);
+            self.maps.deinit(self.gpa);
         }
 
         pub fn start(self: *Self, filePath: []const u8) !void {
@@ -196,16 +197,35 @@ fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
 
             self.readbuffer = try self.gpa.alloc(u8, file_size);
             @memset(self.readbuffer, 0);
-            self.pool.spawnWg(&self.wait_group, ThreadFn.readFile, .{self});
+            try self.pool.spawn(ThreadFn.readFile, .{self});
 
+            const thread_count: usize = getMaxBlockCount(blocksize, self.readbuffer.len);
+            const thread_blocks: [][]const u8 = try self.gpa.alloc([]const u8, thread_count);
+            const thread_locks: []Mutex = try self.gpa.alloc(Mutex, thread_count);
+            for (0..thread_count) |id| {
+                thread_locks[id] = .{};
+                thread_locks[id].lock();
+                try self.pool.spawn(ThreadFn.spinHandleBlock, .{ self, &thread_blocks[id], &thread_locks[id] });
+            }
             while (lib._asm.load_direct_8(&self.readbuffer[0]) == 0) {} // wait for reading
             var reader = BlockReader.init(self.readbuffer);
-            while (reader.next()) |block| {
+            var blockId: usize = 0;
+            while (reader.next()) |block|{
+                defer blockId += 1;
+                // TODO Move away from this pool architechture to just use the same "spin waiting" from the mapped version
+                std.debug.assert(blockId < thread_count);
                 std.debug.assert(block[block.len - 1] != '\n');
-                self.pool.spawnWg(&self.wait_group, ThreadFn.handleBlock, .{ self, block });
+
+                thread_blocks[blockId] = block;
+                thread_locks[blockId].unlock();
+
                 const check_idx: usize = @min(self.readbuffer.len - 1, (@intFromPtr(block.ptr) - @intFromPtr(self.readbuffer.ptr)) + blocksize);
                 const check_ptr: *const u8 = @ptrCast(&self.readbuffer[check_idx]);
                 while (lib._asm.load_direct_8(check_ptr) == 0) {} // wait for reading
+            }
+            while (blockId < thread_count) : (blockId += 1) {
+                thread_blocks[blockId].len = 0;
+                thread_locks[blockId].unlock();
             }
         }
 
@@ -214,23 +234,51 @@ fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
             fn noop(_: *Self) void {}
 
             fn readFile(self: *Self) void {
-                const readsize: usize = self.file.readAll(self.readbuffer) catch |err| b: {
-                    std.log.err("{any}{any}", .{ err, @errorReturnTrace() });
-                    break :b 0;
-                };
+                self.wait_group.start();
+                defer self.wait_group.finish();
+                var i: usize = 0;
+                var readsize: usize = 0;
+                while (i < self.readbuffer.len) {
+                    const readTo: []u8 = self.readbuffer[i..];
+                    const rs = self.file.read(readTo[0..@min(readTo.len, 1024 * 1024 * 1024)]) catch |err| b: {
+                        std.log.err("{any}{any}", .{ err, @errorReturnTrace() });
+                        break :b 0;
+                    };
+                    i += rs;
+                    readsize += rs;
+                }
                 if (readsize != self.readbuffer.len) std.log.err("read fewer bytes than buffer {d} != {d}", .{ readsize, self.readbuffer.len });
             }
 
-            fn handleBlockErr(self: *Self, block: []const u8) !void {
+            fn spinHandleBlockErr(self: *Self, block_ptr: *const []const u8, lock: *Mutex) !void {
+                self.wait_group.start();
+                lock.lock();
+                defer {
+                    self.wait_group.finish();
+                    lock.unlock();
+                }
+                const block: []const u8 = block_ptr.*;
                 var local_map: BRCMapUnmanaged = try BRCMapUnmanaged.init(self.gpa);
-                defer local_map.deinit(self.gpa);
                 parseBlockUnmanaged(&local_map, block);
-                self.map_lock.lock();
-                defer self.map_lock.unlock();
-                self.map.unmanaged.merge(&local_map);
+                self.maps_lock.lock();
+                defer self.maps_lock.unlock();
+                try self.maps.append(self.gpa, local_map);
+            }
+            fn spinHandleBlock(self: *Self, block_ptr: *const []const u8, lock: *Mutex) void {
+                spinHandleBlockErr(self, block_ptr, lock) catch unreachable; //|err| std.debug.panic("{any}{any}\n\"{s}\"", .{ err, @errorReturnTrace(), block_ptr });
+            }
+
+            fn handleBlockErr(self: *Self, block: []const u8) !void {
+                self.wait_group.start();
+                defer self.wait_group.finish();
+                var local_map: BRCMapUnmanaged = try BRCMapUnmanaged.init(self.gpa);
+                parseBlockUnmanaged(&local_map, block);
+                self.maps_lock.lock();
+                defer self.maps_lock.unlock();
+                try self.maps.append(self.gpa, local_map);
             }
             fn handleBlock(self: *Self, block: []const u8) void {
-                handleBlockErr(self, block) catch |err| std.log.err("{any}{any}\n\"{s}\"", .{ err, @errorReturnTrace(), block });
+                handleBlockErr(self, block) catch unreachable; //catch |err| std.debug.panic("{any}{any}\n\"{s}\"", .{ err, @errorReturnTrace(), block });
             }
         };
     };
@@ -239,7 +287,10 @@ fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
 
     try ctx.start(path);
     ctx.wait_group.wait();
-    try printBrcMap(&ctx.map);
+    for (1..ctx.maps.items.len) |i| {
+        ctx.maps.items[0].merge(&ctx.maps.items[i]);
+    }
+    try printBrcMapUnmanaged(allocator, &ctx.maps.items[0]);
 }
 
 fn printBrcMapUnmanaged(allocator: std.mem.Allocator, map: *const BRCMapUnmanaged) !void {
@@ -303,7 +354,8 @@ fn bench(filepath: []const u8) !void {
 
     const fileSize = (try (try std.fs.cwd().openFile(filepath, .{})).stat()).size;
     var timer = try std.time.Timer.start();
-    try parseFile(static_allocator, filepath);
+    try parseFileMapped(static_allocator, filepath);
+    // try parseFile(static_allocator, filepath);
     const ns = timer.read();
     const ns_f: f64 = @floatFromInt(ns);
     const s_f: f64 = ns_f / @as(f64, @floatFromInt(std.time.ns_per_s));
