@@ -164,7 +164,7 @@ inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
         wait_group: WaitGroup = .{},
 
         file: File = undefined,
-        readbuffer: []align(4096) u8 = undefined,
+        readbuffer: []u8 = undefined,
 
         map: BRCMap,
         map_lock: Mutex = .{},
@@ -180,14 +180,15 @@ inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
         pub fn deinit(self: *Self) void {
             self.pool.deinit();
             self.file.close();
-            self.gpa.free(self.readbuffer);
+            std.heap.page_allocator.free(self.readbuffer);
         }
 
         pub fn start(self: *Self, filePath: []const u8) !void {
             self.file = try std.fs.cwd().openFile(filePath, .{});
             const file_size: u64 = self.file.getEndPos() catch (try self.file.stat()).size;
 
-            self.readbuffer = try self.gpa.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(4096), file_size);
+            self.readbuffer = try std.heap.page_allocator.alloc(u8, file_size);
+            @memset(self.readbuffer, 0);
             self.pool.spawnWg(&self.wait_group, ThreadFn.readFile, .{self});
             self.pool.spawnWg(&self.wait_group, ThreadFn.scheduleBlocks, .{self});
         }
@@ -195,8 +196,9 @@ inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
         // Thread Functions
         const ThreadFn = struct {
             fn readFile(self: *Self) void {
-                std.log.debug("Starting Reading", .{});
-                defer std.log.debug("Finished Reading", .{});
+                std.log.debug("readFile start", .{});
+                defer std.log.debug("readFile end", .{});
+
                 const readsize: usize = self.file.read(self.readbuffer) catch |err| b: {
                     std.log.err("{any}{any}", .{ err, @errorReturnTrace() });
                     break :b 0;
@@ -205,6 +207,9 @@ inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
             }
 
             fn scheduleBlocks(self: *Self) void {
+                std.log.debug("scheduleBlocks start", .{});
+                defer std.log.debug("scheduleBlocks end", .{});
+
                 while (lib._asm.load_direct_8(&self.readbuffer[0]) == 0) {} // wait for reading
                 var reader = BlockReader.init(self.readbuffer);
                 while (reader.next()) |block| {
@@ -219,6 +224,9 @@ inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
             }
 
             fn handleBlockErr(self: *Self, block: []const u8) !void {
+                std.log.debug("handleBlockErr start", .{});
+                defer std.log.debug("handleBlockErr end", .{});
+
                 var local_map: BRCMapUnmanaged = try BRCMapUnmanaged.init(self.gpa);
                 defer local_map.deinit(self.gpa);
                 parseBlockUnmanaged(&local_map, block);
@@ -227,6 +235,8 @@ inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
                 self.map.unmanaged.merge(&local_map);
             }
             fn handleBlock(self: *Self, block: []const u8) void {
+                std.log.debug("readFile start", .{});
+                defer std.log.debug("readFile end", .{});
                 handleBlockErr(self, block) catch |err| std.log.err("{any}{any}\n\"{s}\"", .{ err, @errorReturnTrace(), block });
             }
         };
