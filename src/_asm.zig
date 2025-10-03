@@ -56,6 +56,14 @@ pub fn store_direct(dst: *usize, src: usize) void {
     );
 }
 
+pub fn load_direct(src: *const usize) usize {
+    return asm volatile (
+        \\ mov (%rdi), %rax
+        : [ret] "={rax}" (-> u64),
+        : [src] "{rdi}" (src),
+    );
+}
+
 pub fn load_direct_64(src: *const u64) u64 {
     return asm volatile (
         \\ mov (%rdi), %rax

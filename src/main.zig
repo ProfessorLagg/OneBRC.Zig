@@ -141,137 +141,104 @@ inline fn parseFileContent(allocator: std.mem.Allocator, content: []const u8) !v
 
     try printBrcMapUnmanaged(allocator, finalmap);
 }
-
-inline fn parseFile(allocator: std.mem.Allocator, filepath: []const u8) !void {
-    const readsize: comptime_int = comptime 8 * 1024 * 1024;
-    const blocksize: comptime_int = comptime 1024 * 1024 * 1024;
-    const BlockReader = lib.BlockReader(blocksize, '\n');
-    const Alignment = std.mem.Alignment;
-    const ThreadContext = struct {
-        fn run(map: *BRCMapUnmanaged, lock: *std.Thread.Mutex, block: []const u8, free: ?[]const u8) void {
-            lock.lock();
-            defer lock.unlock();
-            parseBlockUnmanaged(map, block);
-            if (free != null) std.heap.page_allocator.free(free.?);
-        }
-    };
-    const ReaderContext = struct {
-        const Self = @This();
-        file: std.fs.File,
-        buffer: []align(4096) u8,
-        progress: usize,
-
-        pub fn init(path: []const u8) !Self {
-            const file = try std.fs.cwd().openFile(path, .{});
-            const fileSize: u64 = file.getEndPos() catch (try file.stat()).size;
-            const buffer: []align(4096) u8 = try std.heap.page_allocator.alignedAlloc(u8, Alignment.fromByteUnits(4096), fileSize);
-            @memset(buffer, 0);
-            return Self{
-                .file = file,
-                .buffer = buffer[0..],
-                .progress = 0,
-            };
-        }
-        pub fn deinit(self: *Self) void {
-            std.heap.page_allocator.free(self.buffer);
-            self.file.close();
-        }
-        pub fn read(self: *Self) !void {
-            while (self.progress < self.buffer.len) {
-                const left = self.progress;
-                const right = @min(left + readsize, self.buffer.len);
-                const buf: []u8 = self.buffer[left..right];
-                _ = try self.file.read(buf);
-                lib._asm.lfence();
-                self.progress = right;
-                lib._asm.sfence();
-            }
-        }
-        pub fn run(self: *Self) void {
-            self.read() catch |err| std.debug.panic("{any}{any}", .{ err, @errorReturnTrace() });
-        }
-    };
-    const IteratorContext = struct {
-        const Self = @This();
-        reader: BlockReader,
-
-        pub fn init(buffer: []const u8) Self {
-            return Self{
-                .reader = BlockReader.init(buffer),
-            };
-        }
-        inline fn ensureCanRead(self: *const Self) void {
-            const testIdx: usize = @min(self.reader.left + blocksize, self.reader.buffer.len - 1);
-            const testPtr: *const u8 = &self.reader.buffer[testIdx];
-            var testVal: u8 = 0;
-            while (testVal == 0) {
-                lib._asm.sfence();
-                testVal = lib._asm.load_direct_8(testPtr);
-            }
-        }
-        pub fn next(self: *Self) ?[]const u8 {
-            self.ensureCanRead();
-            return self.reader.next();
-        }
-    };
-
-    const threadCount = lib.getAffinityCpuCount();
-    var pool: std.Thread.Pool = undefined;
-    try pool.init(.{ .allocator = allocator, .n_jobs = threadCount });
-    var wgrp: std.Thread.WaitGroup = .{};
-
-    var reader: ReaderContext = try ReaderContext.init(filepath);
-    defer reader.deinit();
-    pool.spawnWg(&wgrp, ReaderContext.run, .{&reader});
-
-    const maxBlockCount = getMaxBlockCount(blocksize, reader.buffer.len);
-    const maps: []BRCMapUnmanaged = try allocator.alloc(BRCMapUnmanaged, maxBlockCount);
-    defer allocator.free(maps);
-    const locks: []std.Thread.Mutex = try allocator.alloc(std.Thread.Mutex, maxBlockCount);
-    defer allocator.free(locks);
-
-    for (0..maps.len) |i| {
-        maps[i] = try BRCMapUnmanaged.init(allocator);
-        locks[i] = .{};
-    }
-
-    var iter: IteratorContext = IteratorContext{ .reader = BlockReader.init(reader.buffer) };
-    const buffer_ptr_int: usize = @intFromPtr(reader.buffer.ptr);
-
-    var blockId: usize = 0;
-    while (iter.next()) |block| : (blockId += 1) {
-        std.debug.assert(block.len <= blocksize);
-        std.debug.assert(block[0] != '\n');
-        std.debug.assert(block[block.len - 1] != '\n');
-
-        const left_ptr_int: usize = std.mem.Alignment.forward(Alignment.fromByteUnits(4096), @intFromPtr(&block[0]));
-        const right_ptr_int: usize = std.mem.Alignment.backward(Alignment.fromByteUnits(4096), @intFromPtr(&block[block.len - 1]));
-        const left = left_ptr_int - buffer_ptr_int;
-        const right = @min(right_ptr_int - buffer_ptr_int + 1, reader.buffer.len);
-
-        const free = if (left_ptr_int > buffer_ptr_int) reader.buffer[left..right] else null;
-        pool.spawnWg(&wgrp, ThreadContext.run, .{ &maps[blockId], &locks[blockId], block, free });
-    }
-
-    wgrp.wait();
-
-    const finalmap: *BRCMapUnmanaged = &maps[0];
-    defer finalmap.deinit(allocator);
-    for (maps[1..]) |*map| {
-        finalmap.merge(map);
-        map.deinit(allocator);
-    }
-
-    try printBrcMapUnmanaged(allocator, finalmap);
-}
-
-inline fn parseFile_old(allocator: std.mem.Allocator, path: []const u8) !void {
+inline fn parseFileMapped(allocator: std.mem.Allocator, path: []const u8) !void {
     var mappedFile: lib.MappedFile = try lib.MappedFile.init(path);
     defer mappedFile.deinit();
     try parseFileContent(allocator, mappedFile.slice);
 }
 
-fn printBrcMapUnmanaged(allocator: std.mem.Allocator, map: *BRCMapUnmanaged) !void {
+inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
+    const Allocator = std.mem.Allocator;
+    const ThreadPool = std.Thread.Pool;
+    const WaitGroup = std.Thread.WaitGroup;
+    const Mutex = std.Thread.Mutex;
+    const File = std.fs.File;
+    const blocksize: comptime_int = 1024 * 1024 * 1024;
+    const BlockReader: type = lib.BlockReader(blocksize, '\n');
+
+    const Context = struct {
+        const Self = @This();
+        gpa: Allocator,
+
+        pool: ThreadPool = undefined,
+        wait_group: WaitGroup = .{},
+
+        file: File = undefined,
+        readbuffer: []align(4096) u8 = undefined,
+
+        map: BRCMap,
+        map_lock: Mutex = .{},
+        pub fn init(gpa: Allocator) !Self {
+            var r: Self = .{
+                .gpa = gpa,
+                .map = try BRCMap.init(gpa),
+            };
+            try r.pool.init(.{ .allocator = gpa });
+            return r;
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.pool.deinit();
+            self.file.close();
+            self.gpa.free(self.readbuffer);
+        }
+
+        pub fn start(self: *Self, filePath: []const u8) !void {
+            self.file = try std.fs.cwd().openFile(filePath, .{});
+            const file_size: u64 = self.file.getEndPos() catch (try self.file.stat()).size;
+
+            self.readbuffer = try self.gpa.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(4096), file_size);
+            self.pool.spawnWg(&self.wait_group, ThreadFn.readFile, .{self});
+            self.pool.spawnWg(&self.wait_group, ThreadFn.scheduleBlocks, .{self});
+        }
+
+        // Thread Functions
+        const ThreadFn = struct {
+            fn readFile(self: *Self) void {
+                std.log.debug("Starting Reading", .{});
+                defer std.log.debug("Finished Reading", .{});
+                const readsize: usize = self.file.read(self.readbuffer) catch |err| b: {
+                    std.log.err("{any}{any}", .{ err, @errorReturnTrace() });
+                    break :b 0;
+                };
+                if (readsize != self.readbuffer.len) std.log.err("read fewer bytes than buffer", .{});
+            }
+
+            fn scheduleBlocks(self: *Self) void {
+                while (lib._asm.load_direct_8(&self.readbuffer[0]) == 0) {} // wait for reading
+                var reader = BlockReader.init(self.readbuffer);
+                while (reader.next()) |block| {
+                    std.debug.assert(block[block.len - 1] != '\n');
+                    self.pool.spawnWg(&self.wait_group, handleBlock, .{ self, block });
+                    std.log.debug("new block:\n\"{s}\"", .{block});
+                    const check_idx: usize = @min(self.readbuffer.len - 1, (@intFromPtr(block.ptr) - @intFromPtr(self.readbuffer.ptr)) + blocksize);
+                    const check_ptr: *const u8 = @ptrCast(&self.readbuffer[check_idx]);
+                    while (lib._asm.load_direct_8(check_ptr) == 0) {} // wait for reading
+
+                }
+            }
+
+            fn handleBlockErr(self: *Self, block: []const u8) !void {
+                var local_map: BRCMapUnmanaged = try BRCMapUnmanaged.init(self.gpa);
+                defer local_map.deinit(self.gpa);
+                parseBlockUnmanaged(&local_map, block);
+                self.map_lock.lock();
+                defer self.map_lock.unlock();
+                self.map.unmanaged.merge(&local_map);
+            }
+            fn handleBlock(self: *Self, block: []const u8) void {
+                handleBlockErr(self, block) catch |err| std.log.err("{any}{any}\n\"{s}\"", .{ err, @errorReturnTrace(), block });
+            }
+        };
+    };
+    var ctx: Context = try Context.init(allocator);
+    defer ctx.deinit();
+    try ctx.start(path);
+    ctx.wait_group.wait();
+    try printBrcMap(&ctx.map);
+}
+
+fn printBrcMapUnmanaged(allocator: std.mem.Allocator, map: *const BRCMapUnmanaged) !void {
     // Sort the entries
     const Entry = struct {
         const Self = @This();
@@ -351,9 +318,9 @@ pub fn main() !void {
     defer std.process.argsFree(static_allocator, args);
     const filepath = if (args.len == 2) args[1] else debugfilepath;
 
-    //try bench(filepath);
+    try bench(filepath);
     //try benchmarkReading(8 * 1024 * 1024, filepath);
-    try parseFile_old(static_allocator, filepath);
+    //try parseFile_old(static_allocator, filepath);
     //try debug();
     //try debug_hash();
     //try benchmarkLineSplitter();
