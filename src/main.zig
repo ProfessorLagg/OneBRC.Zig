@@ -21,10 +21,10 @@ const ResetEvent = std.Thread.ResetEvent;
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\10_000.txt";
 
 // following files have 10 000 keys, and likely more than 1 instance of each key
-var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000.txt";
+// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\10_000_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100_000_000.txt";
-// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000_000.txt";
+var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000_000.txt";
 
 const static_allocator: std.mem.Allocator = b: {
     if (builtin.is_test) break :b std.testing.allocator;
@@ -158,7 +158,7 @@ fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
     const WaitGroup = std.Thread.WaitGroup;
     const Mutex = lib.SpinningMutex;
     const File = std.fs.File;
-    const blocksize: comptime_int = 1024 * 1024 * 1024;
+    const blocksize: comptime_int = 1024 * 1024 * 8;
     const BlockReader: type = lib.BlockReader(blocksize, '\n');
 
     const Context = struct {
@@ -179,10 +179,7 @@ fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
                 .map = try BRCMap.init(gpa),
                 .pool = try gpa.create(ThreadPool),
             };
-            try r.pool.init(.{
-                .allocator = gpa,
-                .n_jobs = 1,
-            });
+            try r.pool.init(.{ .allocator = gpa });
             return r;
         }
 
@@ -193,31 +190,18 @@ fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
         }
 
         pub fn start(self: *Self, filePath: []const u8) !void {
-            var stderr_buffer: [1024]u8 = undefined;
-            var stderr_writer = std.fs.File.stderr().writer(stderr_buffer[0..]);
-            const stderr: *std.io.Writer = &stderr_writer.interface;
-
-            try stderr.print("Trying to open file {s}\n", .{filePath});
-            try stderr.flush();
             self.file = try std.fs.cwd().openFile(filePath, .{});
 
             const file_size: u64 = self.file.getEndPos() catch (try self.file.stat()).size;
 
             self.readbuffer = try self.gpa.alloc(u8, file_size);
             @memset(self.readbuffer, 0);
-
-            try stderr.print("Spawning reading handler\n", .{});
-            try stderr.flush();
             self.pool.spawnWg(&self.wait_group, ThreadFn.readFile, .{self});
 
             while (lib._asm.load_direct_8(&self.readbuffer[0]) == 0) {} // wait for reading
             var reader = BlockReader.init(self.readbuffer);
             while (reader.next()) |block| {
                 std.debug.assert(block[block.len - 1] != '\n');
-
-                try stderr.print("Spawning block handler\n", .{});
-                try stderr.flush();
-
                 self.pool.spawnWg(&self.wait_group, ThreadFn.handleBlock, .{ self, block });
                 const check_idx: usize = @min(self.readbuffer.len - 1, (@intFromPtr(block.ptr) - @intFromPtr(self.readbuffer.ptr)) + blocksize);
                 const check_ptr: *const u8 = @ptrCast(&self.readbuffer[check_idx]);
@@ -230,11 +214,11 @@ fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
             fn noop(_: *Self) void {}
 
             fn readFile(self: *Self) void {
-                const readsize: usize = self.file.read(self.readbuffer) catch |err| b: {
+                const readsize: usize = self.file.readAll(self.readbuffer) catch |err| b: {
                     std.log.err("{any}{any}", .{ err, @errorReturnTrace() });
                     break :b 0;
                 };
-                if (readsize != self.readbuffer.len) std.log.err("read fewer bytes than buffer", .{});
+                if (readsize != self.readbuffer.len) std.log.err("read fewer bytes than buffer {d} != {d}", .{ readsize, self.readbuffer.len });
             }
 
             fn handleBlockErr(self: *Self, block: []const u8) !void {
