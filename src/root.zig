@@ -1,6 +1,8 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
+pub const SpinningMutex = @import("SpinningMutex.zig");
+
 pub const c = @import("cImport.zig").c;
 pub const _asm = @import("_asm.zig");
 

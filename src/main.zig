@@ -10,16 +10,21 @@ const sorting = lib.sorting;
 const LineSplitter = lib.LineSplitter;
 const ResetEvent = std.Thread.ResetEvent;
 
+// pub fn panic(msg: []const u8, trace: ?*std.builtin.StackTrace, _: ?usize) noreturn {
+//     std.log.err("{s}{any}", .{ msg, trace });
+//     std.process.exit(1);
+// }
+
 // following files have at most 10 000 keys, and likely more than 1 instance of each key
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\10_000.txt";
 
 // following files have 10 000 keys, and likely more than 1 instance of each key
-// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000.txt";
+var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\10_000_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100_000_000.txt";
-var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000_000.txt";
+// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000_000.txt";
 
 const static_allocator: std.mem.Allocator = b: {
     if (builtin.is_test) break :b std.testing.allocator;
@@ -147,11 +152,11 @@ inline fn parseFileMapped(allocator: std.mem.Allocator, path: []const u8) !void 
     try parseFileContent(allocator, mappedFile.slice);
 }
 
-inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
+fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
     const Allocator = std.mem.Allocator;
     const ThreadPool = std.Thread.Pool;
     const WaitGroup = std.Thread.WaitGroup;
-    const Mutex = std.Thread.Mutex;
+    const Mutex = lib.SpinningMutex;
     const File = std.fs.File;
     const blocksize: comptime_int = 1024 * 1024 * 1024;
     const BlockReader: type = lib.BlockReader(blocksize, '\n');
@@ -160,7 +165,7 @@ inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
         const Self = @This();
         gpa: Allocator,
 
-        pool: ThreadPool = undefined,
+        pool: *ThreadPool = undefined,
         wait_group: WaitGroup = .{},
 
         file: File = undefined,
@@ -172,33 +177,59 @@ inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
             var r: Self = .{
                 .gpa = gpa,
                 .map = try BRCMap.init(gpa),
+                .pool = try gpa.create(ThreadPool),
             };
-            try r.pool.init(.{ .allocator = gpa });
+            try r.pool.init(.{
+                .allocator = gpa,
+                .n_jobs = 1,
+            });
             return r;
         }
 
         pub fn deinit(self: *Self) void {
             self.pool.deinit();
             self.file.close();
-            std.heap.page_allocator.free(self.readbuffer);
+            self.gpa.free(self.readbuffer);
         }
 
         pub fn start(self: *Self, filePath: []const u8) !void {
+            var stderr_buffer: [1024]u8 = undefined;
+            var stderr_writer = std.fs.File.stderr().writer(stderr_buffer[0..]);
+            const stderr: *std.io.Writer = &stderr_writer.interface;
+
+            try stderr.print("Trying to open file {s}\n", .{filePath});
+            try stderr.flush();
             self.file = try std.fs.cwd().openFile(filePath, .{});
+
             const file_size: u64 = self.file.getEndPos() catch (try self.file.stat()).size;
 
-            self.readbuffer = try std.heap.page_allocator.alloc(u8, file_size);
+            self.readbuffer = try self.gpa.alloc(u8, file_size);
             @memset(self.readbuffer, 0);
+
+            try stderr.print("Spawning reading handler\n", .{});
+            try stderr.flush();
             self.pool.spawnWg(&self.wait_group, ThreadFn.readFile, .{self});
-            self.pool.spawnWg(&self.wait_group, ThreadFn.scheduleBlocks, .{self});
+
+            while (lib._asm.load_direct_8(&self.readbuffer[0]) == 0) {} // wait for reading
+            var reader = BlockReader.init(self.readbuffer);
+            while (reader.next()) |block| {
+                std.debug.assert(block[block.len - 1] != '\n');
+
+                try stderr.print("Spawning block handler\n", .{});
+                try stderr.flush();
+
+                self.pool.spawnWg(&self.wait_group, ThreadFn.handleBlock, .{ self, block });
+                const check_idx: usize = @min(self.readbuffer.len - 1, (@intFromPtr(block.ptr) - @intFromPtr(self.readbuffer.ptr)) + blocksize);
+                const check_ptr: *const u8 = @ptrCast(&self.readbuffer[check_idx]);
+                while (lib._asm.load_direct_8(check_ptr) == 0) {} // wait for reading
+            }
         }
 
         // Thread Functions
         const ThreadFn = struct {
-            fn readFile(self: *Self) void {
-                std.log.debug("readFile start", .{});
-                defer std.log.debug("readFile end", .{});
+            fn noop(_: *Self) void {}
 
+            fn readFile(self: *Self) void {
                 const readsize: usize = self.file.read(self.readbuffer) catch |err| b: {
                     std.log.err("{any}{any}", .{ err, @errorReturnTrace() });
                     break :b 0;
@@ -206,27 +237,7 @@ inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
                 if (readsize != self.readbuffer.len) std.log.err("read fewer bytes than buffer", .{});
             }
 
-            fn scheduleBlocks(self: *Self) void {
-                std.log.debug("scheduleBlocks start", .{});
-                defer std.log.debug("scheduleBlocks end", .{});
-
-                while (lib._asm.load_direct_8(&self.readbuffer[0]) == 0) {} // wait for reading
-                var reader = BlockReader.init(self.readbuffer);
-                while (reader.next()) |block| {
-                    std.debug.assert(block[block.len - 1] != '\n');
-                    self.pool.spawnWg(&self.wait_group, handleBlock, .{ self, block });
-                    std.log.debug("new block:\n\"{s}\"", .{block});
-                    const check_idx: usize = @min(self.readbuffer.len - 1, (@intFromPtr(block.ptr) - @intFromPtr(self.readbuffer.ptr)) + blocksize);
-                    const check_ptr: *const u8 = @ptrCast(&self.readbuffer[check_idx]);
-                    while (lib._asm.load_direct_8(check_ptr) == 0) {} // wait for reading
-
-                }
-            }
-
             fn handleBlockErr(self: *Self, block: []const u8) !void {
-                std.log.debug("handleBlockErr start", .{});
-                defer std.log.debug("handleBlockErr end", .{});
-
                 var local_map: BRCMapUnmanaged = try BRCMapUnmanaged.init(self.gpa);
                 defer local_map.deinit(self.gpa);
                 parseBlockUnmanaged(&local_map, block);
@@ -235,14 +246,13 @@ inline fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
                 self.map.unmanaged.merge(&local_map);
             }
             fn handleBlock(self: *Self, block: []const u8) void {
-                std.log.debug("readFile start", .{});
-                defer std.log.debug("readFile end", .{});
                 handleBlockErr(self, block) catch |err| std.log.err("{any}{any}\n\"{s}\"", .{ err, @errorReturnTrace(), block });
             }
         };
     };
     var ctx: Context = try Context.init(allocator);
     defer ctx.deinit();
+
     try ctx.start(path);
     ctx.wait_group.wait();
     try printBrcMap(&ctx.map);
@@ -298,7 +308,7 @@ fn printBrcMap(map: *const BRCMap) !void {
     try printBrcMapUnmanaged(map.allocator, &map.unmanaged);
 }
 
-inline fn bench(filepath: []const u8) !void {
+fn bench(filepath: []const u8) !void {
     var stderr_buffer: [1024]u8 = undefined;
     var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
     const stderr = &stderr_writer.interface;
@@ -327,7 +337,6 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(static_allocator);
     defer std.process.argsFree(static_allocator, args);
     const filepath = if (args.len == 2) args[1] else debugfilepath;
-
     try bench(filepath);
     //try benchmarkReading(8 * 1024 * 1024, filepath);
     //try parseFile_old(static_allocator, filepath);
