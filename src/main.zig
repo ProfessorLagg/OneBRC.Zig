@@ -9,6 +9,7 @@ const Stat = lib.Stat;
 const sorting = lib.sorting;
 const LineSplitter = lib.LineSplitter;
 const ResetEvent = std.Thread.ResetEvent;
+const baseline = @import("baseline.zig");
 
 // pub fn panic(msg: []const u8, trace: ?*std.builtin.StackTrace, _: ?usize) noreturn {
 //     std.log.err("{s}{any}", .{ msg, trace });
@@ -210,7 +211,7 @@ fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
             while (lib._asm.load_direct_8(&self.readbuffer[0]) == 0) {} // wait for reading
             var reader = BlockReader.init(self.readbuffer);
             var blockId: usize = 0;
-            while (reader.next()) |block|{
+            while (reader.next()) |block| {
                 defer blockId += 1;
                 // TODO Move away from this pool architechture to just use the same "spin waiting" from the mapped version
                 std.debug.assert(blockId < thread_count);
@@ -373,7 +374,9 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(static_allocator);
     defer std.process.argsFree(static_allocator, args);
     const filepath = if (args.len == 2) args[1] else debugfilepath;
-    try bench(filepath);
+
+    try baseline.read(filepath);
+    //try bench(filepath);
     //try benchmarkReading(8 * 1024 * 1024, filepath);
     //try parseFile_old(static_allocator, filepath);
     //try debug();
