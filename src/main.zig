@@ -11,6 +11,8 @@ const LineSplitter = lib.LineSplitter;
 const ResetEvent = std.Thread.ResetEvent;
 const baseline = @import("baseline.zig");
 
+const Parser = @import("parser.zig");
+
 // pub fn panic(msg: []const u8, trace: ?*std.builtin.StackTrace, _: ?usize) noreturn {
 //     std.log.err("{s}{any}", .{ msg, trace });
 //     std.process.exit(1);
@@ -375,7 +377,8 @@ pub fn main() !void {
     defer std.process.argsFree(static_allocator, args);
     const filepath = if (args.len == 2) args[1] else debugfilepath;
 
-    try baseline.read(filepath);
+    try Parser.DefaultParser.parseFilePath(static_allocator, filepath);
+    //try baseline.read(filepath);
     //try bench(filepath);
     //try benchmarkReading(8 * 1024 * 1024, filepath);
     //try parseFile_old(static_allocator, filepath);

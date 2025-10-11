@@ -124,10 +124,10 @@ pub const sso16 = struct {
     data: TVec = @splat(0),
 
     // Private functions
-    inline fn isSmallLen(len: usize) bool {
+    pub inline fn isSmallLen(len: usize) bool {
         return len <= MaxSmallLen;
     }
-    inline fn isLargeLen(len: usize) bool {
+    pub inline fn isLargeLen(len: usize) bool {
         return len > MaxSmallLen;
     }
     inline fn set_small(self: *sso16, str: []const u8) void {
@@ -213,6 +213,12 @@ pub const sso16 = struct {
             2 => eql_large(a, b),
             else => unreachable,
         };
+    }
+    pub fn isSmall(self: *sso16) bool {
+        return sso16.isSmallLen(self.data[0]);
+    }
+    pub fn isLarge(self: *sso16) bool {
+        return !self.isSmall();
     }
 };
 

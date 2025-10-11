@@ -312,3 +312,43 @@ pub const windows = struct {
         if (c.SetSystemFileCacheSize(0, 0, c.FILE_CACHE_MAX_HARD_ENABLE | c.FILE_CACHE_MIN_HARD_ENABLE) == 0) return std.os.windows.unexpectedError(std.os.windows.GetLastError());
     }
 };
+
+var stderr_lock: std.Thread.Mutex = .{};
+var stderr_buffer: [4096]u8 = undefined;
+var stderr_file: ?std.fs.File = null;
+var stderr_writer: ?std.fs.File.Writer = null;
+fn getStderr() *std.io.Writer {
+    if (stderr_file == null) stderr_file = std.fs.File.stderr();
+    if (stderr_writer == null) stderr_writer = stderr_file.?.writer(stderr_buffer[0..]);
+    return &stderr_writer.?.interface;
+}
+pub fn stderrPrint(comptime fmt: []const u8, args: anytype) void {
+    stderr_lock.lock();
+    defer stderr_lock.unlock();
+    const stderr = getStderr();
+    stderr.print(fmt, args) catch @panic("Printing failed");
+    stderr.flush() catch @panic("Flushing stderr failed");
+}
+pub fn stderrPrintln(comptime fmt: []const u8, args: anytype) void {
+    stderrPrint(fmt ++ "\n", args);
+}
+
+var stdout_lock: std.Thread.Mutex = .{};
+var stdout_buffer: [4096]u8 = undefined;
+var stdout_file: ?std.fs.File = null;
+var stdout_writer: ?std.fs.File.Writer = null;
+fn getStdout() *std.io.Writer {
+    if (stdout_file == null) stdout_file = std.fs.File.stdout();
+    if (stdout_writer == null) stdout_writer = stdout_file.?.writer(stdout_buffer[0..]);
+    return &stdout_writer.?.interface;
+}
+pub fn stdoutPrint(comptime fmt: []const u8, args: anytype) void {
+    stdout_lock.lock();
+    defer stdout_lock.unlock();
+    const stdout = getStdout();
+    stdout.print(fmt, args) catch @panic("Printing failed");
+    stdout.flush() catch @panic("Flushing stdout failed");
+}
+pub fn stdoutPrintln(comptime fmt: []const u8, args: anytype) void {
+    stdoutPrint(fmt ++ "\n", args);
+}

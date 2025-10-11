@@ -117,6 +117,27 @@ pub fn BRCMapUnmanaged(comptime capacity: comptime_int) type {
             }
         }
 
+        pub fn addOrUpdateCloned(self: *Self, gpa: std.mem.Allocator, key: []const u8, value: i32) !void {
+            switch (self.findKeyIndex(key)) {
+                .found => |index| {
+                    std.debug.assert(self.keys[index].notEmpty());
+                    self.values[index].add(value);
+                },
+                .new => |index| {
+                    if (sso.isLargeLen(key.len)) {
+                        const keyclone = try gpa.alloc(u8, key.len);
+                        @memcpy(keyclone[0..], key[0..]);
+                        self.keys[index].set(keyclone);
+                    } else {
+                        self.keys[index].set(key);
+                    }
+
+                    self.values[index] = Stat.init(value);
+                    self.count += 1;
+                },
+            }
+        }
+
         pub fn addOrMerge(self: *Self, key: []const u8, stat: *const Stat) void {
             switch (self.findKeyIndex(key)) {
                 .found => |index| {
@@ -131,10 +152,36 @@ pub fn BRCMapUnmanaged(comptime capacity: comptime_int) type {
             }
         }
 
+        pub fn addOrMergeCloned(self: *Self, key: []const u8, stat: *const Stat, gpa: std.mem.Allocator) !void {
+            switch (self.findKeyIndex(key)) {
+                .found => |index| {
+                    std.debug.assert(self.keys[index].notEmpty());
+                    self.values[index].mergeWith(stat);
+                },
+                .new => |index| {
+                    if (sso.isLargeLen(key.len)) {
+                        const keyclone = try gpa.alloc(u8, key.len);
+                        @memcpy(keyclone[0..], key[0..]);
+                        self.keys[index].set(keyclone);
+                    } else {
+                        self.keys[index].set(key);
+                    }
+                    self.values[index] = stat.*;
+                    self.count += 1;
+                },
+            }
+        }
+
         /// Merges the key / value pairs from `other` into `self`
         pub fn merge(self: *Self, other: *Self) void {
             @setRuntimeSafety(false);
             for (other.keys, other.values) |*k, *v| if (k.notEmpty()) self.addOrMerge(k.get(), v);
+        }
+
+        /// Merges the key / value pairs from `other` into `self`
+        pub fn mergeCloned(self: *Self, other: *Self, gpa: std.mem.Allocator) !void {
+            @setRuntimeSafety(false);
+            for (other.keys, other.values) |*k, *v| if (k.notEmpty()) try self.addOrMergeCloned(k.get(), v, gpa);
         }
     };
 }

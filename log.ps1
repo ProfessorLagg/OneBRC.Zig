@@ -1,7 +1,7 @@
 using namespace System.IO
 
 Param(
-    [string]$Mode = "ReleaseSafe",
+    [string]$Mode = "Debug",
     [switch]$ClearCache
 )
 
