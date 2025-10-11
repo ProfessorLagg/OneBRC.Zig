@@ -308,6 +308,30 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
                     self.arena.deinit();
                 }
 
+                fn combineAndParsePartials(self: *Self, final_map: *BRCMapUnmanaged) void {
+                    var line_buffer: [128]u8 = undefined;
+                    var line_fba = std.heap.FixedBufferAllocator.init(line_buffer[0..]);
+                    const fba = line_fba.allocator();
+                    var key: []const u8 = undefined;
+                    var val: i32 = undefined;
+
+                    var slices: []const []const u8 = undefined;
+                    slices.len = 2;
+                    var line: []const u8 = std.mem.trim(u8, self.partial_lines[0], "\n");
+                    var Pi: usize = 1;
+                    while (Pi < self.partial_lines.len) : (Pi += 2) {
+                        parseLine(line, &key, &val);
+                        final_map.addOrUpdate(key, val);
+
+                        line_fba.end_index = 0;
+                        slices.ptr = @ptrCast(&self.partial_lines[Pi]);
+                        line = std.mem.concat(fba, u8, slices) catch |err| logAndPanic(err);
+                        line = std.mem.trim(u8, line, "\n");
+                    }
+                    parseLine(line, &key, &val);
+                    final_map.addOrUpdate(key, val);
+                }
+
                 pub fn run(self: *Self) void {
                     std.debug.assert(self.thread_locks.len == self.blockCount);
                     std.debug.assert(self.blocks.len == self.blockCount);
@@ -340,28 +364,8 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
                         final_map.merge(&self.maps[i]);
                     }
 
-                    // TODO Combine and parse partial Lines
-                    var line_buffer: [128]u8 = undefined;
-                    var line_fba = std.heap.FixedBufferAllocator.init(line_buffer[0..]);
-                    const fba = line_fba.allocator();
-                    var key: []const u8 = undefined;
-                    var val: i32 = undefined;
-
-                    var slices: []const []const u8 = undefined;
-                    slices.len = 2;
-                    var line: []const u8 = std.mem.trim(u8, self.partial_lines[0], "\n");
-                    var Pi: usize = 1;
-                    while (Pi < self.partial_lines.len) : (Pi += 2) {
-                        parseLine(line, &key, &val);
-                        final_map.addOrUpdate(key, val);
-
-                        line_fba.end_index = 0;
-                        slices.ptr = @ptrCast(&self.partial_lines[Pi]);
-                        line = std.mem.concat(fba, u8, slices) catch |err| logAndPanic(err);
-                        line = std.mem.trim(u8, line, "\n");
-                    }
-                    parseLine(line, &key, &val);
-                    final_map.addOrUpdate(key, val);
+                    // Combine and parse partial Lines
+                    self.combineAndParsePartials(final_map);
 
                     // Print the final map
                     printBrcMapUnmanaged(self.gpa, final_map) catch |err| logAndPanic(err);
