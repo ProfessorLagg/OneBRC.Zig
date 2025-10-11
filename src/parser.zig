@@ -258,6 +258,146 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
             ctx.run();
         }
 
+        pub fn parseFilePathMapped(allocator: std.mem.Allocator, path: []const u8) !void {
+            const Context = struct {
+                const Self = @This();
+
+                arena: std.heap.ArenaAllocator,
+                gpa: std.mem.Allocator,
+                mappedFile: lib.MappedFile,
+                fileSize: u64,
+                blockSize: u64,
+                blockCount: u64,
+                maps: []BRCMapUnmanaged,
+                blocks: [][]const u8,
+                partial_lines: [][]const u8,
+                thread_locks: []ResetEvent,
+
+                pub fn init(self: *Self, _gpa: std.mem.Allocator, p: []const u8) void {
+                    self.arena = std.heap.ArenaAllocator.init(_gpa);
+                    self.gpa = self.arena.allocator();
+                    self.fileSize = getFilePathSize(p) catch |err| logAndPanic(err);
+                    self.mappedFile = lib.MappedFile.init(p) catch |err| logAndPanic(err);
+
+                    // Collect neccecary information
+                    self.blockCount = Thread.getCpuCount() catch unreachable; // This should not be possible to fail, since we're constrained to x64
+                    self.blockSize = nextMultipleOf(
+                        u64,
+                        std.math.divCeil(u64, self.fileSize, self.blockCount) catch self.fileSize / self.blockCount, // would require file_size to be close to 16 Exbibytes (2^64 bytes), which is not likely.
+                        std.heap.page_size_min,
+                    );
+                    std.debug.assert((self.blockSize * self.blockCount) >= self.fileSize);
+
+                    // Allocate buffers and maps
+                    self.blocks = alignedAllocPanic(self.gpa, []const u8, .@"64", self.blockCount);
+                    self.partial_lines = alignedAllocPanic(self.gpa, []const u8, .@"64", self.blockCount * 2); // TODO Use the pointer trick to turn these from 16 bytes per partial into 8 bytes
+                    self.maps = allocPanic(self.gpa, BRCMapUnmanaged, self.blockCount);
+                    self.thread_locks = allocPanic(self.gpa, ResetEvent, self.blockCount);
+
+                    // Initialize everything that was just allocated
+                    for (0..self.blockCount) |i| {
+                        self.blocks[i] = std.mem.zeroes([]const u8);
+                        self.partial_lines[i * 2] = std.mem.zeroes([]const u8);
+                        self.partial_lines[(i * 2) + 1] = std.mem.zeroes([]const u8);
+                        self.maps[i] = BRCMapUnmanaged.init(self.gpa) catch |err| logAndPanic(err);
+                        self.thread_locks[i] = .{};
+                    }
+                }
+
+                pub fn deinit(self: *Self) void {
+                    self.arena.deinit();
+                }
+
+                pub fn run(self: *Self) void {
+                    std.debug.assert(self.thread_locks.len == self.blockCount);
+                    std.debug.assert(self.blocks.len == self.blockCount);
+
+                    // Start Threads
+                    for (0..self.blockCount - 1) |blockId| { // OBS! We dont start a thread for the last block, as it will be parsed on the main thread
+                        self.thread_locks[blockId].reset();
+                        runDetached(.{ .allocator = self.gpa }, threadFn, .{ self, blockId }) catch |err| logAndPanic(err);
+                    }
+
+                    // Read Blocks
+                    var blockId: usize = 0;
+                    var iter = ChunkIterator(u8){
+                        .buffer = self.mappedFile.slice[0..],
+                        .size = self.blockSize,
+                    };
+                    while (iter.next()) |block| : (blockId += 1) {
+                        defer self.thread_locks[blockId].set();
+                        self.blocks[blockId] = block;
+                    }
+
+                    // Parse the last block on the main thread
+                    self.threadFn(self.blockCount - 1);
+
+                    // Wait for the remaining threads to finish
+                    const final_map: *BRCMapUnmanaged = &self.maps[self.blockCount - 1];
+                    for (1..self.blockCount) |I| {
+                        const i = self.blockCount - 1 - I;
+                        self.thread_locks[i].wait();
+                        final_map.merge(&self.maps[i]);
+                    }
+
+                    // TODO Combine and parse partial Lines
+                    var line_buffer: [128]u8 = undefined;
+                    var line_fba = std.heap.FixedBufferAllocator.init(line_buffer[0..]);
+                    const fba = line_fba.allocator();
+                    var key: []const u8 = undefined;
+                    var val: i32 = undefined;
+
+                    var slices: []const []const u8 = undefined;
+                    slices.len = 2;
+                    var line: []const u8 = std.mem.trim(u8, self.partial_lines[0], "\n");
+                    var Pi: usize = 1;
+                    while (Pi < self.partial_lines.len) : (Pi += 2) {
+                        parseLine(line, &key, &val);
+                        final_map.addOrUpdate(key, val);
+
+                        line_fba.end_index = 0;
+                        slices.ptr = @ptrCast(&self.partial_lines[Pi]);
+                        line = std.mem.concat(fba, u8, slices) catch |err| logAndPanic(err);
+                        line = std.mem.trim(u8, line, "\n");
+                    }
+                    parseLine(line, &key, &val);
+                    final_map.addOrUpdate(key, val);
+
+                    // Print the final map
+                    printBrcMapUnmanaged(self.gpa, final_map) catch |err| logAndPanic(err);
+                }
+
+                fn threadFn(self: *Self, blockId: usize) void {
+                    const lock: *ResetEvent = &self.thread_locks[blockId];
+                    lock.wait();
+                    lock.reset();
+                    defer lock.set();
+
+                    var block: []const u8 = self.blocks[blockId];
+
+                    // Find partial lines and trim the block
+                    const start: usize = std.mem.indexOfScalar(u8, block, '\n') orelse 0; // TODO since i know that the block is aligned to 64 bytes, i can SIMD find this
+                    const pre_partial: []const u8 = block[0 .. start + 1];
+                    block = block[start + 1 ..];
+                    const end: usize = std.mem.lastIndexOfScalar(u8, block, '\n') orelse block.len; // TODO since i know that the block is aligned to 64 bytes, i can SIMD find this
+                    const post_partial: []const u8 = block[end..];
+                    block = block[0..end];
+
+                    // Write partial lines. We write both togehter to improve cache hit chance
+                    self.partial_lines[blockId * 2] = pre_partial;
+                    self.partial_lines[(blockId * 2) + 1] = post_partial;
+
+                    // Parse the block
+                    parseBlock(&self.maps[blockId], block);
+                }
+            };
+
+            var ctx: Context = undefined;
+            ctx.init(allocator, path);
+            defer ctx.deinit();
+            ctx.run();
+        }
+
         pub fn parseFilePath(allocator: std.mem.Allocator, filePath: []const u8) !void {
             const file: std.fs.File = try std.fs.cwd().openFile(filePath, .{});
             defer file.close();
@@ -282,6 +422,12 @@ fn getFileSize(file: std.fs.File) !u64 {
         },
         else => return file.getEndPos() catch (try file.stat()).size,
     }
+}
+
+fn getFilePathSize(path: []const u8) !u64 {
+    const file = try std.fs.cwd().openFile(path, .{});
+    defer file.close();
+    return try getFileSize(file);
 }
 
 /// Returns the smallest multiple of `k` that is >= `v`.
@@ -320,4 +466,20 @@ fn runDetached(config: Thread.SpawnConfig, comptime function: anytype, args: any
     } else {
         (try Thread.spawn(config, function, args)).detach();
     }
+}
+
+fn ChunkIterator(comptime T: type) type {
+    return struct {
+        const Self = @This();
+        buffer: []const T,
+        size: usize,
+
+        pub fn next(self: *Self) ?[]const T {
+            if (self.buffer.len == 0) return null;
+            const len = @min(self.size, self.buffer.len);
+            const rsp = self.buffer[0..len];
+            self.buffer = self.buffer[len..];
+            return rsp;
+        }
+    };
 }

@@ -377,11 +377,12 @@ pub fn main() !void {
     defer std.process.argsFree(static_allocator, args);
     const filepath = if (args.len == 2) args[1] else debugfilepath;
 
-    try Parser.DefaultParser.parseFilePath(static_allocator, filepath);
+    // try Parser.DefaultParser.parseFilePath(static_allocator, filepath);
+    try Parser.DefaultParser.parseFilePathMapped(static_allocator, filepath);
     //try baseline.read(filepath);
     //try bench(filepath);
     //try benchmarkReading(8 * 1024 * 1024, filepath);
-    //try parseFile_old(static_allocator, filepath);
+    // try parseFileMapped(static_allocator, filepath);
     //try debug();
     //try debug_hash();
     //try benchmarkLineSplitter();
