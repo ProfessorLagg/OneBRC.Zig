@@ -67,8 +67,7 @@ pub fn main() !void {
     defer std.process.argsFree(static_allocator, args);
     const filepath = if (args.len == 2) args[1] else debugfilepath;
 
-    // try Parser.DefaultParser.parseFilePath(static_allocator, filepath);
-    try Parser.DefaultParser.parseFilePathMapped(static_allocator, filepath);
+    try Parser.DefaultParser.parseFilePath(static_allocator, filepath);
     //try baseline.read(filepath);
     // try bench(filepath);
     _ = &filepath;
