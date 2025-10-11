@@ -3,7 +3,7 @@ const std = @import("std");
 const Alignment = std.mem.Alignment;
 const Thread = std.Thread;
 const ResetEvent = Thread.ResetEvent;
-const Mutex = Thread.Mutex;
+const Mutex = lib.SpinningMutex;
 
 const lib = @import("brc_lib");
 // const sorting = lib.sorting;
@@ -211,7 +211,6 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
                     var line: []const u8 = std.mem.trim(u8, self.partial_lines[0], "\n");
                     var Pi: usize = 1;
                     while (Pi < self.partial_lines.len) : (Pi += 2) {
-                        //lib.stdoutPrintln("reconstructed line: \"{s}\"", .{line});
                         parseLine(line, &key, &val);
                         final_map.addOrUpdate(key, val);
 
@@ -220,7 +219,6 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
                         line = std.mem.concat(fba, u8, slices) catch |err| logAndPanic(err);
                         line = std.mem.trim(u8, line, "\n");
                     }
-                    //lib.stdoutPrintln("reconstructed line: \"{s}\"", .{line});
                     parseLine(line, &key, &val);
                     final_map.addOrUpdate(key, val);
 
