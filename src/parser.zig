@@ -119,6 +119,7 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
             const Context = struct {
                 const Self = @This();
 
+                arena: std.heap.ArenaAllocator,
                 gpa: std.mem.Allocator,
                 file: std.fs.File,
                 fileSize: u64,
@@ -129,8 +130,9 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
                 partial_lines: [][]const u8,
                 thread_locks: []ResetEvent,
 
-                pub fn init(self: *Self, gpa: std.mem.Allocator, f: std.fs.File) void {
-                    self.gpa = gpa;
+                pub fn init(self: *Self, _gpa: std.mem.Allocator, f: std.fs.File) void {
+                    self.arena = std.heap.ArenaAllocator.init(_gpa);
+                    self.gpa = self.arena.allocator();
                     self.file = f;
 
                     // Collect neccecary information
@@ -144,10 +146,10 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
                     std.debug.assert((self.blockSize * self.blockCount) >= self.fileSize);
 
                     // Allocate buffers and maps
-                    self.blocks = alignedAllocPanic(gpa, []const u8, .@"64", self.blockCount);
-                    self.partial_lines = alignedAllocPanic(gpa, []const u8, .@"64", self.blockCount * 2); // TODO Use the pointer trick to turn these from 16 bytes per partial into 8 bytes
-                    self.maps = allocPanic(gpa, BRCMapUnmanaged, self.blockCount);
-                    self.thread_locks = allocPanic(gpa, ResetEvent, self.blockCount);
+                    self.blocks = alignedAllocPanic(self.gpa, []const u8, .@"64", self.blockCount);
+                    self.partial_lines = alignedAllocPanic(self.gpa, []const u8, .@"64", self.blockCount * 2); // TODO Use the pointer trick to turn these from 16 bytes per partial into 8 bytes
+                    self.maps = allocPanic(self.gpa, BRCMapUnmanaged, self.blockCount);
+                    self.thread_locks = allocPanic(self.gpa, ResetEvent, self.blockCount);
 
                     // Initialize everything that was just allocated
                     for (0..self.blockCount) |i| {
@@ -160,10 +162,7 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
                 }
 
                 pub fn deinit(self: *Self) void {
-                    defer self.gpa.free(self.maps); // Warning: this does not dealloc the map data!
-                    defer self.gpa.free(self.blocks); // Warning: this does not dealloc the block data!
-                    defer self.gpa.free(self.partial_lines); // Warning: this does not dealloc the line data!
-                    defer self.gpa.free(self.thread_locks);
+                    self.arena.deinit();
                 }
 
                 pub fn run(self: *Self) void {
@@ -189,22 +188,41 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
                     }
 
                     // Parse the last block on the main thread
+
                     self.threadFn(self.blockCount - 1);
 
                     // Wait for the remaining threads to finish
-                    for (self.thread_locks) |*tl| tl.wait();
-
-                    // TODO Combine & free maps
-                    const final_map: *BRCMapUnmanaged = &self.maps[0];
-                    defer final_map.deinit(self.gpa);
-                    for (self.maps[1..]) |*map| {
-                        final_map.mergeCloned(map, self.gpa) catch |err| logAndPanic(err);
-                        for (map.keys) |*k| if (k.notEmpty() and k.isLarge()) self.gpa.free(k.get());
-                        map.deinit(self.gpa);
+                    const final_map: *BRCMapUnmanaged = &self.maps[self.blockCount - 1];
+                    for (1..self.blockCount) |I| {
+                        const i = self.blockCount - 1 - I;
+                        self.thread_locks[i].wait();
+                        final_map.merge(&self.maps[i]);
                     }
-                    defer for (self.blocks[0..]) |*block| self.gpa.free(block.ptr[0..self.blockSize]);
 
-                    // TODO Combine Partial Lines
+                    // TODO Combine and parse partial Lines
+                    var line_buffer: [128]u8 = undefined;
+                    var line_fba = std.heap.FixedBufferAllocator.init(line_buffer[0..]);
+                    const fba = line_fba.allocator();
+                    var key: []const u8 = undefined;
+                    var val: i32 = undefined;
+
+                    var slices: []const []const u8 = undefined;
+                    slices.len = 2;
+                    var line: []const u8 = std.mem.trim(u8, self.partial_lines[0], "\n");
+                    var Pi: usize = 1;
+                    while (Pi < self.partial_lines.len) : (Pi += 2) {
+                        //lib.stdoutPrintln("reconstructed line: \"{s}\"", .{line});
+                        parseLine(line, &key, &val);
+                        final_map.addOrUpdate(key, val);
+
+                        line_fba.end_index = 0;
+                        slices.ptr = @ptrCast(&self.partial_lines[Pi]);
+                        line = std.mem.concat(fba, u8, slices) catch |err| logAndPanic(err);
+                        line = std.mem.trim(u8, line, "\n");
+                    }
+                    //lib.stdoutPrintln("reconstructed line: \"{s}\"", .{line});
+                    parseLine(line, &key, &val);
+                    final_map.addOrUpdate(key, val);
 
                     // Print the final map
                     printBrcMapUnmanaged(self.gpa, final_map) catch |err| logAndPanic(err);
@@ -232,7 +250,7 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
                     self.partial_lines[(blockId * 2) + 1] = post_partial;
 
                     // Parse the block
-                    parseBlockCloned(&self.maps[blockId], block, self.gpa);
+                    parseBlock(&self.maps[blockId], block);
                 }
             };
 

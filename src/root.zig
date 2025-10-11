@@ -352,3 +352,8 @@ pub fn stdoutPrint(comptime fmt: []const u8, args: anytype) void {
 pub fn stdoutPrintln(comptime fmt: []const u8, args: anytype) void {
     stdoutPrint(fmt ++ "\n", args);
 }
+pub fn clone(comptime T: type, allocator: std.mem.Allocator, items: []const T) ![]T {
+    const result: []T = try allocator.alloc(T, items.len);
+    @memcpy(result, items);
+    return result;
+}
