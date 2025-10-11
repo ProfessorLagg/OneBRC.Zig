@@ -323,8 +323,8 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
                         parseLine(line, &key, &val);
                         final_map.addOrUpdate(key, val);
 
-                        line_fba.end_index = 0;
                         slices.ptr = @ptrCast(&self.partial_lines[Pi]);
+                        line_fba.end_index = 0;
                         line = std.mem.concat(fba, u8, slices) catch |err| logAndPanic(err);
                         line = std.mem.trim(u8, line, "\n");
                     }
@@ -348,7 +348,7 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
                         self.blocks[blockId] = block;
                         if (blockId < self.blockCount - 1) {
                             runDetached(.{ .allocator = self.gpa }, threadFn, .{ self, blockId }) catch |err| logAndPanic(err);
-                        }
+                        } else if (blockId >= self.blockCount) unreachable;
                     }
 
                     // Parse the last block on the main thread
@@ -382,6 +382,7 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
                     const pre_partial: []const u8 = block[0 .. start + 1];
                     block = block[start + 1 ..];
                     const end: usize = std.mem.lastIndexOfScalar(u8, block, '\n') orelse block.len; // TODO since i know that the block is aligned to 64 bytes, i can SIMD find this
+                    // const end: usize = std.mem.indexOfScalarPos(u8, block, block.len - @min(block.len, 128), '\n') orelse 0;
                     const post_partial: []const u8 = block[end..];
                     block = block[0..end];
 
