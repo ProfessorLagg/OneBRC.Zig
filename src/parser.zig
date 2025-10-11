@@ -336,21 +336,19 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
                     std.debug.assert(self.thread_locks.len == self.blockCount);
                     std.debug.assert(self.blocks.len == self.blockCount);
 
-                    // Start Threads
-                    for (0..self.blockCount - 1) |blockId| { // OBS! We dont start a thread for the last block, as it will be parsed on the main thread
-                        self.thread_locks[blockId].reset();
-                        runDetached(.{ .allocator = self.gpa }, threadFn, .{ self, blockId }) catch |err| logAndPanic(err);
-                    }
-
-                    // Read Blocks
+                    // Read Blocks and start threads
                     var blockId: usize = 0;
                     var iter = ChunkIterator(u8){
                         .buffer = self.mappedFile.slice[0..],
                         .size = self.blockSize,
                     };
                     while (iter.next()) |block| : (blockId += 1) {
+                        self.thread_locks[blockId].reset();
                         defer self.thread_locks[blockId].set();
                         self.blocks[blockId] = block;
+                        if (blockId < self.blockCount - 1) {
+                            runDetached(.{ .allocator = self.gpa }, threadFn, .{ self, blockId }) catch |err| logAndPanic(err);
+                        }
                     }
 
                     // Parse the last block on the main thread
