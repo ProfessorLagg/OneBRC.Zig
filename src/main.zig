@@ -28,9 +28,7 @@ const static_allocator: std.mem.Allocator = b: {
 };
 
 fn bench(filepath: []const u8) !void {
-    var stderr_buffer: [1024]u8 = undefined;
-    var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
-    const stderr = &stderr_writer.interface;
+    const stderr = lib.getStderr();
     defer stderr.flush() catch unreachable;
 
     try stderr.print("Parsing file: {s}\n", .{filepath});
@@ -38,8 +36,7 @@ fn bench(filepath: []const u8) !void {
 
     const fileSize = (try (try std.fs.cwd().openFile(filepath, .{})).stat()).size;
     var timer = try std.time.Timer.start();
-    try Parser.DefaultParser.parseFilePathMapped(static_allocator, filepath);
-    // try parseFile(static_allocator, filepath);
+    try Parser.DefaultParser.parseFilePath(static_allocator, filepath);
     const ns = timer.read();
     const ns_f: f64 = @floatFromInt(ns);
     const s_f: f64 = ns_f / @as(f64, @floatFromInt(std.time.ns_per_s));
@@ -58,14 +55,8 @@ pub fn main() !void {
     defer std.process.argsFree(static_allocator, args);
     const filepath = if (args.len == 2) args[1] else debugfilepath;
 
-    const stderr = lib.getStderr();
-    defer stderr.flush() catch unreachable;
-
-    // try lib.printMemoryStats(*align(64) const [64]u8, stderr);
-    // try lib.printMemoryStats(@Vector(64, u8), stderr);
-
-    try Parser.DefaultParser.parseFilePath(static_allocator, filepath);
+    //try Parser.DefaultParser.parseFilePath(static_allocator, filepath);
     //try baseline.read(filepath);
-    // try bench(filepath);
+    try bench(filepath);
     _ = &filepath;
 }

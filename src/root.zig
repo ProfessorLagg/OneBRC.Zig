@@ -172,7 +172,6 @@ test eqlBytes {
                 std.log.err("eqlBytes failed at comparing \"{s}\" to \"{s}\". Expected {any} but found {any}", .{ a, b, expect, found });
                 return err;
             };
-            // std.log.debug("eqlBytes succeeded at comparing \"{s}\" to \"{s}\". Expected {any} but found {any}", .{ a, b, expect, found });
         }
     }
 }
@@ -229,7 +228,6 @@ fn find_split_index2(line: []const u8) usize {
     bytes_int ^= 0x3b_3b_3b_3b;
     r += @as(u8, @truncate(bytes_int >> 1)) * 2;
     r += @as(u8, @truncate(bytes_int >> 2)) * 1;
-    //r += @as(u8, @truncate(bytes_int >> 3)) * 0;
     return left + r;
 }
 
@@ -251,7 +249,6 @@ test find_split_index {
         @memcpy(vstr0, _v0[0..]);
         var line0: []const u8 = line[0..];
         line0.len = kstr.len + 1 + vstr0.len;
-        // std.debug.print("line0: \"{s}\"\n", .{line0});
         try std.testing.expectEqual(std.mem.indexOfScalar(u8, line0, ';'), find_split_index(line0));
 
         var vstr1 = line[i + 1 ..];
@@ -259,7 +256,6 @@ test find_split_index {
         @memcpy(vstr1, _v1[0..]);
         var line1: []const u8 = line[0..];
         line1.len = kstr.len + 1 + vstr1.len;
-        // std.debug.print("line1: \"{s}\"\n", .{line1});
         try std.testing.expectEqual(std.mem.indexOfScalar(u8, line1, ';'), find_split_index(line1));
 
         var vstr2 = line[i + 1 ..];
@@ -267,7 +263,6 @@ test find_split_index {
         @memcpy(vstr2, _v2[0..]);
         var line2: []const u8 = line[0..];
         line2.len = kstr.len + 1 + vstr2.len;
-        // std.debug.print("line2: \"{s}\"\n", .{line2});
         try std.testing.expectEqual(std.mem.indexOfScalar(u8, line2, ';'), find_split_index(line2));
 
         var vstr3 = line[i + 1 ..];
@@ -275,7 +270,6 @@ test find_split_index {
         @memcpy(vstr3, _v3[0..]);
         var line3: []const u8 = line[0..];
         line3.len = kstr.len + 1 + vstr3.len;
-        // std.debug.print("line3: \"{s}\"\n\n", .{line3});
         try std.testing.expectEqual(std.mem.indexOfScalar(u8, line3, ';'), find_split_index(line3));
     }
 }

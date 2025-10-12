@@ -137,13 +137,10 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
                     self.thread_locks = allocPanic(self.gpa, Mutex, self.blockCount);
 
                     // Initialize everything that was just allocated
-                    for (0..self.blockCount) |i| {
-                        self.blocks[i] = std.mem.zeroes([]const u8);
-                        self.partial_lines[i * 2] = std.mem.zeroes([]const u8);
-                        self.partial_lines[(i * 2) + 1] = std.mem.zeroes([]const u8);
-                        self.maps[i] = BRCMapUnmanaged.init(self.gpa) catch |err| logAndPanic(err);
-                        self.thread_locks[i] = .{};
-                    }
+                    @memset(self.blocks, std.mem.zeroes([]const u8));
+                    @memset(self.partial_lines, std.mem.zeroes([]const u8));
+                    @memset(self.thread_locks, Mutex{});
+                    for (0..self.blockCount) |i| self.maps[i] = BRCMapUnmanaged.init(self.gpa) catch |err| logAndPanic(err);
                 }
 
                 pub fn deinit(self: *Self) void {
