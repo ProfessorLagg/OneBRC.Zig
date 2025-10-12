@@ -47,6 +47,7 @@ pub fn BRCMap(comptime capacity: comptime_int) type {
 }
 
 pub fn BRCMapUnmanaged(comptime capacity: comptime_int) type {
+    comptime if (capacity > std.math.maxInt(u32)) @compileError("capacity must fit inside a u32");
     return struct {
         const Self = @This();
         count: usize = 0,
@@ -84,29 +85,31 @@ pub fn BRCMapUnmanaged(comptime capacity: comptime_int) type {
             new,
         };
         const KeyIndexResult = union(KeyIndexResultType) {
-            found: usize,
-            new: usize,
+            found: u32,
+            new: u32,
         };
 
         fn findKeyIndex(self: *const Self, key: []const u8) KeyIndexResult {
-            const base_index: usize = getBaseIndex(key);
-            if (self.keys[base_index].empty()) return KeyIndexResult{ .new = base_index };
-            if (memeql(key, self.keys[base_index].get())) return KeyIndexResult{ .found = base_index };
-
-            const key_sso: sso = sso.initFrom(key);
-            for (1..capacity) |offset| {
-                const index: usize = (base_index + offset) % capacity;
-                if (self.keys[index].empty()) return KeyIndexResult{ .new = index };
-                if (sso.eql(&key_sso, &self.keys[index])) return KeyIndexResult{ .found = index };
+            @setRuntimeSafety(false);
+            const base_index: u32 = @truncate(getBaseIndex(key));
+            var offset: u32 = 0;
+            while (offset < capacity) : (offset += 1) {
+                const index: u32 = (base_index + offset) % capacity;
+                const key_str = self.keys[index].get();
+                if (key_str.len == 0) {
+                    return KeyIndexResult{ .new = @truncate(index) };
+                } else if (std.mem.eql(u8, key_str, key)) {
+                    return KeyIndexResult{ .found = @truncate(index) };
+                }
             }
-            std.log.err("Could not insert key: \"{s}\" into BRCMap", .{key});
+            // std.log.err("Could not insert key: \"{s}\" into BRCMap", .{key});
             unreachable;
         }
 
         pub fn addOrUpdate(self: *Self, key: []const u8, value: i32) void {
             switch (self.findKeyIndex(key)) {
                 .found => |index| {
-                    std.debug.assert(self.keys[index].notEmpty());
+                    std.debug.assert(self.keys[index].isNotEmpty());
                     self.values[index].add(value);
                 },
                 .new => |index| {
@@ -120,7 +123,7 @@ pub fn BRCMapUnmanaged(comptime capacity: comptime_int) type {
         pub fn addOrUpdateCloned(self: *Self, gpa: std.mem.Allocator, key: []const u8, value: i32) !void {
             switch (self.findKeyIndex(key)) {
                 .found => |index| {
-                    std.debug.assert(self.keys[index].notEmpty());
+                    std.debug.assert(self.keys[index].isNotEmpty());
                     self.values[index].add(value);
                 },
                 .new => |index| {
@@ -141,7 +144,7 @@ pub fn BRCMapUnmanaged(comptime capacity: comptime_int) type {
         pub fn addOrMerge(self: *Self, key: []const u8, stat: *const Stat) void {
             switch (self.findKeyIndex(key)) {
                 .found => |index| {
-                    std.debug.assert(self.keys[index].notEmpty());
+                    std.debug.assert(self.keys[index].isNotEmpty());
                     self.values[index].mergeWith(stat);
                 },
                 .new => |index| {
@@ -155,7 +158,7 @@ pub fn BRCMapUnmanaged(comptime capacity: comptime_int) type {
         pub fn addOrMergeCloned(self: *Self, key: []const u8, stat: *const Stat, gpa: std.mem.Allocator) !void {
             switch (self.findKeyIndex(key)) {
                 .found => |index| {
-                    std.debug.assert(self.keys[index].notEmpty());
+                    std.debug.assert(self.keys[index].isNotEmpty());
                     self.values[index].mergeWith(stat);
                 },
                 .new => |index| {
@@ -175,13 +178,13 @@ pub fn BRCMapUnmanaged(comptime capacity: comptime_int) type {
         /// Merges the key / value pairs from `other` into `self`
         pub fn merge(self: *Self, other: *Self) void {
             @setRuntimeSafety(false);
-            for (other.keys, other.values) |*k, *v| if (k.notEmpty()) self.addOrMerge(k.get(), v);
+            for (other.keys, other.values) |*k, *v| if (k.isNotEmpty()) self.addOrMerge(k.get(), v);
         }
 
         /// Merges the key / value pairs from `other` into `self`
         pub fn mergeCloned(self: *Self, other: *Self, gpa: std.mem.Allocator) !void {
             @setRuntimeSafety(false);
-            for (other.keys, other.values) |*k, *v| if (k.notEmpty()) try self.addOrMergeCloned(k.get(), v, gpa);
+            for (other.keys, other.values) |*k, *v| if (k.isNotEmpty()) try self.addOrMergeCloned(k.get(), v, gpa);
         }
     };
 }

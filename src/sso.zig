@@ -168,10 +168,10 @@ pub const sso16 = struct {
     }
 
     // Public functions
-    pub inline fn empty(self: *const sso16) bool {
+    pub inline fn isEmpty(self: *const sso16) bool {
         return self.data[0] == 0;
     }
-    pub inline fn notEmpty(self: *const sso16) bool {
+    pub inline fn isNotEmpty(self: *const sso16) bool {
         return self.data[0] > 0;
     }
     pub fn set(self: *sso16, str: []const u8) void {
@@ -213,6 +213,14 @@ pub const sso16 = struct {
             2 => eql_large(a, b),
             else => unreachable,
         };
+    }
+    pub fn eqlStr(self: *const sso16, str: []const u8) bool {
+        if (self.data[0] != str.len) return false;
+        const self_str = self.get();
+        for (self_str, str) |a, b| {
+            if (a != b) return false;
+        }
+        return true;
     }
     pub fn isSmall(self: *sso16) bool {
         return sso16.isSmallLen(self.data[0]);

@@ -41,7 +41,7 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
             defer allocator.free(entries);
             var entryId: usize = 0;
             for (0..map.keys.len) |i| {
-                if (map.keys[i].empty()) continue;
+                if (map.keys[i].isEmpty()) continue;
                 entries[entryId] = Entry{
                     .key = map.keys[i].get(),
                     .val = &map.values[i],
