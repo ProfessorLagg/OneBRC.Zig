@@ -189,8 +189,9 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
                         defer self.thread_locks[blockId].unlock();
                         self.blocks[blockId] = block;
                         if (blockId < self.blockCount - 1) {
+                            @branchHint(.likely);
                             runDetached(.{ .allocator = self.gpa }, threadFn, .{ self, blockId }) catch |err| logAndPanic(err);
-                        } else if (blockId >= self.blockCount) unreachable;
+                        }
                     }
 
                     // Parse the last block on the main thread
