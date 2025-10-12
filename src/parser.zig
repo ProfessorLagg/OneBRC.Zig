@@ -220,10 +220,11 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
                     var block: []const u8 = self.blocks[blockId];
 
                     // Find partial lines and trim the block
-                    const start: usize = std.mem.indexOfScalar(u8, block, '\n') orelse 0; // TODO since i know that the block is aligned to 64 bytes, i can SIMD find this
+                    const start: usize = std.mem.indexOfScalar(u8, block, '\n') orelse 0;
                     const pre_partial: []const u8 = block[0 .. start + 1];
                     block = block[start + 1 ..];
-                    const end: usize = std.mem.lastIndexOfScalar(u8, block, '\n') orelse block.len; // TODO since i know that the block is aligned to 64 bytes, i can SIMD find this
+                    // const end: usize = std.mem.lastIndexOfScalar(u8, block, '\n') orelse block.len;
+                    const end: usize = lib.lastIndexOfScalar2(block, '\n') orelse block.len;
                     // const end: usize = std.mem.indexOfScalarPos(u8, block, block.len - @min(block.len, 128), '\n') orelse 0;
                     const post_partial: []const u8 = block[end..];
                     block = block[0..end];

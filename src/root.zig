@@ -364,118 +364,43 @@ pub fn printMemoryStats(comptime T: type, writer: *std.io.Writer) !void {
     if (Ti == .pointer) try printMemoryStats(Ti.pointer.child, writer);
 }
 
-pub fn firstIndexInCacheLine(comptime value: u8, cacheLine: *const @Vector(64, u8)) ?u8 {
-    const vfnd: @Vector(64, u8) = comptime @splat(value);
-    if (std.simd.firstTrue(vfnd == cacheLine.*)) |_u6| return @as(u8, _u6);
+pub fn lastIndexOfScalar2(slice: []const u8, comptime value: u8) ?usize {
+    @setRuntimeSafety(false);
+    const vlen: comptime_int = comptime std.simd.suggestVectorLength(u8) orelse unreachable;
+
+    var i: usize = slice.len;
+    while (i != 0) {
+        i -= 1;
+        if (slice[i] == value) return i;
+        if(@intFromPtr(&slice[i]) % vlen == 0) break;
+    }
+
+    const vidx: @Vector(vlen, u8) = comptime std.simd.iota(u8, vlen);
+    const vfnd: @Vector(vlen, u8) = comptime @splat(value);
+    while (i >= vlen) {
+        i -= vlen;
+        const veq = @as(*const @Vector(vlen, u8),@ptrFromInt(@intFromPtr(&slice[i]))).* == vfnd;
+        const vi = @reduce(.Max, vidx * @as(@Vector(vlen, u8), @intFromBool(veq)));
+        if (vi > 0 or veq[0]) return @as(usize, vi) + i;
+    }
+
+    while (i != 0) {
+        i -= 1;
+        if (slice[i] == value) return i;
+    }
     return null;
 }
 
-pub fn lastIndexInCacheLine(comptime find: u8, cacheLine: *const @Vector(64, u8)) ?u8 {
-    const vidx: @Vector(64, u8) = comptime std.simd.iota(u8, 64);
-    const vfnd: @Vector(64, u8) = comptime @splat(find);
-    const veq: @Vector(64, u8) = @intFromBool(vfnd == cacheLine.*);
-    return @reduce(.Max, veq * vidx);
-}
-
-pub fn AlignSplit(comptime alignment: usize) type {
-    comptime if (!std.math.isPowerOfTwo(alignment)) unreachable;
-    return struct {
-        const Self = @This();
-        /// unaligned bytes at the start of the slice
-        pre: []const u8 = std.mem.zeroes([]const u8),
-        /// aligned bytes in the middle of the slice
-        aligned: []align(alignment) u8 = std.mem.zeroes([]align(alignment) u8),
-        /// unaligned bytes at the end of the slice
-        post: []const u8 = std.mem.zeroes([]const u8),
-
-        pub fn create(slice: []const u8) Self {
-            const addr: usize = @intFromPtr(slice.ptr);
-            const aligned_addr: usize = (addr + alignment - 1) & ~(alignment - 1);
-            const total_end: usize = addr + slice.len;
-            var r: Self = undefined;
-            if (aligned_addr >= total_end) {
-                r.pre.len = slice.len;
-                r.aligned.len = 0;
-                r.post.len = 0;
-            } else {
-                r.pre.len = aligned_addr - addr;
-                const remaining: usize = total_end - aligned_addr;
-                r.aligned.len = (remaining / alignment) * alignment;
-                r.post.len = remaining - r.aligned.len;
-            }
-            r.pre.ptr = slice.ptr;
-            r.aligned.ptr = @ptrFromInt(aligned_addr);
-            r.post.ptr = @ptrFromInt(aligned_addr + r.aligned.len);
-
-            std.debug.assert(std.mem.isAligned(@intFromPtr(r.aligned.ptr), alignment));
-            std.debug.assert(r.aligned.len % alignment == 0);
-            return r;
-        }
-
-        pub fn firstIndexOf(self: *const Self, comptime value: u8) ?usize {
-            // search pre-aligned for value
-            for (0..self.pre.len, self.pre) |i, b| {
-                if (b == value) return i;
-            }
-            // search aligned for value
-            const cache_lines: []@Vector(64, u8) = @ptrCast(self.aligned);
-            for (cache_lines) |*cl| {
-                if (firstIndexInCacheLine(value, cl)) |cli| return cli + self.pre.len;
-            }
-            // search post-aligned for value
-            for (0..self.post.len, self.post) |poi, b| {
-                if (b == value) return poi + self.pre.len + self.aligned.len;
-            }
-            return null;
-        }
-        pub fn lastIndexOf(self: *const Self, comptime value: u8) ?usize {
-            { // search post-aligned for value
-                var i: usize = self.post.len;
-                while (i != 0) {
-                    i -= 1;
-                    if (self.post[i] == value) return i + self.pre.len + self.aligned.len;
-                }
-            }
-            {
-                var i: usize = self.aligned.len;
-                while (i != 0) {
-                    i -= 64;
-                    std.debug.assert(std.mem.isAligned(@intFromPtr(&self.aligned[i]), 64));
-                    const cl: *const @Vector(64, u8) = @ptrFromInt(@intFromPtr(&self.aligned[i]));
-                    if (lastIndexInCacheLine(value, cl)) |cli| return cli + self.pre.len + i;
-                }
-            }
-            { // search pre-aligned for value
-                var i: usize = self.pre.len;
-                while (i != 0) {
-                    i -= 1;
-                    if (self.pre[i] == value) return i;
-                }
-            }
-            return null;
-        }
-    };
-}
-pub const AlignSplitCacheLine = AlignSplit(std.atomic.cache_line);
-
-test AlignSplitCacheLine {
+test lastIndexOfScalar2 {
     const len: comptime_int = 65356;
     const bytes: []u8 = try std.testing.allocator.alloc(u8, len);
-    defer std.testing.allocator.free(bytes);
+    defer std.testing.allocator.free(bytes[0..]);
     var prng = std.Random.DefaultPrng.init(2025_10_12);
     prng.fill(bytes[0..]);
-    const ascl: AlignSplitCacheLine = AlignSplitCacheLine.create(bytes[0..]);
 
-    inline for (0..std.math.maxInt(u8)) |b| {
-        // const exp_first = std.mem.indexOfScalar(u8, bytes[0..], b);
-        // const fnd_first = ascl.firstIndexOf(b);
-        // try std.testing.expectEqual(exp_first, fnd_first);
-
-        const exp_last = std.mem.lastIndexOfScalar(u8, bytes[0..], b);
-        const fnd_last = ascl.lastIndexOf(b);
-        std.testing.expectEqual(exp_last, fnd_last) catch |err| {
-            stderrPrintln("failed at finding last index of byte: 0x{X:0>2}", .{b});
-            return err;
-        };
+    inline for (0..0xFF) |b| {
+        const exp = std.mem.lastIndexOfScalar(u8, bytes[0..], b);
+        const fnd = lastIndexOfScalar2(bytes[0..], b);
+        try std.testing.expectEqual(exp, fnd);
     }
 }

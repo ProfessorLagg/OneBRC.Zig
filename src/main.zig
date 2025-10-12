@@ -69,12 +69,11 @@ pub fn main() !void {
 
     const stderr = lib.getStderr();
     defer stderr.flush() catch unreachable;
+
     // try lib.printMemoryStats(*align(64) const [64]u8, stderr);
     // try lib.printMemoryStats(@Vector(64, u8), stderr);
 
-    
-
-    // try Parser.DefaultParser.parseFilePath(static_allocator, filepath);
+    try Parser.DefaultParser.parseFilePath(static_allocator, filepath);
     //try baseline.read(filepath);
     // try bench(filepath);
     _ = &filepath;
