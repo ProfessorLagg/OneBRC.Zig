@@ -170,7 +170,7 @@ Write-Host "Worst : $($maxTime | Format-LargestUnitString) | $(Format-Throughput
 if($Count -ceq 5){
     $brcTicks = $times | %{[Convert]::ToDouble($_.Ticks)} | Sort-Object | Select -Skip 1 | select -SkipLast 1 | Measure-Object -Average | select -ExpandProperty Average
     $brcTime = [TimeSpan]::FromTicks($brcTicks);
-    Write-Host "BRC  : $($brcTime | Format-LargestUnitString) | $(Format-Throughput -Duration $brcTime -Size $FileSize)"
+    Write-Host "BRC   : $($brcTime | Format-LargestUnitString) | $(Format-Throughput -Duration $brcTime -Size $FileSize)"
 }
 
 
