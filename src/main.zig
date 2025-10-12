@@ -1,16 +1,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const lib = @import("brc_lib");
-const BRCmapCapacity: comptime_int = 1 << 16;
-const BRCMap: type = lib.BRCMap(BRCmapCapacity);
-const BRCMapUnmanaged: type = lib.BRCMapUnmanaged(BRCmapCapacity);
-const sso = lib.sso;
-const Stat = lib.Stat;
-const sorting = lib.sorting;
-const LineSplitter = lib.LineSplitter;
-const ResetEvent = std.Thread.ResetEvent;
 const baseline = @import("baseline.zig");
-
 const Parser = @import("parser.zig");
 
 // pub fn panic(msg: []const u8, trace: ?*std.builtin.StackTrace, _: ?usize) noreturn {
