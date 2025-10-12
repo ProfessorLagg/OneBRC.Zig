@@ -372,14 +372,14 @@ pub fn lastIndexOfScalar2(slice: []const u8, comptime value: u8) ?usize {
     while (i != 0) {
         i -= 1;
         if (slice[i] == value) return i;
-        if(@intFromPtr(&slice[i]) % vlen == 0) break;
+        if (@intFromPtr(&slice[i]) % vlen == 0) break;
     }
 
     const vidx: @Vector(vlen, u8) = comptime std.simd.iota(u8, vlen);
     const vfnd: @Vector(vlen, u8) = comptime @splat(value);
     while (i >= vlen) {
         i -= vlen;
-        const veq = @as(*const @Vector(vlen, u8),@ptrFromInt(@intFromPtr(&slice[i]))).* == vfnd;
+        const veq = @as(*const @Vector(vlen, u8), @ptrFromInt(@intFromPtr(&slice[i]))).* == vfnd;
         const vi = @reduce(.Max, vidx * @as(@Vector(vlen, u8), @intFromBool(veq)));
         if (vi > 0 or veq[0]) return @as(usize, vi) + i;
     }
@@ -401,6 +401,41 @@ test lastIndexOfScalar2 {
     inline for (0..0xFF) |b| {
         const exp = std.mem.lastIndexOfScalar(u8, bytes[0..], b);
         const fnd = lastIndexOfScalar2(bytes[0..], b);
+        try std.testing.expectEqual(exp, fnd);
+    }
+}
+
+pub fn lastIndexOfScalar3(slice: []const u8, comptime value: u8) ?usize {
+    @setRuntimeSafety(false);
+    const vlen: comptime_int = comptime std.simd.suggestVectorLength(u8) orelse unreachable;
+
+    var i: usize = slice.len;
+    const vidx: @Vector(vlen, u8) = comptime std.simd.iota(u8, vlen);
+    const vfnd: @Vector(vlen, u8) = comptime @splat(value);
+    while (i >= vlen) {
+        i -= vlen;
+        const veq = @as(*const @Vector(vlen, u8), @ptrFromInt(@intFromPtr(&slice[i]))).* == vfnd;
+        const vi = @reduce(.Max, vidx * @as(@Vector(vlen, u8), @intFromBool(veq)));
+        if (vi > 0 or veq[0]) return @as(usize, vi) + i;
+    }
+
+    while (i != 0) {
+        i -= 1;
+        if (slice[i] == value) return i;
+    }
+    return null;
+}
+
+test lastIndexOfScalar3 {
+    const len: comptime_int = 65356;
+    const bytes: []u8 = try std.testing.allocator.alloc(u8, len);
+    defer std.testing.allocator.free(bytes[0..]);
+    var prng = std.Random.DefaultPrng.init(2025_10_12);
+    prng.fill(bytes[0..]);
+
+    inline for (0..0xFF) |b| {
+        const exp = std.mem.lastIndexOfScalar(u8, bytes[0..], b);
+        const fnd = lastIndexOfScalar3(bytes[0..], b);
         try std.testing.expectEqual(exp, fnd);
     }
 }

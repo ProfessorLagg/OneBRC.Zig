@@ -223,9 +223,7 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
                     const start: usize = std.mem.indexOfScalar(u8, block, '\n') orelse 0;
                     const pre_partial: []const u8 = block[0 .. start + 1];
                     block = block[start + 1 ..];
-                    // const end: usize = std.mem.lastIndexOfScalar(u8, block, '\n') orelse block.len;
-                    const end: usize = lib.lastIndexOfScalar2(block, '\n') orelse block.len;
-                    // const end: usize = std.mem.indexOfScalarPos(u8, block, block.len - @min(block.len, 128), '\n') orelse 0;
+                    const end: usize = lib.lastIndexOfScalar3(block, '\n') orelse block.len;
                     const post_partial: []const u8 = block[end..];
                     block = block[0..end];
 
