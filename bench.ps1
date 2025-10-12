@@ -9,9 +9,7 @@ Param(
 
     [switch]$Clean,
 
-    [IntPtr]$Affinity = 0,
-
-    [switch]$AllowCache
+    [IntPtr]$Affinity = 0
 )
 
 cd $PSScriptRoot
@@ -97,8 +95,18 @@ function Format-Throughput{
     return "$($val.ToString('0.0000', [cultureinfo]::InvariantCulture)) $($tag)/s"
 }
 
-if(-not $AllowCache){
-    # TODO Self Elevate
+function Get-Median{
+    Param(
+        [long[]]$Values
+    )
+    $c = $Values.Count;
+    $v = @($Values | Sort-Object);
+    [int]$i0 = [Math]::Floor($c / 2);
+    [double]$r = $v[$i0]
+    if($c % 2 -eq 0){
+        $r = ($r + [double]$v[$i0 + 1]) / 2.0
+    }
+    return $r
 }
 
 [Int64]$FileSize = Get-ItemPropertyValue -Path $Path -Name Length
@@ -129,10 +137,6 @@ for($i = 0; $i -lt $Count; $i++){
     }
     Write-Progress "Benchmarking $($exeFile.FullName)" -Status $stat -PercentComplete $prog -SecondsRemaining $secondsLeft
 
-    if(-not $AllowCache){
-        Rammap -Ew;
-        Rammap -E0;
-    }
     $proc = Start-Process -FilePath $exeFile.FullName -ArgumentList $Path -WorkingDirectory $PSScriptRoot -PassThru -WindowStyle Hidden
     if($Affinity64 -gt [uint64]0){
         $proc.ProcessorAffinity = $Affinity;    
@@ -147,18 +151,21 @@ for($i = 0; $i -lt $Count; $i++){
     [GC]::Collect([GC]::MaxGeneration, [GCCollectionMode]::Optimized, $true, $true)
 }
 
-$times = $times | Sort-Object -Descending
+$times = $times | Sort-Object
+$ticks = [long[]]@($times | %{[Convert]::ToDouble($_.Ticks)})
+$tickMeasure = $ticks | Measure-Object -Minimum -Average -Maximum
 
-$tickMeasure = $times | %{[Convert]::ToDouble($_.Ticks)} | Measure-Object -Minimum -Average -Maximum
+$medianTime = [TimeSpan]::FromTicks($(Get-Median -Values $ticks));
 $minTime = [TimeSpan]::FromTicks($tickMeasure.Minimum);
 $avgTime = [TimeSpan]::FromTicks($tickMeasure.Average);
 $maxTime = [TimeSpan]::FromTicks($tickMeasure.Maximum);
 
 Write-Host "Times:"
 $times | %{Write-Host "`t$($_ | Format-LargestUnitString) | $(Format-Throughput -Duration $_ -Size $FileSize)"}
-Write-Host "Best : $($minTime | Format-LargestUnitString) | $(Format-Throughput -Duration $minTime -Size $FileSize)"
-Write-Host "Mean : $($avgTime | Format-LargestUnitString) | $(Format-Throughput -Duration $avgTime -Size $FileSize)"
-Write-Host "Worst: $($maxTime | Format-LargestUnitString) | $(Format-Throughput -Duration $maxTime -Size $FileSize)"
+Write-Host "Best  : $($minTime | Format-LargestUnitString) | $(Format-Throughput -Duration $minTime -Size $FileSize)"
+Write-Host "Mean  : $($avgTime | Format-LargestUnitString) | $(Format-Throughput -Duration $avgTime -Size $FileSize)"
+Write-Host "Median: $($medianTime | Format-LargestUnitString) | $(Format-Throughput -Duration $medianTime -Size $FileSize)"
+Write-Host "Worst : $($maxTime | Format-LargestUnitString) | $(Format-Throughput -Duration $maxTime -Size $FileSize)"
 
 if($Count -ceq 5){
     $brcTicks = $times | %{[Convert]::ToDouble($_.Ticks)} | Sort-Object | Select -Skip 1 | select -SkipLast 1 | Measure-Object -Average | select -ExpandProperty Average
