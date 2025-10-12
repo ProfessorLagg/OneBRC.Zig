@@ -36,8 +36,8 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(exe);
 
-    const exe_asm = b.addInstallBinFile(exe.getEmittedAsm(), "exe.s");
-    b.getInstallStep().dependOn(&exe_asm.step);
+    //const exe_asm = b.addInstallBinFile(exe.getEmittedAsm(), "exe.s");
+    //b.getInstallStep().dependOn(&exe_asm.step);
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
