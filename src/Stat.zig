@@ -15,6 +15,14 @@ pub fn init(val: i32) Stat {
     };
 }
 
+/// Overrides the Stat with a single new entry
+pub inline fn set(self: *Stat, val: i32) void {
+    self.sum = val;
+    self.count = 1;
+    self.max = val;
+    self.min = val;
+}
+
 pub fn meanF(self: *const Stat) f64 {
     const sumf: f64 = @floatFromInt(self.sum);
     const countf: f64 = @floatFromInt(self.count * 10);

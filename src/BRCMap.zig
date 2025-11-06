@@ -114,7 +114,8 @@ pub fn BRCMapUnmanaged(comptime capacity: comptime_int) type {
                 },
                 .new => |index| {
                     self.keys[index].set(key);
-                    self.values[index] = Stat.init(value);
+                    // self.values[index] = Stat.init(value);
+                    self.values[index].set(value);
                     self.count += 1;
                 },
             }
