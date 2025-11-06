@@ -1,12 +1,12 @@
 const std = @import("std");
 pub const Stat = @This();
 
-sum: i64 = 0,
+sum: i48 = 0,
 count: u32 = 0,
-max: i32 = std.math.minInt(i32),
-min: i32 = std.math.maxInt(i32),
+max: i16 = std.math.minInt(i16),
+min: i16 = std.math.maxInt(i16),
 
-pub fn init(val: i32) Stat {
+pub fn init(val: i16) Stat {
     return Stat{
         .sum = val,
         .count = 1,
@@ -16,7 +16,7 @@ pub fn init(val: i32) Stat {
 }
 
 /// Overrides the Stat with a single new entry
-pub inline fn set(self: *Stat, val: i32) void {
+pub inline fn set(self: *Stat, val: i16) void {
     self.sum = val;
     self.count = 1;
     self.max = val;
@@ -35,7 +35,7 @@ pub fn maxF(self: *const Stat) f64 {
     return @as(f64, @floatFromInt(self.max)) / 10.0;
 }
 
-pub fn add(self: *Stat, val: i32) void {
+pub fn add(self: *Stat, val: i16) void {
     self.sum += @intCast(val);
     self.count += 1;
     self.max = @max(self.max, val);

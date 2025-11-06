@@ -106,7 +106,7 @@ pub fn BRCMapUnmanaged(comptime capacity: comptime_int) type {
             unreachable;
         }
 
-        pub fn addOrUpdate(self: *Self, key: []const u8, value: i32) void {
+        pub fn addOrUpdate(self: *Self, key: []const u8, value: i16) void {
             switch (self.findKeyIndex(key)) {
                 .found => |index| {
                     std.debug.assert(self.keys[index].isNotEmpty());
@@ -121,7 +121,7 @@ pub fn BRCMapUnmanaged(comptime capacity: comptime_int) type {
             }
         }
 
-        pub fn addOrUpdateCloned(self: *Self, gpa: std.mem.Allocator, key: []const u8, value: i32) !void {
+        pub fn addOrUpdateCloned(self: *Self, gpa: std.mem.Allocator, key: []const u8, value: i16) !void {
             switch (self.findKeyIndex(key)) {
                 .found => |index| {
                     std.debug.assert(self.keys[index].isNotEmpty());

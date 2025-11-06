@@ -65,7 +65,7 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
             try stdout.print(", {f}}}", .{entries[entries.len - 1]});
         }
 
-        pub fn parseLine(line: []const u8, out_key: *[]const u8, out_val: *i32) void {
+        pub fn parseLine(line: []const u8, out_key: *[]const u8, out_val: *i16) void {
             std.debug.assert(line.len >= 5);
             std.debug.assert(line[0] != '\n');
             std.debug.assert(line[line.len - 1] != '\n');
@@ -93,7 +93,7 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
             var lineId: usize = 0;
             while (iter.next()) |line| : (lineId += 1) {
                 var key: []const u8 = undefined;
-                var val: i32 = undefined;
+                var val: i16 = undefined;
                 parseLine(line, &key, &val);
 
                 map.addOrUpdate(key, val);
@@ -152,7 +152,7 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
                     var line_fba = std.heap.FixedBufferAllocator.init(line_buffer[0..]);
                     const fba = line_fba.allocator();
                     var key: []const u8 = undefined;
-                    var val: i32 = undefined;
+                    var val: i16 = undefined;
 
                     var slices: []const []const u8 = undefined;
                     slices.len = 2;
