@@ -56,7 +56,26 @@ pub fn main() !void {
     const filepath = if (args.len == 2) args[1] else debugfilepath;
 
     try Parser.DefaultParser.parseFilePath(static_allocator, filepath);
+    // try dbg();
     //try baseline.read(filepath);
     // try bench(filepath);
     _ = &filepath;
+}
+
+fn dbg() !void {
+    const min: comptime_int = -999;
+    const max: comptime_int = 999;
+
+    var buf: [64]u8 = undefined;
+    var i: i16 = min;
+    @memset(buf[0..], 0);
+    while (i <= max) : (i += 1) {
+        const f: f128 = @as(f128, @floatFromInt(i)) / 10.0;
+        const s = try std.fmt.bufPrint(buf[0..], "{d:.1}", .{f});
+        const p = lib.brcIntParseAsm(s);
+        std.testing.expectEqual(i, p) catch |e| {
+            std.log.err("Parsed \"{s}\" wrong. Expected {d} but found {d}", .{ s, i, p });
+            return e;
+        };
+    }
 }
