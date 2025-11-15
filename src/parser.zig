@@ -4,7 +4,7 @@ const Alignment = std.mem.Alignment;
 const Thread = std.Thread;
 const ResetEvent = Thread.ResetEvent;
 const Mutex = Thread.Mutex;
-// const Mutex = lib.SpinningMutex;
+//const Mutex = lib.SpinningMutex;
 
 const lib = @import("brc_lib");
 const LineSplitter = lib.LineSplitter;
@@ -182,17 +182,23 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
                         .size = self.blockSize,
                     };
                     while (iter.next()) |block| : (blockId += 1) {
-                        self.thread_locks[blockId].lock();
-                        defer self.thread_locks[blockId].unlock();
-                        self.blocks[blockId] = block;
-                        if (blockId < self.blockCount - 1) {
-                            @branchHint(.likely);
-                            runDetached(.{ .allocator = self.gpa }, threadFn, .{ self, blockId }) catch |err| logAndPanic(err);
+                        {
+                            self.thread_locks[blockId].lock();
+                            defer self.thread_locks[blockId].unlock();
+                            self.blocks[blockId] = block;
+                            lib.stderrPrintln("Set   self.blocks[{d}]: {{ptr: {*}, len: {d}}}", .{ blockId, self.blocks[blockId].ptr, self.blocks[blockId].len });
                         }
+
+                        //if (blockId < self.blockCount - 1) { // save 1 block for the main tread
+                            //@branchHint(.likely);
+                            lib.stderrPrintln("Start self.blocks[{d}]: {{ptr: {*}, len: {d}}}", .{ blockId, self.blocks[blockId].ptr, self.blocks[blockId].len });
+                            runDetached(.{ .allocator = self.gpa }, threadFn, .{ self, blockId }) catch |err| logAndPanic(err);
+                            lib.stderrPrint("\n",.{});
+                        //}
                     }
 
                     // Parse the last block on the main thread
-                    self.threadFn(self.blockCount - 1);
+                    //self.threadFn(self.blockCount - 1);
 
                     // Wait for the remaining threads to finish
                     const final_map: *BRCMapUnmanaged = &self.maps[self.blockCount - 1];
@@ -210,17 +216,17 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
                 }
 
                 fn threadFn(self: *Self, blockId: usize) void {
-                    const lock: *Mutex = &self.thread_locks[blockId];
-                    lock.lock();
-                    defer lock.unlock();
+                    Mutex.lock(&self.thread_locks[blockId]);
+                    defer Mutex.unlock(&self.thread_locks[blockId]);
 
-                    var block: []const u8 = self.blocks[blockId];
-
+                    var block: []const u8 = self.blocks[blockId][0..];
+                    lib.stderrPrintln("Parse self.blocks[{d}]: {{ptr: {*}, len: {d}}}", .{ blockId, self.blocks[blockId].ptr, self.blocks[blockId].len });
                     // Find partial lines and trim the block
                     const start: usize = std.mem.indexOfScalar(u8, block, '\n') orelse 0;
                     const pre_partial: []const u8 = block[0 .. start + 1];
                     block = block[start + 1 ..];
-                    const end: usize = lib.lastIndexOfScalar3(block, '\n') orelse block.len;
+                    //const end: usize = lib.lastIndexOfScalar3(block, '\n') orelse block.len;
+                    const end: usize = std.mem.lastIndexOfScalar(u8, block, '\n') orelse block.len;
                     const post_partial: []const u8 = block[end..];
                     block = block[0..end];
 
@@ -297,7 +303,11 @@ fn logAndPanic(err: anyerror) noreturn {
 
 fn runDetached(config: Thread.SpawnConfig, comptime function: anytype, args: anytype) !void {
     if (builtin.single_threaded) {
-        @call(.auto, function, args);
+        @call(
+            if (builtin.mode == .Debug) .never_inline else .auto,
+            function,
+            args,
+        );
     } else {
         (try Thread.spawn(config, function, args)).detach();
     }

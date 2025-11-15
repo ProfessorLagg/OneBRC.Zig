@@ -114,7 +114,7 @@ pub fn brcIntParseAsm(str: []const u8) i16 {
 
         \\sub %rdx, %rcx
         // Now rcx contains length of actual number chars
-        
+
         \\xor %ax, %ax
         \\movb (%rsi), %al
         \\sub $48, %al
@@ -138,12 +138,10 @@ pub fn brcIntParseAsm(str: []const u8) i16 {
         \\add %r8w, %ax
         \\add %r9w, %ax
         \\imul %bx, %ax
-        
         : [ret] "={ax}" (-> i16),
         : [ptr] "{rsi}" (str.ptr),
           [len] "{rcx}" (str.len),
-        :.{.rdx = true, .bx = true}
-    );
+        : .{ .rdx = true, .bx = true });
 }
 test brcIntParseAsm {
     const min: comptime_int = -999;
