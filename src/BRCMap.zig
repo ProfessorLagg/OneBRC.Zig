@@ -80,112 +80,103 @@ pub fn BRCMapUnmanaged(comptime capacity: comptime_int) type {
             return hash & comptime (capacity - 1);
         }
 
-        const KeyIndexResultType = enum {
-            found,
-            new,
-        };
-        const KeyIndexResult = union(KeyIndexResultType) {
-            found: u32,
-            new: u32,
+        const KeyIndexResult = struct {
+            isNew: bool,
+            index: u32,
+
+            pub inline fn setFound(self: *@This(), idx: u32) void {
+                self.index = idx;
+                self.isNew = false;
+            }
+
+            pub inline fn setNew(self: *@This(), idx: u32) void {
+                self.index = idx;
+                self.isNew = true;
+            }
         };
 
+        test KeyIndexResult {
+            var kir: KeyIndexResult = undefined;
+            const arr: []u8 = b: {
+                var r: []u8 = undefined;
+                r.len = @sizeOf(KeyIndexResult);
+                r.ptr = @ptrCast(&kir);
+                break :b r;
+            };
+            var i: u32 = 0;
+            while (i < capacity) : (i += 1) {
+                @memset(arr[0..], 0);
+                kir.setFound(i);
+                try std.testing.expectEqual(kir.isNew, false);
+                try std.testing.expectEqual(kir.index, i);
+
+                @memset(arr[0..], 0);
+                kir.setNew(i);
+                try std.testing.expectEqual(kir.isNew, true);
+                try std.testing.expectEqual(kir.index, i);
+            }
+        }
+
         fn findKeyIndex(self: *const Self, key: []const u8) KeyIndexResult {
-            @setRuntimeSafety(false);
-            const base_index: u32 = @truncate(getBaseIndex(key));
-            var offset: u32 = 0;
-            while (offset < capacity) : (offset += 1) {
-                const index: u32 = (base_index + offset) % capacity;
-                const key_str = self.keys[index].get();
+            var r: KeyIndexResult = .{
+                .isNew = false,
+                .index = @truncate(getBaseIndex(key)),
+            };
+            for (0..capacity) |_| {
+                const key_str = self.keys[r.index].get();
                 if (key_str.len == 0) {
-                    return KeyIndexResult{ .new = @truncate(index) };
+                    @branchHint(.unlikely);
+                    r.isNew = true;
+                    return r;
                 } else if (std.mem.eql(u8, key_str, key)) {
-                    return KeyIndexResult{ .found = @truncate(index) };
+                    @branchHint(.likely);
+                    return r;
+                } else {
+                    @branchHint(.cold);
+                    r.index = (r.index + 1) % capacity;
                 }
             }
-            // std.log.err("Could not insert key: \"{s}\" into BRCMap", .{key});
             unreachable;
         }
 
         pub fn addOrUpdate(self: *Self, key: []const u8, value: i16) void {
-            switch (self.findKeyIndex(key)) {
-                .found => |index| {
-                    std.debug.assert(self.keys[index].isNotEmpty());
-                    self.values[index].add(value);
-                },
-                .new => |index| {
-                    self.keys[index].set(key);
-                    // self.values[index] = Stat.init(value);
-                    self.values[index].set(value);
-                    self.count += 1;
-                },
-            }
-        }
-
-        pub fn addOrUpdateCloned(self: *Self, gpa: std.mem.Allocator, key: []const u8, value: i16) !void {
-            switch (self.findKeyIndex(key)) {
-                .found => |index| {
-                    std.debug.assert(self.keys[index].isNotEmpty());
-                    self.values[index].add(value);
-                },
-                .new => |index| {
-                    if (sso.isLargeLen(key.len)) {
-                        const keyclone = try gpa.alloc(u8, key.len);
-                        @memcpy(keyclone[0..], key[0..]);
-                        self.keys[index].set(keyclone);
-                    } else {
-                        self.keys[index].set(key);
-                    }
-
-                    self.values[index] = Stat.init(value);
-                    self.count += 1;
-                },
+            const ki = self.findKeyIndex(key);
+            if (ki.isNew) {
+                @branchHint(.unlikely);
+                self.keys[ki.index].set(key);
+                self.values[ki.index].set(value);
+                self.count += 1;
+            } else {
+                @branchHint(.likely);
+                std.debug.assert(self.keys[ki.index].isNotEmpty());
+                self.values[ki.index].add(value);
             }
         }
 
         pub fn addOrMerge(self: *Self, key: []const u8, stat: *const Stat) void {
-            switch (self.findKeyIndex(key)) {
-                .found => |index| {
-                    std.debug.assert(self.keys[index].isNotEmpty());
-                    self.values[index].mergeWith(stat);
-                },
-                .new => |index| {
-                    self.keys[index].set(key);
-                    self.values[index] = stat.*;
-                    self.count += 1;
-                },
-            }
-        }
-
-        pub fn addOrMergeCloned(self: *Self, key: []const u8, stat: *const Stat, gpa: std.mem.Allocator) !void {
-            switch (self.findKeyIndex(key)) {
-                .found => |index| {
-                    std.debug.assert(self.keys[index].isNotEmpty());
-                    self.values[index].mergeWith(stat);
-                },
-                .new => |index| {
-                    if (sso.isLargeLen(key.len)) {
-                        const keyclone = try gpa.alloc(u8, key.len);
-                        @memcpy(keyclone[0..], key[0..]);
-                        self.keys[index].set(keyclone);
-                    } else {
-                        self.keys[index].set(key);
-                    }
-                    self.values[index] = stat.*;
-                    self.count += 1;
-                },
+            const ki = self.findKeyIndex(key);
+            if (ki.isNew) {
+                @branchHint(.unlikely);
+                self.keys[ki.index].set(key);
+                self.values[ki.index] = stat.*;
+                self.count += 1;
+            } else {
+                @branchHint(.likely);
+                std.debug.assert(self.keys[ki.index].isNotEmpty());
+                self.values[ki.index].mergeWith(stat);
             }
         }
 
         /// Merges the key / value pairs from `other` into `self`
         pub fn merge(self: *Self, other: *Self) void {
-            @setRuntimeSafety(false);
             for (other.keys, other.values) |*k, *v| if (k.isNotEmpty()) self.addOrMerge(k.get(), v);
         }
-
-        /// Merges the key / value pairs from `other` into `self`
-        pub fn mergeCloned(self: *Self, other: *Self, gpa: std.mem.Allocator) !void {
-            @setRuntimeSafety(false);
-            for (other.keys, other.values) |*k, *v| if (k.isNotEmpty()) try self.addOrMergeCloned(k.get(), v, gpa);
-        }
     };
+}
+
+test BRCMapUnmanaged {
+    std.debug.print("Running test BRCMapUnmanaged\n", .{});
+    inline for (8..24) |i| {
+        _ = BRCMapUnmanaged(1 << i);
+    }
 }

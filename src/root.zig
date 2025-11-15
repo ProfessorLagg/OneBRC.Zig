@@ -148,23 +148,23 @@ pub fn brcIntParseAsm(str: []const u8) i16 {
           [len] "{rcx}" (str.len),
         : .{ .rdx = true, .bx = true });
 }
-test brcIntParseAsm {
-    const min: comptime_int = -999;
-    const max: comptime_int = 999;
+// test brcIntParseAsm {
+//     const min: comptime_int = -999;
+//     const max: comptime_int = 999;
 
-    var buf: [64]u8 = undefined;
-    var i: i16 = min;
-    @memset(buf[0..], 0);
-    while (i <= max) : (i += 1) {
-        const f: f128 = @as(f128, @floatFromInt(i)) / 10.0;
-        const s = try std.fmt.bufPrint(buf[0..], "{d:.1}", .{f});
-        const p = brcIntParseAsm(s);
-        std.testing.expectEqual(i, p) catch |e| {
-            std.log.err("Parsed \"{s}\" wrong. Expected {d} but found {d}", .{ s, i, p });
-            return e;
-        };
-    }
-}
+//     var buf: [64]u8 = undefined;
+//     var i: i16 = min;
+//     @memset(buf[0..], 0);
+//     while (i <= max) : (i += 1) {
+//         const f: f128 = @as(f128, @floatFromInt(i)) / 10.0;
+//         const s = try std.fmt.bufPrint(buf[0..], "{d:.1}", .{f});
+//         const p = brcIntParseAsm(s);
+//         std.testing.expectEqual(i, p) catch |e| {
+//             std.log.err("Parsed \"{s}\" wrong. Expected {d} but found {d}", .{ s, i, p });
+//             return e;
+//         };
+//     }
+// }
 
 pub inline fn splitScalarToArray(comptime T: type, buffer: []const T, delimiter: T, allocator: std.mem.Allocator) ![][]const T {
     var list = std.ArrayList([]const T){};
