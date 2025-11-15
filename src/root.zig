@@ -1,6 +1,11 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
+pub const debug = @import("debug.zig");
+test debug {
+    _ = debug;
+}
+
 pub const SpinningMutex = @import("SpinningMutex.zig");
 
 pub const c = @import("cImport.zig").c;
@@ -499,4 +504,10 @@ test lastIndexOfScalar3 {
         const fnd = lastIndexOfScalar3(bytes[0..], b);
         try std.testing.expectEqual(exp, fnd);
     }
+}
+
+pub inline fn sumLen(comptime T: type, slices: []const []const T) usize {
+    var r: usize = 0;
+    for (slices) |slice| r += slice.len;
+    return r;
 }
