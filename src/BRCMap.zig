@@ -1,7 +1,8 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const Stat = @import("Stat.zig");
-const sso = @import("sso.zig").sso16;
+const sso = @import("sso.zig");
+const sso16 = sso.sso16;
 
 const memeql = @import("root.zig").eqlBytes;
 
@@ -52,16 +53,16 @@ pub fn BRCMapUnmanaged(comptime capacity: comptime_int) type {
         const Self = @This();
         count: usize = 0,
         // TODO Test if it's better to keep these directly on the struct
-        keys: []sso = undefined,
+        keys: []sso16 = undefined,
         values: []Stat = undefined,
 
         pub fn init(allocator: std.mem.Allocator) !Self {
             const r: Self = Self{
                 .count = 0,
-                .keys = try allocator.alloc(sso, capacity),
+                .keys = try allocator.alloc(sso16, capacity),
                 .values = try allocator.alloc(Stat, capacity),
             };
-            @memset(r.keys, sso{});
+            @memset(r.keys, sso16{});
             @memset(r.values, Stat{});
             return r;
         }

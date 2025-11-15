@@ -314,3 +314,110 @@ test "magicnumber.asm" {
         }
     }
 }
+
+pub fn Array(
+    /// unsigned integer with log2 bitsize used for the length field. Defines the maximum length string that can be stored in the array
+    comptime T: type,
+    /// The maximum number of strings that can be stored in the array
+    comptime capacity: usize,
+) type {
+    comptime {
+        const ti = @typeInfo(T);
+        const errmsg = "Excpected unsigned integer with log2 bitsize, but found " ++ @typeName(T);
+        if (ti != .int) @compileError(errmsg);
+        if (ti.int.signedness != .unsigned) @compileError(errmsg);
+        if (!std.math.isPowerOfTwo(ti.int.bits)) @compileError(errmsg);
+    }
+    return struct {
+        const Self = @This();
+        const maxSmallLen = @sizeOf(usize);
+        const maxStringLen = std.math.maxInt(T);
+        const zeroString: []u8 = b: {
+            var r: []u8 = undefined;
+            r.len = 0;
+            r.ptr = @ptrFromInt(std.math.maxInt(usize));
+            break :b r;
+        };
+        lengths: [capacity]T = b: {
+            var r: [capacity]T = undefined;
+            @memset(r[0..], 0);
+            break :b r;
+        },
+        datas: [capacity]usize = b: {
+            var r: [capacity]usize = undefined;
+            @memset(r[0..], 0);
+            break :b r;
+        },
+
+        pub fn clearAll(self: *Self) void {
+            @memset(self.lengths[0..], 0);
+            @memset(self.datas[0..], zeroString.ptr);
+        }
+
+        pub fn clear(self: *Self, idx: T) void {
+            self.lengths[idx] = 0;
+            self.datas[idx] = zeroString.ptr;
+        }
+
+        pub inline fn isSmall(self: *const Self, idx: T) bool {
+            return self.lengths[idx] <= maxSmallLen;
+        }
+        pub inline fn isLarge(self: *const Self, idx: T) bool {
+            return self.lengths[idx] > maxSmallLen;
+        }
+        pub inline fn isEmpty(self: *const Self, idx: T) bool {
+            return self.lengths[idx] == 0;
+        }
+
+        inline fn getSmallPtr(self: *const Self, idx: T) [*]const u8 {
+            std.debug.assert(idx < capacity);
+            return @ptrCast(&self.datas[idx]);
+        }
+        inline fn getLargePtr(self: *const Self, idx: T) [*]const u8 {
+            std.debug.assert(idx < capacity);
+            return @ptrFromInt(self.datas[idx]);
+        }
+        inline fn getPtr(self: *const Self, idx: T) [*]const u8 {
+            return if (self.isSmall(idx)) self.getSmallPtr(idx) else self.getLargePtr(idx);
+        }
+
+        pub fn get(self: *const Self, idx: T) []const u8 {
+            std.debug.assert(idx < capacity);
+            return self.getPtr(idx)[0..self.lengths[idx]];
+        }
+
+        /// Sets the value at `idx` to `str`
+        /// WARNING! Can cause dangling poiinters if the current value at `idx` is an allocated string and this contains the only pointer to it. Use `setSafe` to avoid this issue
+        pub fn set(self: *Self, idx: T, str: []const u8) void {
+            std.debug.assert(idx < capacity);
+            std.debug.assert(str.len < maxStringLen);
+
+            self.lengths[idx] = @intCast(str.len);
+            if (str.len < maxSmallLen) {
+                const ptr: [*]u8 = @constCast(self.getSmallPtr(idx));
+                @memcpy(ptr[0..str.len], str.len);
+            } else {
+                self.datas[idx] = @intFromPtr(str.ptr);
+            }
+        }
+
+        /// Sets the value at `idx` to `str`
+        /// Returns the previous value if it was an allocated string
+        pub fn setSafe(self: *Self, idx: T, str: []const u8) ?[]const u8 {
+            std.debug.assert(idx < capacity);
+            std.debug.assert(str.len < maxStringLen);
+
+            const prev: ?[]const u8 = if (self.isSmall(idx)) null else self.getLargePtr(idx)[0..self.lengths[idx]];
+
+            self.lengths[idx] = @intCast(str.len);
+            if (str.len < maxSmallLen) {
+                const ptr: [*]u8 = @constCast(self.getSmallPtr(idx));
+                @memcpy(ptr[0..str.len], str.len);
+            } else {
+                self.datas[idx] = @intFromPtr(str.ptr);
+            }
+
+            return prev;
+        }
+    };
+}
