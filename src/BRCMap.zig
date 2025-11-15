@@ -123,12 +123,11 @@ pub fn BRCMapUnmanaged(comptime capacity: comptime_int) type {
                 .index = @truncate(getBaseIndex(key)),
             };
             for (0..capacity) |_| {
-                const key_str = self.keys[r.index].get();
-                if (key_str.len == 0) {
+                if (self.keys[r.index].isEmpty()) {
                     @branchHint(.unlikely);
                     r.isNew = true;
                     return r;
-                } else if (std.mem.eql(u8, key_str, key)) {
+                } else if (self.keys[r.index].eqlStr(key)) { 
                     @branchHint(.likely);
                     return r;
                 } else {

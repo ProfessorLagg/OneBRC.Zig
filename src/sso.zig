@@ -215,12 +215,7 @@ pub const sso16 = struct {
         };
     }
     pub fn eqlStr(self: *const sso16, str: []const u8) bool {
-        if (self.data[0] != str.len) return false;
-        const self_str = self.get();
-        for (self_str, str) |a, b| {
-            if (a != b) return false;
-        }
-        return true;
+        return std.mem.eql(u8, self.get(), str);
     }
     pub fn isSmall(self: *sso16) bool {
         return sso16.isSmallLen(self.data[0]);
