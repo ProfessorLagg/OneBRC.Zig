@@ -9,7 +9,7 @@ test debug {
 pub const SpinningMutex = @import("SpinningMutex.zig");
 
 pub const c = @import("cImport.zig").c;
-pub const _asm = @import("_asm.zig");
+pub const intrinsics = @import("intrinsics.zig");
 
 const fileMapping = @import("fileMapping.zig");
 pub const MappedFile = fileMapping.MappedFile;

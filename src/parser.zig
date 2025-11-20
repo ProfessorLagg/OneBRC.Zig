@@ -12,6 +12,30 @@ const Stat = lib.Stat;
 
 pub const DefaultParser = Parser(1 << 16);
 
+pub fn parseLine(line: []const u8, out_key: *[]const u8, out_val: *i16) void {
+    std.debug.assert(line.len >= 5);
+    std.debug.assert(line[0] != '\n');
+    std.debug.assert(line[line.len - 1] != '\n');
+    const split_index: usize = b: {
+        @setRuntimeSafety(false);
+        const left: usize = line.len - @min(line.len, 6);
+        const r: usize = (@intFromBool(line[left] == ';') * left) + (@intFromBool(line[left + 1] == ';') * (left + 1)) + (@intFromBool(line[left + 2] == ';') * (left + 2));
+        break :b r;
+    };
+    out_key.* = line[0..split_index];
+    const val_str: []const u8 = line[split_index + 1 ..];
+
+    std.debug.assert(out_key.len >= 1);
+    std.debug.assert(out_key.len <= 100);
+    std.debug.assert(out_key.len >= 1);
+
+    std.debug.assert(val_str.len >= 3);
+    std.debug.assert(val_str.len <= 5);
+    std.debug.assert(val_str[val_str.len - 2] == '.');
+    std.debug.assert((out_key.len + val_str.len) == (line.len - 1));
+    out_val.* = lib.brcIntParse(val_str);
+}
+
 pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
     comptime if (!builtin.cpu.arch.isX86() or @bitSizeOf(usize) != 64) @compileError(@typeName(Parser) ++ " only works on x64");
 
@@ -63,29 +87,6 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
             }
             if (stdout.unusedCapacityLen() < (entries[entries.len - 1].key.len + 15)) try stdout.flush();
             try stdout.print(", {f}}}", .{entries[entries.len - 1]});
-        }
-
-        pub fn parseLine(line: []const u8, out_key: *[]const u8, out_val: *i16) void {
-            std.debug.assert(line.len >= 5);
-            std.debug.assert(line[0] != '\n');
-            std.debug.assert(line[line.len - 1] != '\n');
-            const split_index: usize = b: {
-                @setRuntimeSafety(false);
-                const left: usize = line.len - @min(line.len, 6);
-                const r: usize = (@intFromBool(line[left] == ';') * left) + (@intFromBool(line[left + 1] == ';') * (left + 1)) + (@intFromBool(line[left + 2] == ';') * (left + 2));
-                break :b r;
-            };
-            out_key.* = line[0..split_index];
-            std.debug.assert(out_key.len >= 1);
-            std.debug.assert(out_key.len <= 100);
-            std.debug.assert(out_key.len >= 1);
-
-            const val_str: []const u8 = line[split_index + 1 ..];
-            std.debug.assert(val_str.len >= 3);
-            std.debug.assert(val_str.len <= 5);
-            std.debug.assert(val_str[val_str.len - 2] == '.');
-            std.debug.assert((out_key.len + val_str.len) == (line.len - 1));
-            out_val.* = lib.brcIntParse(val_str);
         }
 
         pub fn parseBlock(map: *BRCMapUnmanaged, block: []const u8) void {

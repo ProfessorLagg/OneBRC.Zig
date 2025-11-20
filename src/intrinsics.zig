@@ -111,23 +111,20 @@ pub inline fn sfence() void {
     asm volatile ("sfence");
 }
 
-/// Returns current TSC. Syncronizes before and after by using mfence and lfence
+/// Returns current TSC. Syncronizes by using mfence
 pub fn rdtsc_fenced() u64 {
     return asm volatile ( // NO FOLD
         \\mfence
-        \\lfence
         \\rdtsc
-        \\lfence
-        \\shl , %rdx
-        \\or %rax, %rdx
-        \\lfence
+        \\shl $32, %rdx
+        \\or %rdx, %rax
         : [ret] "={rax}" (-> u64),
         :
         : .{ .rax = true, .rdx = true });
 }
 
 /// Returns current TSC
-pub fn rdtsc() u64 {
+pub noinline fn rdtsc() u64 {
     return asm volatile ( // NO FOLD
         \\rdtsc
         \\shl $32, %rdx
@@ -136,3 +133,30 @@ pub fn rdtsc() u64 {
         :
         : .{ .rax = true, .rdx = true });
 }
+
+pub fn rdseed16() u16 {
+    return asm volatile (
+        \\.loop_rdseed16:
+        \\rdseed %[ret]
+        \\jnc .loop_rdseed16
+        : [ret] "={ax}" (-> u16),
+    );
+}
+pub fn rdseed32() u32 {
+    return asm volatile (
+        \\.loop_rdseed32:
+        \\rdseed %[ret]
+        \\jnc .loop_rdseed32
+        : [ret] "={eax}" (-> u32),
+    );
+}
+pub fn rdseed64() u64 {
+    return asm volatile (
+        \\.loop_rdseed64:
+        \\rdseed %[ret]
+        \\jnc .loop_rdseed64
+        : [ret] "={rax}" (-> u64),
+    );
+}
+
+pub const CpuId = @import("cpuid.zig");

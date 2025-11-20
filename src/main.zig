@@ -55,27 +55,103 @@ pub fn main() !void {
     defer std.process.argsFree(static_allocator, args);
     const filepath = if (args.len == 2) args[1] else debugfilepath;
 
-    try Parser.DefaultParser.parseFile(static_allocator, filepath);
-    // try dbg();
+    //try Parser.DefaultParser.parseFile(static_allocator, filepath);
+    //try dbg();
+    try benchmark_parseLine();
     //try baseline.read(filepath);
     // try bench(filepath);
     _ = &filepath;
 }
 
 fn dbg() !void {
-    const min: comptime_int = -999;
-    const max: comptime_int = 999;
+    const CpuId = lib.intrinsics.CpuId;
+    const leaf0 = CpuId.Leaf0.get();
+    std.debug.print("max leaf: {d} (0x{d:0>8}) | vendor: \"{s}\"\n", .{ leaf0.maxLeaf, leaf0.maxLeaf, leaf0.vendorId });
 
-    var buf: [64]u8 = undefined;
-    var i: i16 = min;
-    @memset(buf[0..], 0);
-    while (i <= max) : (i += 1) {
-        const f: f128 = @as(f128, @floatFromInt(i)) / 10.0;
-        const s = try std.fmt.bufPrint(buf[0..], "{d:.1}", .{f});
-        const p = lib.brcIntParseAsm(s);
-        std.testing.expectEqual(i, p) catch |e| {
-            std.log.err("Parsed \"{s}\" wrong. Expected {d} but found {d}", .{ s, i, p });
-            return e;
-        };
+    // const leaf15 = CpuId.Leaf15.get();
+    const leaf13 = CpuId.cpuid(0x13);
+    const leaf15 = CpuId.cpuid(0x15);
+    const leaf16 = CpuId.cpuid(0x16);
+    std.debug.print("leaf13: {}\n", .{leaf13});
+    std.debug.print("leaf15: {}\n", .{leaf15});
+    std.debug.print("leaf16: {}\n", .{leaf16});
+}
+
+fn benchmark_parseLine() !void {
+    // Imports
+    const intrin = lib.intrinsics;
+    const LineGenerator = lib.benchmarking.LineGenerator;
+
+    // Settings
+    const runCount: comptime_int = 1_000;
+    const lineCount: comptime_int = 100_000_000;
+    std.debug.assert(runCount > 0);
+    std.debug.assert(lineCount > 0);
+
+    // Generate Lines
+    var linegen: LineGenerator = try LineGenerator.initSeed(static_allocator, 2025_11_17);
+    const lines: [][]const u8 = try static_allocator.alloc([]const u8, lineCount);
+    for (0..lines.len) |lineId| {
+        lines[lineId] = try linegen.nextAlloc(static_allocator);
     }
+    defer {
+        for (0..lines.len) |i| static_allocator.free(lines[i]);
+        static_allocator.free(lines);
+        linegen.deinit(static_allocator);
+    }
+
+    // Setup Running
+    const runs: []u64 = try static_allocator.alloc(u64, runCount);
+    defer static_allocator.free(runs);
+    @memset(runs[0..], 0);
+    var key: []const u8 = undefined;
+    var val: i16 = undefined;
+
+    // Run
+    for (0..runCount) |runId| {
+        const start = intrin.rdtsc_fenced();
+        for (lines) |line| {
+            @call(.always_inline, Parser.parseLine, .{ line, &key, &val });
+            _ = &key;
+            _ = &val;
+        }
+        const end = intrin.rdtsc_fenced();
+        runs[runId] = end - start;
+    }
+
+    // Generate output
+    std.mem.sort(u64, runs, {}, std.sort.asc(u64));
+    var sum: u64 = 0;
+    var min: u64 = std.math.maxInt(u64);
+    var max: u64 = std.math.minInt(u64);
+    for (runs) |t| {
+        sum += t;
+        min = @min(min, t);
+        max = @max(max, t);
+    }
+
+    const avg: f64 = @as(f64, @floatFromInt(sum)) / @as(f64, @floatFromInt(runs.len));
+    const med: f64 = b: {
+        const aidx: usize = runCount / 2;
+        const bidx: usize = aidx + @intFromBool(runs.len % 2 == 0);
+        const s: f64 = @floatFromInt(runs[aidx] + runs[bidx]);
+        break :b (s / 2.0);
+    };
+
+    const minl: f64 = @as(f64, @floatFromInt(min)) / @as(f64, @floatFromInt(lineCount));
+    const maxl: f64 = @as(f64, @floatFromInt(max)) / @as(f64, @floatFromInt(lineCount));
+    const avgl: f64 = avg / @as(f64, @floatFromInt(lineCount));
+    const medl: f64 = med / @as(f64, @floatFromInt(lineCount));
+
+    // Print output
+    std.debug.print("Benchmark(Parser.parseLine)\n\tmin: {d} | {d}\n\tmax: {d} | {d}\n\tavg: {d} | {d}\n\tmed: {d} | {d}\n", .{
+        min,
+        minl,
+        max,
+        maxl,
+        avg,
+        avgl,
+        med,
+        medl,
+    });
 }
