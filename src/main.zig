@@ -78,45 +78,40 @@ fn dbg() !void {
 }
 
 fn benchmark_parseLine() !void {
+    std.debug.print("Benchmark(Parser.parseLine)\n", .{});
+
     // Imports
     const intrin = lib.intrinsics;
     const LineGenerator = lib.benchmarking.LineGenerator;
 
     // Settings
-    const runCount: comptime_int = 1_000;
-    const lineCount: comptime_int = 100_000_000;
+    const runCount: comptime_int = 20;
     std.debug.assert(runCount > 0);
-    std.debug.assert(lineCount > 0);
 
     // Generate Lines
-    var linegen: LineGenerator = try LineGenerator.initSeed(static_allocator, 2025_11_17);
-    const lines: [][]const u8 = try static_allocator.alloc([]const u8, lineCount);
-    for (0..lines.len) |lineId| {
-        lines[lineId] = try linegen.nextAlloc(static_allocator);
-    }
+    std.debug.print("Generating lines...\n", .{});
+    const lines: []const []const u8 = try LineGenerator.getAll(static_allocator);
     defer {
         for (0..lines.len) |i| static_allocator.free(lines[i]);
         static_allocator.free(lines);
-        linegen.deinit(static_allocator);
     }
 
     // Setup Running
     const runs: []u64 = try static_allocator.alloc(u64, runCount);
     defer static_allocator.free(runs);
-    @memset(runs[0..], 0);
     var key: []const u8 = undefined;
     var val: i16 = undefined;
 
     // Run
+    std.debug.print("Running...\n", .{});
     for (0..runCount) |runId| {
-        const start = intrin.rdtsc_fenced();
+        runs[runId] = 0;
         for (lines) |line| {
+            const start: u64 = intrin.rdtsc_fenced();
             @call(.always_inline, Parser.parseLine, .{ line, &key, &val });
-            _ = &key;
-            _ = &val;
+            const end: u64 = intrin.rdtsc_fenced();
+            runs[runId] += end - start;
         }
-        const end = intrin.rdtsc_fenced();
-        runs[runId] = end - start;
     }
 
     // Generate output
@@ -138,13 +133,13 @@ fn benchmark_parseLine() !void {
         break :b (s / 2.0);
     };
 
-    const minl: f64 = @as(f64, @floatFromInt(min)) / @as(f64, @floatFromInt(lineCount));
-    const maxl: f64 = @as(f64, @floatFromInt(max)) / @as(f64, @floatFromInt(lineCount));
-    const avgl: f64 = avg / @as(f64, @floatFromInt(lineCount));
-    const medl: f64 = med / @as(f64, @floatFromInt(lineCount));
+    const minl: f64 = @as(f64, @floatFromInt(min)) / @as(f64, @floatFromInt(lines.len));
+    const maxl: f64 = @as(f64, @floatFromInt(max)) / @as(f64, @floatFromInt(lines.len));
+    const avgl: f64 = avg / @as(f64, @floatFromInt(lines.len));
+    const medl: f64 = med / @as(f64, @floatFromInt(lines.len));
 
     // Print output
-    std.debug.print("Benchmark(Parser.parseLine)\n\tmin: {d} | {d}\n\tmax: {d} | {d}\n\tavg: {d} | {d}\n\tmed: {d} | {d}\n", .{
+    std.debug.print("Results\n\tmin: {d} | {d}\n\tmax: {d} | {d}\n\tavg: {d} | {d}\n\tmed: {d} | {d}\n", .{
         min,
         minl,
         max,
