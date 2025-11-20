@@ -12,28 +12,58 @@ const Stat = lib.Stat;
 
 pub const DefaultParser = Parser(1 << 16);
 
+pub fn brcIntParse(str: []const u8) i16 {
+    std.debug.assert(str.len >= 3);
+    std.debug.assert(str.len <= 5);
+    std.debug.assert(str[str.len - 2] == '.');
+
+    const isNegative: bool = str[0] == '-';
+    const isNegativeInt: i16 = @intFromBool(isNegative);
+    const isPositiveInt: i16 = @intFromBool(!isNegative);
+    const arr: []const u8 = str[@intFromBool(isNegative)..];
+    return ((-1 * isNegativeInt) + isPositiveInt) * // sign
+        (@as(i16, @intCast(arr[arr.len - 1] - '0')) + // 1s place
+            @as(i16, @intCast(arr[arr.len - 3] - '0')) * 10 + // 10s place
+            if (arr.len == 4) @as(i16, @intCast(arr[arr.len - 4] - '0')) * 100 else 0); // 100s place
+}
+test brcIntParse {
+    const min: comptime_int = -999;
+    const max: comptime_int = 999;
+
+    var buf: [64]u8 = undefined;
+    var i: i16 = min;
+    @memset(buf[0..], 0);
+    while (i <= max) : (i += 1) {
+        const f: f128 = @as(f128, @floatFromInt(i)) / 10.0;
+        const s = try std.fmt.bufPrint(buf[0..], "{d:.1}", .{f});
+        const p = brcIntParse(s);
+        std.testing.expectEqual(i, p) catch |e| {
+            std.log.err("Parsed \"{s}\" wrong. Expected {d} but found {d}", .{ s, i, p });
+            return e;
+        };
+    }
+}
+
+fn brcSplitIndex(line: []const u8) usize {
+    @setRuntimeSafety(false);
+    const left0: usize = line.len - @min(line.len, 6);
+    const left1: usize = left0 + 1;
+    const left2: usize = left0 + 2;
+    return (@intFromBool(line[left0] == ';') * left0) + (@intFromBool(line[left1] == ';') * left1) + (@intFromBool(line[left2] == ';') * left2);
+}
+
 pub fn parseLine(line: []const u8, out_key: *[]const u8, out_val: *i16) void {
     std.debug.assert(line.len >= 5);
     std.debug.assert(line[0] != '\n');
     std.debug.assert(line[line.len - 1] != '\n');
-    const split_index: usize = b: {
-        @setRuntimeSafety(false);
-        const left: usize = line.len - @min(line.len, 6);
-        const r: usize = (@intFromBool(line[left] == ';') * left) + (@intFromBool(line[left + 1] == ';') * (left + 1)) + (@intFromBool(line[left + 2] == ';') * (left + 2));
-        break :b r;
-    };
+    const split_index: usize = @call(.always_inline, brcSplitIndex, .{line});
     out_key.* = line[0..split_index];
-    const val_str: []const u8 = line[split_index + 1 ..];
-
+    
     std.debug.assert(out_key.len >= 1);
     std.debug.assert(out_key.len <= 100);
     std.debug.assert(out_key.len >= 1);
 
-    std.debug.assert(val_str.len >= 3);
-    std.debug.assert(val_str.len <= 5);
-    std.debug.assert(val_str[val_str.len - 2] == '.');
-    std.debug.assert((out_key.len + val_str.len) == (line.len - 1));
-    out_val.* = lib.brcIntParse(val_str);
+    out_val.* = @call(.always_inline, brcIntParse, .{line[split_index + 1 ..]});
 }
 
 pub fn Parser(comptime BRCmapCapacity: comptime_int) type {

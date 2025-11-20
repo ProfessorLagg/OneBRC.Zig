@@ -103,8 +103,9 @@ fn benchmark_parseLine() !void {
     var val: i16 = undefined;
 
     // Run
-    std.debug.print("Running...\n", .{});
+    std.debug.print("Running...", .{});
     for (0..runCount) |runId| {
+        std.debug.print("\rRunning {d} / {d}", .{ runId + 1, runCount });
         runs[runId] = 0;
         for (lines) |line| {
             const start: u64 = intrin.rdtsc_fenced();
@@ -113,6 +114,7 @@ fn benchmark_parseLine() !void {
             runs[runId] += end - start;
         }
     }
+    std.debug.print("\n", .{});
 
     // Generate output
     std.mem.sort(u64, runs, {}, std.sort.asc(u64));
