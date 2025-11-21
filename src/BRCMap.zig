@@ -119,21 +119,36 @@ pub fn BRCMapUnmanaged(comptime capacity: comptime_int) type {
         }
 
         fn findKeyIndex(self: *const Self, key: []const u8) KeyIndexResult {
-            var r: KeyIndexResult = .{
-                .isNew = false,
-                .index = @truncate(getBaseIndex(key)),
-            };
+            var index: u32 = @truncate(getBaseIndex(key));
             for (0..capacity) |_| {
-                if (self.keys[r.index].isEmpty()) {
+                if (self.keys[index].isEmpty()) {
                     @branchHint(.unlikely);
-                    r.isNew = true;
-                    return r;
-                } else if (self.keys[r.index].eqlStr(key)) { 
+                    return .{ .isNew = true, .index = index };
+                } else if (self.keys[index].eqlStr(key)) {
                     @branchHint(.likely);
-                    return r;
+                    return .{ .isNew = false, .index = index };
                 } else {
                     @branchHint(.cold);
-                    r.index = (r.index + 1) % capacity;
+                    index = (index + 1) % capacity;
+                }
+            }
+            unreachable;
+        }
+
+        fn findKeyIndex2(self: *const Self, key: []const u8, out: *u32) bool {
+            var index: u32 = @truncate(getBaseIndex(key));
+            for (0..capacity) |_| {
+                if (self.keys[index].isEmpty()) {
+                    @branchHint(.unlikely);
+                    out.* = index;
+                    return true;
+                } else if (self.keys[index].eqlStr(key)) {
+                    @branchHint(.likely);
+                    out.* = index;
+                    return false;
+                } else {
+                    @branchHint(.cold);
+                    index = (index + 1) % capacity;
                 }
             }
             unreachable;
