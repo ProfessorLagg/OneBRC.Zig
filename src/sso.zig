@@ -16,9 +16,9 @@ inline fn memclone(comptime T: type, allocator: std.mem.Allocator, noalias mem: 
 /// 1 byte for length.
 /// 8 or 4 bytes for data for 64-bit and 32-bit systems respectively.
 /// Cannot store strings longer than 255 bytes
-pub const sso9 = struct {
-    data: usize = 0,
+pub const sso9 = packed struct {
     len: u8 = 0,
+    data: usize = 0,
 
     // Private functions
     inline fn isSmallLen(len: usize) bool {
@@ -50,10 +50,10 @@ pub const sso9 = struct {
     }
 
     // public functions
-    pub inline fn empty(self: *const sso9) bool {
+    pub inline fn isEmpty(self: *const sso9) bool {
         return self.len == 0;
     }
-    pub inline fn notEmpty(self: *const sso9) bool {
+    pub inline fn isNotEmpty(self: *const sso9) bool {
         return self.len > 0;
     }
     pub fn set(self: *sso9, str: []const u8) void {
@@ -77,6 +77,9 @@ pub const sso9 = struct {
     }
     pub fn destroy(self: *sso9, allocator: std.mem.Allocator) void {
         if (sso9.isLargeLen(self.len)) allocator.free(self.get_large());
+    }
+    pub fn eqlStr(self: *const sso9, str: []const u8) bool {
+        return std.mem.eql(u8, self.get(), str);
     }
 };
 
@@ -166,6 +169,69 @@ pub const sso16 = struct {
         std.debug.assert(isLargeLen(b.data[0]));
         return memeql(a.get_large(), b.get_large());
     }
+    inline fn eqlStrSameLen_small(self: *const sso16, b: []const u8) bool {
+        std.debug.assert(self.data[0] > 0);
+        std.debug.assert(isSmallLen(self.data[0]));
+        std.debug.assert(self.data[0] == b.len);
+        const a: []const u8 = self.get();
+        if (a.len < 4) {
+            const x = (a[0] ^ b[0]) | (a[a.len - 1] ^ b[a.len - 1]) | (a[a.len / 2] ^ b[a.len / 2]);
+            return x == 0;
+        }
+        var x: u32 = 0;
+        for ([_]usize{ 0, a.len - 4, (a.len / 8) * 4, a.len - 4 - ((a.len / 8) * 4) }) |n| {
+            x |= @as(u32, @bitCast(a[n..][0..4].*)) ^ @as(u32, @bitCast(b[n..][0..4].*));
+        }
+        return x == 0;
+    }
+    inline fn eqlStrSameLen_large(self: *const sso16, b: []const u8) bool {
+        std.debug.assert(self.data[0] > 0);
+        std.debug.assert(isLargeLen(self.data[0]));
+        std.debug.assert(self.data[0] == b.len);
+
+        const a: []const u8 = self.get();
+
+        // Figure out the fastest way to scan through the input in chunks.
+        // Uses vectors when supported and falls back to usize/words when not.
+        const Scan = if (std.simd.suggestVectorLength(u8)) |vec_size|
+            struct {
+                pub const size = vec_size;
+                pub const Chunk = @Vector(size, u8);
+                pub inline fn isNotEqual(chunk_a: Chunk, chunk_b: Chunk) bool {
+                    return @reduce(.Or, chunk_a != chunk_b);
+                }
+            }
+        else
+            struct {
+                pub const size = @sizeOf(usize);
+                pub const Chunk = usize;
+                pub inline fn isNotEqual(chunk_a: Chunk, chunk_b: Chunk) bool {
+                    return chunk_a != chunk_b;
+                }
+            };
+
+        inline for (1..6) |s| {
+            const n = 16 << s;
+            if (n <= Scan.size and a.len <= n) {
+                const V = @Vector(n / 2, u8);
+                var x = @as(V, a[0 .. n / 2].*) ^ @as(V, b[0 .. n / 2].*);
+                x |= @as(V, a[a.len - n / 2 ..][0 .. n / 2].*) ^ @as(V, b[a.len - n / 2 ..][0 .. n / 2].*);
+                const zero: V = @splat(0);
+                return !@reduce(.Or, x != zero);
+            }
+        }
+        // Compare inputs in chunks at a time (excluding the last chunk).
+        for (0..(a.len - 1) / Scan.size) |i| {
+            const a_chunk: Scan.Chunk = @bitCast(a[i * Scan.size ..][0..Scan.size].*);
+            const b_chunk: Scan.Chunk = @bitCast(b[i * Scan.size ..][0..Scan.size].*);
+            if (Scan.isNotEqual(a_chunk, b_chunk)) return false;
+        }
+
+        // Compare the last chunk using an overlapping read (similar to the previous size strategies).
+        const last_a_chunk: Scan.Chunk = @bitCast(a[a.len - Scan.size ..][0..Scan.size].*);
+        const last_b_chunk: Scan.Chunk = @bitCast(b[a.len - Scan.size ..][0..Scan.size].*);
+        return !Scan.isNotEqual(last_a_chunk, last_b_chunk);
+    }
 
     // Public functions
     pub inline fn isEmpty(self: *const sso16) bool {
@@ -217,10 +283,15 @@ pub const sso16 = struct {
     pub fn eqlStr(self: *const sso16, str: []const u8) bool {
         return std.mem.eql(u8, self.get(), str);
     }
-    pub fn isSmall(self: *sso16) bool {
+    pub fn eqlStrSameLen(self: *const sso16, str: []const u8) bool {
+        std.debug.assert(self.data[0] > 0);
+        std.debug.assert(self.data[0] == str.len);
+        return if (self.isSmall()) self.eqlStrSameLen_small(str) else self.eqlStrSameLen_large(str);
+    }
+    pub fn isSmall(self: *const sso16) bool {
         return sso16.isSmallLen(self.data[0]);
     }
-    pub fn isLarge(self: *sso16) bool {
+    pub fn isLarge(self: *const sso16) bool {
         return !self.isSmall();
     }
 };
