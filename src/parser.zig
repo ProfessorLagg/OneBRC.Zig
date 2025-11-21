@@ -359,8 +359,6 @@ pub fn Parser2(comptime BRCmapCapacity: comptime_int) type {
                 @memset(self.thread_locks, Mutex{});
                 for (0..self.blockCount) |i| {
                     self.maps[i] = BRCMapUnmanaged.init(self.gpa) catch |err| logAndPanic(err);
-                    self.blocks[i] = allocPanic(self.gpa, u8, self.blockSize);
-                    // @memset(@constCast(self.blocks[i])[0..], 0);
                 }
             }
 
@@ -377,6 +375,7 @@ pub fn Parser2(comptime BRCmapCapacity: comptime_int) type {
                     {
                         self.thread_locks[blockId].lock();
                         defer self.thread_locks[blockId].unlock();
+                        self.blocks[blockId] = allocPanic(self.arena.child_allocator, u8, self.blockSize);
                         const readlen: usize = self.file.read(@constCast(self.blocks[blockId])) catch |err| logAndPanic(err);
                         self.blocks[blockId] = self.blocks[blockId][0..readlen];
                     }
@@ -426,7 +425,7 @@ pub fn Parser2(comptime BRCmapCapacity: comptime_int) type {
                 parseBlock(&self.maps[blockId], block);
 
                 // Free the block
-                // self.arena.child_allocator.free(self.blocks.ptr[0..self.blockSize]);
+                self.arena.child_allocator.free(self.blocks.ptr[0..self.blockSize]);
             }
 
             fn combineAndParsePartials_old(self: *Self, final_map: *BRCMapUnmanaged) void {

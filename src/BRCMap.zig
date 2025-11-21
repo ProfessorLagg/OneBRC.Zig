@@ -51,16 +51,20 @@ pub fn BRCMapUnmanaged(comptime capacity: comptime_int) type {
     return struct {
         const Self = @This();
         count: usize = 0,
-        // TODO Test if it's better to keep these directly on the struct
+
+        keyStore: []u8 = undefined,
+        keyAllocator: std.heap.FixedBufferAllocator = undefined,
         keys: []sso = undefined,
         values: []Stat = undefined,
 
         pub fn init(allocator: std.mem.Allocator) !Self {
-            const r: Self = Self{
+            var r: Self = Self{
                 .count = 0,
+                .keyStore = try allocator.alloc(u8, 100 * 10_000),
                 .keys = try allocator.alloc(sso, capacity),
                 .values = try allocator.alloc(Stat, capacity),
             };
+            r.keyAllocator = std.heap.FixedBufferAllocator.init(r.keyStore[0..]);
             @memset(r.keys, sso{});
             @memset(r.values, Stat{});
             return r;
@@ -109,7 +113,13 @@ pub fn BRCMapUnmanaged(comptime capacity: comptime_int) type {
                 self.values[index].add(value);
             } else {
                 @branchHint(.unlikely);
-                self.keys[index].set(key);
+                const k: []const u8 = blk: {
+                    if (sso.isSmallLen(key.len)) break :blk key;
+                    var r = self.keyAllocator.allocator().alloc(u8, key.len) catch unreachable;
+                    @memcpy(r[0..], key[0..]);
+                    break :blk r;
+                };
+                self.keys[index].set(k);
                 self.values[index].set(value);
                 self.count += 1;
             }
@@ -123,7 +133,13 @@ pub fn BRCMapUnmanaged(comptime capacity: comptime_int) type {
                 self.values[index].mergeWith(stat);
             } else {
                 @branchHint(.unlikely);
-                self.keys[index].set(key);
+                const k: []const u8 = blk: {
+                    if (sso.isSmallLen(key.len)) break :blk key;
+                    var r = self.keyAllocator.allocator().alloc(u8, key.len) catch unreachable;
+                    @memcpy(r[0..], key[0..]);
+                    break :blk r;
+                };
+                self.keys[index].set(k);
                 self.values[index] = stat.*;
                 self.count += 1;
             }
