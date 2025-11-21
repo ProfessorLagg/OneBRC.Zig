@@ -12,60 +12,6 @@ const Stat = lib.Stat;
 
 pub const DefaultParser = Parser(1 << 16);
 
-pub fn brcIntParse(str: []const u8) i16 {
-    std.debug.assert(str.len >= 3);
-    std.debug.assert(str.len <= 5);
-    std.debug.assert(str[str.len - 2] == '.');
-
-    const isNegative: bool = str[0] == '-';
-    const isNegativeInt: i16 = @intFromBool(isNegative);
-    const isPositiveInt: i16 = @intFromBool(!isNegative);
-    const arr: []const u8 = str[@intFromBool(isNegative)..];
-    return ((-1 * isNegativeInt) + isPositiveInt) * // sign
-        (@as(i16, @intCast(arr[arr.len - 1] - '0')) + // 1s place
-            @as(i16, @intCast(arr[arr.len - 3] - '0')) * 10 + // 10s place
-            if (arr.len == 4) @as(i16, @intCast(arr[arr.len - 4] - '0')) * 100 else 0); // 100s place
-}
-test brcIntParse {
-    const min: comptime_int = -999;
-    const max: comptime_int = 999;
-
-    var buf: [64]u8 = undefined;
-    var i: i16 = min;
-    @memset(buf[0..], 0);
-    while (i <= max) : (i += 1) {
-        const f: f128 = @as(f128, @floatFromInt(i)) / 10.0;
-        const s = try std.fmt.bufPrint(buf[0..], "{d:.1}", .{f});
-        const p = brcIntParse(s);
-        std.testing.expectEqual(i, p) catch |e| {
-            std.log.err("Parsed \"{s}\" wrong. Expected {d} but found {d}", .{ s, i, p });
-            return e;
-        };
-    }
-}
-
-fn brcSplitIndex(line: []const u8) usize {
-    @setRuntimeSafety(false);
-    const left0: usize = line.len - @min(line.len, 6);
-    const left1: usize = left0 + 1;
-    const left2: usize = left0 + 2;
-    return (@intFromBool(line[left0] == ';') * left0) + (@intFromBool(line[left1] == ';') * left1) + (@intFromBool(line[left2] == ';') * left2);
-}
-
-pub fn parseLine(line: []const u8, out_key: *[]const u8, out_val: *i16) void {
-    std.debug.assert(line.len >= 5);
-    std.debug.assert(line[0] != '\n');
-    std.debug.assert(line[line.len - 1] != '\n');
-    const split_index: usize = @call(.always_inline, brcSplitIndex, .{line});
-    out_key.* = line[0..split_index];
-
-    std.debug.assert(out_key.len >= 1);
-    std.debug.assert(out_key.len <= 100);
-    std.debug.assert(out_key.len >= 1);
-
-    out_val.* = @call(.always_inline, brcIntParse, .{line[split_index + 1 ..]});
-}
-
 pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
     comptime if (!builtin.cpu.arch.isX86() or @bitSizeOf(usize) != 64) @compileError(@typeName(Parser) ++ " only works on x64");
 
@@ -298,6 +244,296 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
             ctx.run();
         }
     };
+}
+
+pub fn Parser2(comptime BRCmapCapacity: comptime_int) type {
+    comptime if (!builtin.cpu.arch.isX86() or @bitSizeOf(usize) != 64) @compileError(@typeName(Parser) ++ " only works on x64");
+
+    return struct {
+        const BRCMap: type = lib.BRCMap(BRCmapCapacity);
+        const BRCMapUnmanaged: type = lib.BRCMapUnmanaged(BRCmapCapacity);
+
+        fn printMap(allocator: std.mem.Allocator, map: *const BRCMapUnmanaged) !void {
+            // Sort the entries
+            const Entry = struct {
+                const Self = @This();
+                key: []const u8,
+                val: *const Stat,
+                pub fn compareR(a: *const Self, b: *const Self) lib.sorting.CompareResult {
+                    return @call(.always_inline, lib.sorting.compareStrings, .{ a.key, b.key });
+                }
+                pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+                    _ = try writer.write(self.key);
+                    try writer.print("={d:.1}/{d:.1}/{d:.1}", .{
+                        self.val.minF(),
+                        self.val.meanF(),
+                        self.val.maxF(),
+                    });
+                }
+            };
+            const entries: []Entry = try allocator.alloc(Entry, map.count);
+            defer allocator.free(entries);
+            var entryId: usize = 0;
+            for (0..map.keys.len) |i| {
+                if (map.keys[i].isEmpty()) continue;
+                entries[entryId] = Entry{
+                    .key = map.keys[i].get(),
+                    .val = &map.values[i],
+                };
+                entryId += 1;
+            }
+            lib.sorting.insertionSortR(Entry, Entry.compareR, entries);
+
+            // Print the output
+            var stdout_buffer: [std.math.maxInt(u16)]u8 = undefined;
+            var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+            const stdout = &stdout_writer.interface;
+            defer stdout.flush() catch |err| std.debug.panic("{any}{any}", .{ err, @errorReturnTrace() });
+            try stdout.print("{{{f}", .{entries[0]});
+
+            for (1..(entries.len - 1)) |i| {
+                if (stdout.unusedCapacityLen() < (entries[i].key.len + 15)) try stdout.flush();
+                try stdout.print(", {f}", .{entries[i]});
+            }
+            if (stdout.unusedCapacityLen() < (entries[entries.len - 1].key.len + 15)) try stdout.flush();
+            try stdout.print(", {f}}}", .{entries[entries.len - 1]});
+        }
+
+        pub fn parseBlock(map: *BRCMapUnmanaged, block: []const u8) void {
+            var iter: LineSplitter = .{ .buffer = block };
+            var lineId: usize = 0;
+            while (iter.next()) |line| : (lineId += 1) {
+                var key: []const u8 = undefined;
+                var val: i16 = undefined;
+                parseLine(line, &key, &val);
+
+                map.addOrUpdate(key, val);
+            }
+        }
+
+        pub fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
+            var ctx: ThreadContext = undefined;
+            ctx.init(allocator, path);
+            defer ctx.deinit();
+            ctx.run();
+        }
+
+        const ThreadContext = struct {
+            const Self = @This();
+
+            arena: std.heap.ArenaAllocator,
+            gpa: std.mem.Allocator,
+            file: std.fs.File,
+            fileSize: u64,
+            blockSize: u64,
+            blockCount: u64,
+            maps: []BRCMapUnmanaged,
+            blocks: [][]const u8,
+            partial_lines: [][]const u8,
+            thread_locks: []Mutex,
+
+            pub fn init(self: *Self, _gpa: std.mem.Allocator, p: []const u8) void {
+                self.arena = std.heap.ArenaAllocator.init(_gpa);
+                self.gpa = self.arena.allocator();
+                self.fileSize = getFilePathSize(p) catch |err| logAndPanic(err);
+                self.file = std.fs.cwd().openFile(p, .{}) catch |err| logAndPanic(err);
+
+                // Collect neccecary information
+                self.blockCount = Thread.getCpuCount() catch unreachable; // This should not be possible to fail, since we're constrained to x64
+                self.blockSize = nextMultipleOf(
+                    u64,
+                    std.math.divCeil(u64, self.fileSize, self.blockCount) catch self.fileSize / self.blockCount, // would require file_size to be close to 16 Exbibytes (2^64 bytes), which is not likely.
+                    std.atomic.cache_line,
+                );
+                std.debug.assert((self.blockSize * self.blockCount) >= self.fileSize);
+
+                // Allocate buffers and maps
+                self.blocks = alignedAllocPanic(self.gpa, []const u8, .@"64", self.blockCount);
+                self.partial_lines = alignedAllocPanic(self.gpa, []const u8, .@"64", self.blockCount * 2); // TODO Use the pointer trick to turn these from 16 bytes per partial into 8 bytes
+                self.maps = allocPanic(self.gpa, BRCMapUnmanaged, self.blockCount);
+                self.thread_locks = allocPanic(self.gpa, Mutex, self.blockCount);
+
+                // Initialize everything that was just allocated
+                @memset(self.blocks, std.mem.zeroes([]const u8));
+                @memset(self.partial_lines, std.mem.zeroes([]const u8));
+                @memset(self.thread_locks, Mutex{});
+                for (0..self.blockCount) |i| {
+                    self.maps[i] = BRCMapUnmanaged.init(self.gpa) catch |err| logAndPanic(err);
+                    self.blocks[i] = allocPanic(self.gpa, u8, self.blockSize);
+                    // @memset(@constCast(self.blocks[i])[0..], 0);
+                }
+            }
+
+            pub fn deinit(self: *Self) void {
+                self.arena.deinit();
+            }
+
+            pub fn run(self: *Self) void {
+                lib.debug.assert(self.thread_locks.len == self.blockCount);
+                lib.debug.assert(self.blocks.len == self.blockCount);
+
+                // Read Blocks and start threads
+                for (0..self.blockCount) |blockId| {
+                    {
+                        self.thread_locks[blockId].lock();
+                        defer self.thread_locks[blockId].unlock();
+                        const readlen: usize = self.file.read(@constCast(self.blocks[blockId])) catch |err| logAndPanic(err);
+                        self.blocks[blockId] = self.blocks[blockId][0..readlen];
+                    }
+                    if (blockId < self.blockCount - 1) { // save 1 block for the main tread
+                        @branchHint(.likely);
+                        runDetached(.{ .allocator = self.gpa }, threadFn, .{ self, blockId }) catch |err| logAndPanic(err);
+                    }
+                }
+
+                // Parse the last block on the main thread
+                self.threadFn(self.blockCount - 1);
+
+                // Wait for the remaining threads to finish
+                const final_map: *BRCMapUnmanaged = &self.maps[self.blockCount - 1];
+                for (1..self.blockCount) |I| {
+                    const i = self.blockCount - 1 - I;
+                    self.thread_locks[i].lock();
+                    final_map.merge(&self.maps[i]);
+                }
+
+                // Combine and parse partial Lines
+                self.combineAndParsePartials(final_map);
+
+                // Print the final map
+                printMap(self.gpa, final_map) catch |err| logAndPanic(err);
+            }
+
+            fn threadFn(self: *Self, blockId: usize) void {
+                Mutex.lock(&self.thread_locks[blockId]);
+                defer Mutex.unlock(&self.thread_locks[blockId]);
+
+                var block: []const u8 = self.blocks[blockId][0..];
+                // Find partial lines and trim the block
+                const start: usize = std.mem.indexOfScalar(u8, block, '\n') orelse 0;
+                const pre_partial: []const u8 = block[0 .. start + 1];
+                block = block[start + 1 ..];
+                //const end: usize = lib.lastIndexOfScalar3(block, '\n') orelse block.len;
+
+                const end: usize = std.mem.lastIndexOfScalar(u8, block, '\n') orelse block.len;
+                const post_partial: []const u8 = block[end..];
+                block = block[0..end];
+
+                // Write partial lines. We write both togehter to improve cache hit chance
+                self.partial_lines[blockId * 2] = pre_partial;
+                self.partial_lines[(blockId * 2) + 1] = post_partial;
+                // Parse the block
+                parseBlock(&self.maps[blockId], block);
+
+                // Free the block
+                // self.arena.child_allocator.free(self.blocks.ptr[0..self.blockSize]);
+            }
+
+            fn combineAndParsePartials_old(self: *Self, final_map: *BRCMapUnmanaged) void {
+                var line_buffer: [128]u8 = undefined;
+                var line_fba = std.heap.FixedBufferAllocator.init(line_buffer[0..]);
+                const fba = line_fba.allocator();
+                var key: []const u8 = undefined;
+                var val: i16 = undefined;
+
+                var slices: []const []const u8 = undefined;
+                slices.len = 2;
+                var line: []const u8 = std.mem.trim(u8, self.partial_lines[0], "\n");
+                var Pi: usize = 1;
+                while (Pi < self.partial_lines.len) : (Pi += 2) {
+                    parseLine(line, &key, &val);
+                    final_map.addOrUpdate(key, val);
+
+                    slices.ptr = @ptrCast(&self.partial_lines[Pi]);
+                    line_fba.end_index = 0;
+                    line = std.mem.concat(fba, u8, slices) catch |err| logAndPanic(err);
+                    line = std.mem.trim(u8, line, "\n");
+                }
+                parseLine(line, &key, &val);
+                final_map.addOrUpdate(key, val);
+            }
+
+            fn combineAndParsePartials(self: *Self, final_map: *BRCMapUnmanaged) void {
+                var buf: [128]u8 = undefined;
+                var key: []const u8 = undefined;
+                var val: i16 = undefined;
+                parseLine(std.mem.trim(u8, self.partial_lines[0], "\n"), &key, &val);
+                final_map.addOrUpdate(key, val);
+                var i: usize = 2;
+                while (i < self.partial_lines.len) : (i += 2) {
+                    const pre_partial: []const u8 = std.mem.trim(u8, self.partial_lines[i - 1], "\n");
+                    const post_partial: []const u8 = std.mem.trim(u8, self.partial_lines[i], "\n");
+
+                    var j: usize = 0;
+                    for (pre_partial) |*b| {
+                        buf[j] = b.*;
+                        j += 1;
+                    }
+                    for (post_partial) |*b| {
+                        buf[j] = b.*;
+                        j += 1;
+                    }
+                    const line = buf[0..j];
+                    parseLine(line, &key, &val);
+                    final_map.addOrUpdate(key, val);
+                }
+            }
+        };
+    };
+}
+
+pub fn brcIntParse(str: []const u8) i16 {
+    std.debug.assert(str.len >= 3);
+    std.debug.assert(str.len <= 5);
+    std.debug.assert(str[str.len - 2] == '.');
+
+    const isNegative: bool = str[0] == '-';
+    const isNegativeInt: i16 = @intFromBool(isNegative);
+    const isPositiveInt: i16 = @intFromBool(!isNegative);
+    const arr: []const u8 = str[@intFromBool(isNegative)..];
+    return ((-1 * isNegativeInt) + isPositiveInt) * // sign
+        (@as(i16, @intCast(arr[arr.len - 1] - '0')) + // 1s place
+            @as(i16, @intCast(arr[arr.len - 3] - '0')) * 10 + // 10s place
+            if (arr.len == 4) @as(i16, @intCast(arr[arr.len - 4] - '0')) * 100 else 0); // 100s place
+}
+test brcIntParse {
+    const min: comptime_int = -999;
+    const max: comptime_int = 999;
+
+    var buf: [64]u8 = undefined;
+    var i: i16 = min;
+    @memset(buf[0..], 0);
+    while (i <= max) : (i += 1) {
+        const f: f128 = @as(f128, @floatFromInt(i)) / 10.0;
+        const s = try std.fmt.bufPrint(buf[0..], "{d:.1}", .{f});
+        const p = brcIntParse(s);
+        std.testing.expectEqual(i, p) catch |e| {
+            std.log.err("Parsed \"{s}\" wrong. Expected {d} but found {d}", .{ s, i, p });
+            return e;
+        };
+    }
+}
+
+fn brcSplitIndex(line: []const u8) usize {
+    @setRuntimeSafety(false);
+    const left0: usize = line.len - @min(line.len, 6);
+    const left1: usize = left0 + 1;
+    const left2: usize = left0 + 2;
+    return (@intFromBool(line[left0] == ';') * left0) + (@intFromBool(line[left1] == ';') * left1) + (@intFromBool(line[left2] == ';') * left2);
+}
+
+pub fn parseLine(line: []const u8, out_key: *[]const u8, out_val: *i16) void {
+    std.debug.assert(line.len >= 5);
+    std.debug.assert(line[0] != '\n');
+    std.debug.assert(line[line.len - 1] != '\n');
+    const split_index: usize = @call(.always_inline, brcSplitIndex, .{line});
+    out_key.* = line[0..split_index];
+
+    std.debug.assert(out_key.len >= 1);
+    std.debug.assert(out_key.len <= 100);
+    std.debug.assert(out_key.len >= 1);
+
+    out_val.* = @call(.always_inline, brcIntParse, .{line[split_index + 1 ..]});
 }
 
 fn getFileSize(file: std.fs.File) !u64 {
