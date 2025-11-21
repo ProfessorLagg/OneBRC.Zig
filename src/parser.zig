@@ -58,7 +58,7 @@ pub fn parseLine(line: []const u8, out_key: *[]const u8, out_val: *i16) void {
     std.debug.assert(line[line.len - 1] != '\n');
     const split_index: usize = @call(.always_inline, brcSplitIndex, .{line});
     out_key.* = line[0..split_index];
-    
+
     std.debug.assert(out_key.len >= 1);
     std.debug.assert(out_key.len <= 100);
     std.debug.assert(out_key.len >= 1);
@@ -156,7 +156,7 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
                 self.blockSize = nextMultipleOf(
                     u64,
                     std.math.divCeil(u64, self.fileSize, self.blockCount) catch self.fileSize / self.blockCount, // would require file_size to be close to 16 Exbibytes (2^64 bytes), which is not likely.
-                    std.heap.page_size_min,
+                    std.atomic.cache_line,
                 );
                 std.debug.assert((self.blockSize * self.blockCount) >= self.fileSize);
 
