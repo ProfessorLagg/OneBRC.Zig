@@ -81,71 +81,19 @@ pub fn BRCMapUnmanaged(comptime capacity: comptime_int) type {
             return hash & comptime (capacity - 1);
         }
 
-        const KeyIndexResult = struct {
-            isNew: bool,
-            index: u32,
-
-            pub inline fn setFound(self: *@This(), idx: u32) void {
-                self.index = idx;
-                self.isNew = false;
-            }
-
-            pub inline fn setNew(self: *@This(), idx: u32) void {
-                self.index = idx;
-                self.isNew = true;
-            }
-        };
-
-        test KeyIndexResult {
-            var kir: KeyIndexResult = undefined;
-            const arr: []u8 = b: {
-                var r: []u8 = undefined;
-                r.len = @sizeOf(KeyIndexResult);
-                r.ptr = @ptrCast(&kir);
-                break :b r;
-            };
-            var i: u32 = 0;
-            while (i < capacity) : (i += 1) {
-                @memset(arr[0..], 0);
-                kir.setFound(i);
-                try std.testing.expectEqual(kir.isNew, false);
-                try std.testing.expectEqual(kir.index, i);
-
-                @memset(arr[0..], 0);
-                kir.setNew(i);
-                try std.testing.expectEqual(kir.isNew, true);
-                try std.testing.expectEqual(kir.index, i);
-            }
-        }
-
-        fn findKeyIndex(self: *const Self, key: []const u8) KeyIndexResult {
+        /// Finds the index key has / should have in self.keys. The index is returned in the `out` parameter
+        /// returns `true` if the key was found otherwise `false`
+        fn findKeyIndex(self: *const Self, key: []const u8, out: *u32) bool {
             var index: u32 = @truncate(getBaseIndex(key));
             for (0..capacity) |_| {
                 if (self.keys[index].isEmpty()) {
                     @branchHint(.unlikely);
-                    return .{ .isNew = true, .index = index };
-                } else if (self.keys[index].eqlStr(key)) {
-                    @branchHint(.likely);
-                    return .{ .isNew = false, .index = index };
-                } else {
-                    @branchHint(.cold);
-                    index = (index + 1) % capacity;
-                }
-            }
-            unreachable;
-        }
-
-        fn findKeyIndex2(self: *const Self, key: []const u8, out: *u32) bool {
-            var index: u32 = @truncate(getBaseIndex(key));
-            for (0..capacity) |_| {
-                if (self.keys[index].isEmpty()) {
-                    @branchHint(.unlikely);
-                    out.* = index;
-                    return true;
-                } else if (self.keys[index].eqlStr(key)) {
-                    @branchHint(.likely);
                     out.* = index;
                     return false;
+                } else if (self.keys[index].eqlStr(key)) {
+                    @branchHint(.likely);
+                    out.* = index;
+                    return true;
                 } else {
                     @branchHint(.cold);
                     index = (index + 1) % capacity;
@@ -155,30 +103,30 @@ pub fn BRCMapUnmanaged(comptime capacity: comptime_int) type {
         }
 
         pub fn addOrUpdate(self: *Self, key: []const u8, value: i16) void {
-            const ki = self.findKeyIndex(key);
-            if (ki.isNew) {
-                @branchHint(.unlikely);
-                self.keys[ki.index].set(key);
-                self.values[ki.index].set(value);
-                self.count += 1;
-            } else {
+            var index: u32 = undefined;
+            if (self.findKeyIndex(key, &index)) {
                 @branchHint(.likely);
-                std.debug.assert(self.keys[ki.index].isNotEmpty());
-                self.values[ki.index].add(value);
+                std.debug.assert(self.keys[index].isNotEmpty());
+                self.values[index].add(value);
+            } else {
+                @branchHint(.unlikely);
+                self.keys[index].set(key);
+                self.values[index].set(value);
+                self.count += 1;
             }
         }
 
         pub fn addOrMerge(self: *Self, key: []const u8, stat: *const Stat) void {
-            const ki = self.findKeyIndex(key);
-            if (ki.isNew) {
-                @branchHint(.unlikely);
-                self.keys[ki.index].set(key);
-                self.values[ki.index] = stat.*;
-                self.count += 1;
-            } else {
+            var index: u32 = undefined;
+            if (self.findKeyIndex(key, &index)) {
                 @branchHint(.likely);
-                std.debug.assert(self.keys[ki.index].isNotEmpty());
-                self.values[ki.index].mergeWith(stat);
+                std.debug.assert(self.keys[index].isNotEmpty());
+                self.values[index].mergeWith(stat);
+            } else {
+                @branchHint(.unlikely);
+                self.keys[index].set(key);
+                self.values[index] = stat.*;
+                self.count += 1;
             }
         }
 
