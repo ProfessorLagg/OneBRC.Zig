@@ -112,7 +112,7 @@ pub inline fn sfence() void {
 }
 
 /// Returns current TSC. Syncronizes by using mfence
-pub fn rdtsc_fenced() u64 {
+pub inline fn rdtsc_fenced() u64 {
     return asm volatile ( // NO FOLD
         \\mfence
         \\rdtsc
@@ -120,18 +120,18 @@ pub fn rdtsc_fenced() u64 {
         \\or %rdx, %rax
         : [ret] "={rax}" (-> u64),
         :
-        : .{ .rax = true, .rdx = true });
+        : .{.rdx = true });
 }
 
 /// Returns current TSC
-pub noinline fn rdtsc() u64 {
+pub inline fn rdtsc() u64 {
     return asm volatile ( // NO FOLD
         \\rdtsc
         \\shl $32, %rdx
         \\or %rdx, %rax
         : [ret] "={rax}" (-> u64),
         :
-        : .{ .rax = true, .rdx = true });
+        : .{ .rdx = true });
 }
 
 pub fn rdseed16() u16 {

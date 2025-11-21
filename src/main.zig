@@ -55,9 +55,10 @@ pub fn main() !void {
     defer std.process.argsFree(static_allocator, args);
     const filepath = if (args.len == 2) args[1] else debugfilepath;
 
-    //try Parser.DefaultParser.parseFile(static_allocator, filepath);
+    try Parser.DefaultParser.parseFile(static_allocator, filepath);
     //try dbg();
-    try benchmark_parseLine();
+    //try benchmark_parseLine();
+    // try benchmark_findKeyIndex();
     //try baseline.read(filepath);
     // try bench(filepath);
     _ = &filepath;
@@ -85,11 +86,16 @@ fn benchmark_parseLine() !void {
     const LineGenerator = lib.benchmarking.LineGenerator;
 
     // Settings
-    const runCount: comptime_int = 20;
+    const runCount: comptime_int = 2;
     std.debug.assert(runCount > 0);
 
+    // Setup printing
+    const stderr: *std.io.Writer = lib.getStderr();
+    defer stderr.flush() catch unreachable;
+
     // Generate Lines
-    std.debug.print("Generating lines...\n", .{});
+    stderr.print("Generating lines...\n", .{}) catch unreachable;
+    stderr.flush() catch unreachable;
     const lines: []const []const u8 = try LineGenerator.getAll(static_allocator);
     defer {
         for (0..lines.len) |i| static_allocator.free(lines[i]);
@@ -101,20 +107,27 @@ fn benchmark_parseLine() !void {
     defer static_allocator.free(runs);
     var key: []const u8 = undefined;
     var val: i16 = undefined;
-
+    var keysum: usize = 0;
+    var valsum: i16 = 0;
     // Run
-    std.debug.print("Running...", .{});
+    stderr.print("Running...\n", .{}) catch unreachable;
+    stderr.flush() catch unreachable;
     for (0..runCount) |runId| {
-        std.debug.print("\rRunning {d} / {d}", .{ runId + 1, runCount });
+        stderr.print("\t{d} / {d}\n", .{ runId + 1, runCount }) catch unreachable;
+        stderr.flush() catch unreachable;
         runs[runId] = 0;
         for (lines) |line| {
             const start: u64 = intrin.rdtsc_fenced();
-            @call(.always_inline, Parser.parseLine, .{ line, &key, &val });
+            @call(.never_inline, Parser.parseLine, .{ line, &key, &val });
             const end: u64 = intrin.rdtsc_fenced();
             runs[runId] += end - start;
+
+            keysum +%= key.len;
+            valsum +%= val;
         }
+        stderr.print("\x1b[2K\r{d};{d}\x1b[2K\r", .{ keysum, valsum }) catch unreachable;
+        stderr.flush() catch unreachable;
     }
-    std.debug.print("\n", .{});
 
     // Generate output
     std.mem.sort(u64, runs, {}, std.sort.asc(u64));
@@ -128,12 +141,19 @@ fn benchmark_parseLine() !void {
     }
 
     const avg: f64 = @as(f64, @floatFromInt(sum)) / @as(f64, @floatFromInt(runs.len));
-    const med: f64 = b: {
-        const aidx: usize = runCount / 2;
-        const bidx: usize = aidx + @intFromBool(runs.len % 2 == 0);
-        const s: f64 = @floatFromInt(runs[aidx] + runs[bidx]);
-        break :b (s / 2.0);
+    const med: f64 = blk: {
+        const a: f64 = @floatFromInt(runs[runs.len / 2]);
+        if (runs.len % 2 == 0) break :blk a;
+        const b: f64 = @floatFromInt(runs[(runs.len / 2) + 1]);
+        break :blk ((a + b) / 2.0);
     };
+
+    //b: {
+    //    const aidx: usize = runCount / 2;
+    //    const bidx: usize = aidx + @intFromBool(runs.len % 2 == 0);
+    //    const s: f64 = @floatFromInt(runs[aidx] + runs[bidx]);
+    //    break :b (s / 2.0);
+    //};
 
     const minl: f64 = @as(f64, @floatFromInt(min)) / @as(f64, @floatFromInt(lines.len));
     const maxl: f64 = @as(f64, @floatFromInt(max)) / @as(f64, @floatFromInt(lines.len));
@@ -141,7 +161,7 @@ fn benchmark_parseLine() !void {
     const medl: f64 = med / @as(f64, @floatFromInt(lines.len));
 
     // Print output
-    std.debug.print("Results\n\tmin: {d} | {d}\n\tmax: {d} | {d}\n\tavg: {d} | {d}\n\tmed: {d} | {d}\n", .{
+    stderr.print("Results\n\tmin: {d} | {d}\n\tmax: {d} | {d}\n\tavg: {d} | {d}\n\tmed: {d} | {d}\n", .{
         min,
         minl,
         max,
@@ -150,5 +170,5 @@ fn benchmark_parseLine() !void {
         avgl,
         med,
         medl,
-    });
+    }) catch unreachable;
 }
