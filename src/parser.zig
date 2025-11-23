@@ -186,30 +186,6 @@ pub fn Parser(comptime BRCmapCapacity: comptime_int) type {
                 parseBlock(&self.maps[blockId], block);
             }
 
-            fn combineAndParsePartials_old(self: *Self, final_map: *BRCMapUnmanaged) void {
-                var line_buffer: [128]u8 = undefined;
-                var line_fba = std.heap.FixedBufferAllocator.init(line_buffer[0..]);
-                const fba = line_fba.allocator();
-                var key: []const u8 = undefined;
-                var val: i16 = undefined;
-
-                var slices: []const []const u8 = undefined;
-                slices.len = 2;
-                var line: []const u8 = std.mem.trim(u8, self.partial_lines[0], "\n");
-                var Pi: usize = 1;
-                while (Pi < self.partial_lines.len) : (Pi += 2) {
-                    parseLine(line, &key, &val);
-                    final_map.addOrUpdate(key, val);
-
-                    slices.ptr = @ptrCast(&self.partial_lines[Pi]);
-                    line_fba.end_index = 0;
-                    line = std.mem.concat(fba, u8, slices) catch |err| logAndPanic(err);
-                    line = std.mem.trim(u8, line, "\n");
-                }
-                parseLine(line, &key, &val);
-                final_map.addOrUpdate(key, val);
-            }
-
             fn combineAndParsePartials(self: *Self, final_map: *BRCMapUnmanaged) void {
                 var buf: [128]u8 = undefined;
                 var key: []const u8 = undefined;
@@ -306,9 +282,10 @@ pub fn Parser2(comptime BRCmapCapacity: comptime_int) type {
                 var key: []const u8 = undefined;
                 var val: i16 = undefined;
                 parseLine(line, &key, &val);
-
+                //if (builtin.mode == .Debug) lib.stderrPrintEx("line:\"{s}\" key:\"{s}\" value:{d}\n", .{ line, key, val }, false);
                 map.addOrUpdate(key, val);
             }
+            //if (builtin.mode == .Debug) lib.stderrPrintEx("parseBlock finished\n", .{}, true);
         }
 
         pub fn parseFile(allocator: std.mem.Allocator, path: []const u8) !void {
@@ -377,16 +354,15 @@ pub fn Parser2(comptime BRCmapCapacity: comptime_int) type {
                         defer self.thread_locks[blockId].unlock();
                         self.blocks[blockId] = allocPanic(self.arena.child_allocator, u8, self.blockSize);
                         const readlen: usize = self.file.read(@constCast(self.blocks[blockId])) catch |err| logAndPanic(err);
-                        self.blocks[blockId] = self.blocks[blockId][0..readlen];
+                        if (readlen > 0) {
+                            self.blocks[blockId] = self.blocks[blockId][0..readlen];
+                        } else {
+                            self.arena.child_allocator.free(self.blocks[blockId]);
+                            continue;
+                        }
                     }
-                    if (blockId < self.blockCount - 1) { // save 1 block for the main tread
-                        @branchHint(.likely);
-                        runDetached(.{ .allocator = self.gpa }, threadFn, .{ self, blockId }) catch |err| logAndPanic(err);
-                    }
+                    runDetached(.{ .allocator = self.gpa }, threadFn, .{ self, blockId }) catch |err| logAndPanic(err);
                 }
-
-                // Parse the last block on the main thread
-                self.threadFn(self.blockCount - 1);
 
                 // Wait for the remaining threads to finish
                 const final_map: *BRCMapUnmanaged = &self.maps[self.blockCount - 1];
@@ -410,12 +386,10 @@ pub fn Parser2(comptime BRCmapCapacity: comptime_int) type {
                 var block: []const u8 = self.blocks[blockId][0..];
                 // Find partial lines and trim the block
                 const start: usize = std.mem.indexOfScalar(u8, block, '\n') orelse 0;
-                const pre_partial: []const u8 = block[0 .. start + 1];
+                const pre_partial: []const u8 = lib.clone(u8, self.arena.child_allocator, block[0 .. start + 1]) catch |err| logAndPanic(err);
                 block = block[start + 1 ..];
-                //const end: usize = lib.lastIndexOfScalar3(block, '\n') orelse block.len;
-
                 const end: usize = std.mem.lastIndexOfScalar(u8, block, '\n') orelse block.len;
-                const post_partial: []const u8 = block[end..];
+                const post_partial: []const u8 = lib.clone(u8, self.arena.child_allocator, block[end..]) catch |err| logAndPanic(err);
                 block = block[0..end];
 
                 // Write partial lines. We write both togehter to improve cache hit chance
@@ -428,35 +402,11 @@ pub fn Parser2(comptime BRCmapCapacity: comptime_int) type {
                 self.arena.child_allocator.free(self.blocks.ptr[0..self.blockSize]);
             }
 
-            fn combineAndParsePartials_old(self: *Self, final_map: *BRCMapUnmanaged) void {
-                var line_buffer: [128]u8 = undefined;
-                var line_fba = std.heap.FixedBufferAllocator.init(line_buffer[0..]);
-                const fba = line_fba.allocator();
-                var key: []const u8 = undefined;
-                var val: i16 = undefined;
-
-                var slices: []const []const u8 = undefined;
-                slices.len = 2;
-                var line: []const u8 = std.mem.trim(u8, self.partial_lines[0], "\n");
-                var Pi: usize = 1;
-                while (Pi < self.partial_lines.len) : (Pi += 2) {
-                    parseLine(line, &key, &val);
-                    final_map.addOrUpdate(key, val);
-
-                    slices.ptr = @ptrCast(&self.partial_lines[Pi]);
-                    line_fba.end_index = 0;
-                    line = std.mem.concat(fba, u8, slices) catch |err| logAndPanic(err);
-                    line = std.mem.trim(u8, line, "\n");
-                }
-                parseLine(line, &key, &val);
-                final_map.addOrUpdate(key, val);
-            }
-
             fn combineAndParsePartials(self: *Self, final_map: *BRCMapUnmanaged) void {
                 var buf: [128]u8 = undefined;
                 var key: []const u8 = undefined;
                 var val: i16 = undefined;
-                parseLine(std.mem.trim(u8, self.partial_lines[0], "\n"), &key, &val);
+                if (self.partial_lines[0].len > 0) parseLine(std.mem.trim(u8, self.partial_lines[0], "\n"), &key, &val);
                 final_map.addOrUpdate(key, val);
                 var i: usize = 2;
                 while (i < self.partial_lines.len) : (i += 2) {

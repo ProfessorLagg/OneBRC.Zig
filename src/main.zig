@@ -15,10 +15,10 @@ const Parser = @import("parser.zig");
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\10_000.txt";
 
 // following files have 10 000 keys, and likely more than 1 instance of each key
-// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000.txt";
+var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\10_000_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100_000_000.txt";
-var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000_000.txt";
+// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000_000.txt";
 
 const static_allocator: std.mem.Allocator = b: {
     if (builtin.is_test) break :b std.testing.allocator;
@@ -28,15 +28,11 @@ const static_allocator: std.mem.Allocator = b: {
 };
 
 fn bench(filepath: []const u8) !void {
-    const stderr = lib.getStderr();
-    defer stderr.flush() catch unreachable;
-
-    try stderr.print("Parsing file: {s}\n", .{filepath});
-    try stderr.flush();
+    lib.stderrPrint("Parsing file: {s}\n", .{filepath});
 
     const fileSize = (try (try std.fs.cwd().openFile(filepath, .{})).stat()).size;
     var timer = try std.time.Timer.start();
-    try Parser.DefaultParser.parseFilePath(static_allocator, filepath);
+    try Parser.DefaultParser.parseFile(static_allocator, filepath);
     const ns = timer.read();
     const ns_f: f64 = @floatFromInt(ns);
     const s_f: f64 = ns_f / @as(f64, @floatFromInt(std.time.ns_per_s));
@@ -44,7 +40,7 @@ fn bench(filepath: []const u8) !void {
     const perf_f: f64 = @round(fileSize_f / s_f);
     const perf: u64 = @intFromFloat(perf_f);
 
-    try stderr.print("\n\nparsed {Bi} in {D} at {Bi}/s\n", .{
+    lib.stderrPrint("\n\nparsed {Bi} in {D} at {Bi}/s\n", .{
         fileSize,
         ns,
         perf,
@@ -55,13 +51,38 @@ pub fn main() !void {
     defer std.process.argsFree(static_allocator, args);
     const filepath = if (args.len == 2) args[1] else debugfilepath;
 
-    try Parser.DefaultParser.parseFile(static_allocator, filepath);
+    //try clearFileCache();
+    // try Parser.DefaultParser.parseFile(static_allocator, filepath);
     //try dbg();
     //try benchmark_parseLine();
     // try benchmark_findKeyIndex();
     //try baseline.read(filepath);
-    // try bench(filepath);
+    try bench(filepath);
     _ = &filepath;
+}
+
+fn clearFileCache() !void {
+    const stderr = lib.getStderr();
+    defer stderr.flush() catch unreachable;
+    switch (builtin.target.os.tag) {
+        .windows => {
+            var memstat: lib.c.MEMORYSTATUSEX = std.mem.zeroes(lib.c.MEMORYSTATUSEX);
+            memstat.dwLength = @sizeOf(lib.c.MEMORYSTATUSEX);
+            if (lib.c.GlobalMemoryStatusEx(&memstat) == 0) {
+                const err = std.os.windows.GetLastError();
+                return std.os.windows.unexpectedError(err);
+            }
+
+            const avail: usize = @intCast(memstat.ullAvailPhys);
+            try stderr.print("Found {Bi} available physical memory\n", .{avail});
+            try stderr.flush();
+            const alloc = try static_allocator.alloc(u8, avail);
+            @memset(alloc[0..], '@');
+            static_allocator.free(alloc);
+        },
+
+        else => @compileError("Not yet implemented"),
+    }
 }
 
 fn dbg() !void {

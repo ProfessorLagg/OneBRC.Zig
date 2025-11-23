@@ -294,12 +294,17 @@ pub fn getStderr() *std.io.Writer {
     if (stderr_writer == null) stderr_writer = stderr_file.?.writer(stderr_buffer[0..]);
     return &stderr_writer.?.interface;
 }
-pub fn stderrPrint(comptime fmt: []const u8, args: anytype) void {
+pub fn stderrPrintEx(comptime fmt: []const u8, args: anytype, comptime flush: bool) void {
     stderr_lock.lock();
     defer stderr_lock.unlock();
     const stderr = getStderr();
     stderr.print(fmt, args) catch @panic("Printing failed");
-    stderr.flush() catch @panic("Flushing stderr failed");
+    if (flush) {
+        stderr.flush() catch @panic("Flushing stderr failed");
+    }
+}
+pub fn stderrPrint(comptime fmt: []const u8, args: anytype) void {
+    stderrPrintEx(fmt, args, true);
 }
 pub fn stderrPrintln(comptime fmt: []const u8, args: anytype) void {
     stderrPrint(fmt ++ "\n", args);
