@@ -15,7 +15,8 @@ const Parser = @import("parser.zig");
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\10_000.txt";
 
 // following files have 10 000 keys, and likely more than 1 instance of each key
-var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000.txt";
+// var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000.txt";
+var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000_trail.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\10_000_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\100_000_000.txt";
 // var debugfilepath: []const u8 = "C:\\CodeProjects\\1BillionRowChallenge\\data\\NoHashtag\\1_000_000_000.txt";
@@ -57,8 +58,94 @@ pub fn main() !void {
     //try benchmark_parseLine();
     // try benchmark_findKeyIndex();
     //try baseline.read(filepath);
-    try bench(filepath);
+    //try bench(filepath);
+    try debug(filepath);
     _ = &filepath;
+}
+
+fn debug(filepath: []const u8) !void {
+    const bufsizes = [_]comptime_int{
+        4 * 1024, // page
+        8 * 1024,
+        16 * 1024,
+        32 * 1024,
+        64 * 1024,
+        128 * 1024,
+        256 * 1024,
+        512 * 1024, // L1
+        1 * 1024 * 1024,
+        2 * 1024 * 1024,
+        4 * 1024 * 1024, // L2
+        8 * 1024 * 1024,
+        16 * 1024 * 1024,
+        32 * 1024 * 1024, // L3
+    };
+    const runcount: comptime_int = 10;
+
+    var timer: std.time.Timer = std.time.Timer.start() catch unreachable;
+    inline for (bufsizes) |bufsize| {
+        var runtime_ns: u64 = std.math.maxInt(u64);
+        var newLines: usize = 0;
+        inline for (0..runcount) |_| {
+            timer.reset();
+            newLines = try debugInner(bufsize, filepath);
+            runtime_ns = @min(runtime_ns, timer.read());
+        }
+
+        lib.stdoutPrint("Found {d} newlines in {d:>5} ms using bufsize {Bi}\n", .{ newLines, runtime_ns / 1000, bufsize });
+    }
+}
+
+fn debugInner(comptime bufsize: comptime_int, filepath: []const u8) !usize {
+    const buffer: []u8 = try static_allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(4096), bufsize);
+    defer static_allocator.free(buffer);
+
+    var file = try std.fs.cwd().openFile(filepath, .{});
+    defer file.close();
+
+    var readlen: usize = file.read(buffer) catch unreachable;
+    var newLines: usize = 0;
+    while (readlen > 0) {
+        newLines += countChar('\n', buffer.ptr, readlen);
+        readlen = file.read(buffer) catch unreachable;
+    }
+    return newLines;
+}
+fn countChar(comptime c: u8, ptr: [*]const u8, len: usize) usize {
+    const veclen: comptime_int = std.simd.suggestVectorLength(u8) orelse 256 / 8;
+    const charvec: @Vector(veclen, u8) = comptime @splat(c);
+    var r: usize = 0;
+
+    const vecend: usize = (len / veclen) * veclen;
+    var i: usize = 0;
+    while (i < vecend) : (i += veclen) {
+        const vec = std.mem.bytesAsValue(@Vector(veclen, u8), ptr[i .. i + veclen]);
+        const eql: @Vector(veclen, u8) = @intFromBool(vec.* == charvec);
+        r += @reduce(.Add, eql);
+    }
+
+    while (i < len) : (i += 1) r += @intFromBool(ptr[i] == c);
+
+    return r;
+}
+noinline fn countChar2(comptime c: u8, ptr: [*]const u8, len: usize) usize {
+    const asmstr = std.fmt.comptimePrint(
+        "xor %[ret], %[ret]\nxor %rbx, %rbx\n.countChar_loopstart_{0d}:\ncmpb ${0d}, -1(%[ptr], %[len])\nsete %bl\nadd %rbx, %[ret]\nloop .countChar_loopstart_{0d}",
+        .{c},
+    );
+    return asm volatile (asmstr
+        : [ret] "={rax}" (-> usize),
+        : [ptr] "{rsi}" (ptr),
+          [len] "{rcx}" (len),
+        : .{ .rbx = true });
+}
+
+fn countChar1(comptime c: u8, ptr: [*]const u8, len: usize) usize {
+    var r: usize = 0;
+    for (0..len) |i| {
+        r += @intFromBool(ptr[i] == c);
+    }
+    return r;
 }
 
 fn clearFileCache() !void {
