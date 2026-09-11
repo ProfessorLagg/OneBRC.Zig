@@ -1,5 +1,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
+const Io = std.Io;
+
 const lib = @import("brc_lib");
 const baseline = @import("baseline.zig");
 const Parser = @import("parser.zig");
@@ -28,12 +30,15 @@ const static_allocator: std.mem.Allocator = b: {
     @compileError("Requires either single-threading to be disabled or lib-c to be linked");
 };
 
+var gpa: std.mem.Allocator = undefined;
+var io: Io = undefined;
+
 fn bench(filepath: []const u8) !void {
     lib.stderrPrint("Parsing file: {s}\n", .{filepath});
 
     const fileSize = (try (try std.fs.cwd().openFile(filepath, .{})).stat()).size;
     var timer = try std.time.Timer.start();
-    try Parser.DefaultParser.parseFile(static_allocator, filepath);
+    try Parser.DefaultParser.parseFile(gpa, filepath);
     const ns = timer.read();
     const ns_f: f64 = @floatFromInt(ns);
     const s_f: f64 = ns_f / @as(f64, @floatFromInt(std.time.ns_per_s));
@@ -47,10 +52,21 @@ fn bench(filepath: []const u8) !void {
         perf,
     });
 }
-pub fn main() !void {
-    const args = try std.process.argsAlloc(static_allocator);
-    defer std.process.argsFree(static_allocator, args);
-    const filepath = if (args.len == 2) args[1] else debugfilepath;
+pub fn main(init: std.process.Init.Minimal) !void {
+    gpa = static_allocator;
+
+    var threaded: std.Io.Threaded = .init(gpa, std.Io.Threaded.InitOptions{
+        .argv0 = .init(init.args),
+        .environ = init.environ,
+        .async_limit = .limited(try std.Thread.getCpuCount() - 1),
+        .concurrent_limit = .unlimited,
+    });
+    io = threaded.io();
+
+    // const args = try std.process.argsAlloc(gpa);
+    // defer std.process.argsFree(gpa, args);
+    const pargs: lib.Args2 = try .init(init.args, gpa);
+    const filepath = if (pargs.args.len > 0) pargs.args[0] else debugfilepath;
 
     //try clearFileCache();
     // try Parser.DefaultParser.parseFile(static_allocator, filepath);
@@ -60,7 +76,6 @@ pub fn main() !void {
     //try baseline.read(filepath);
     //try bench(filepath);
     try debug(filepath);
-    _ = &filepath;
 }
 
 fn debug(filepath: []const u8) !void {
@@ -82,14 +97,14 @@ fn debug(filepath: []const u8) !void {
     };
     const runcount: comptime_int = 10;
 
-    var timer: std.time.Timer = std.time.Timer.start() catch unreachable;
+    var timer: lib.Timer_awake = .start();
     inline for (bufsizes) |bufsize| {
         var runtime_ns: u64 = std.math.maxInt(u64);
         var newLines: usize = 0;
         inline for (0..runcount) |_| {
             timer.reset();
             newLines = try debugInner(bufsize, filepath);
-            runtime_ns = @min(runtime_ns, timer.read());
+            runtime_ns = @min(runtime_ns, @as(u64, @intCast(@abs(timer.read()))));
         }
 
         lib.stdoutPrint("Found {d} newlines in {d:>5} ms using bufsize {Bi}\n", .{ newLines, runtime_ns / 1000, bufsize });
@@ -97,17 +112,17 @@ fn debug(filepath: []const u8) !void {
 }
 
 fn debugInner(comptime bufsize: comptime_int, filepath: []const u8) !usize {
-    const buffer: []u8 = try static_allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(4096), bufsize);
-    defer static_allocator.free(buffer);
+    const buffer: []u8 = try gpa.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(4096), bufsize);
+    defer gpa.free(buffer);
 
-    var file = try std.fs.cwd().openFile(filepath, .{});
-    defer file.close();
+    var file = try Io.Dir.cwd().openFile(io, filepath, .{});
+    defer file.close(io);
 
-    var readlen: usize = file.read(buffer) catch unreachable;
+    var readlen: usize = file.readPositionalAll(io, buffer, 0) catch unreachable;
     var newLines: usize = 0;
     while (readlen > 0) {
         newLines += countChar('\n', buffer.ptr, readlen);
-        readlen = file.read(buffer) catch unreachable;
+        readlen = file.readPositionalAll(io, buffer, 0) catch unreachable;
     }
     return newLines;
 }
@@ -163,9 +178,9 @@ fn clearFileCache() !void {
             const avail: usize = @intCast(memstat.ullAvailPhys);
             try stderr.print("Found {Bi} available physical memory\n", .{avail});
             try stderr.flush();
-            const alloc = try static_allocator.alloc(u8, avail);
+            const alloc = try gpa.alloc(u8, avail);
             @memset(alloc[0..], '@');
-            static_allocator.free(alloc);
+            gpa.free(alloc);
         },
 
         else => @compileError("Not yet implemented"),
@@ -204,15 +219,15 @@ fn benchmark_parseLine() !void {
     // Generate Lines
     stderr.print("Generating lines...\n", .{}) catch unreachable;
     stderr.flush() catch unreachable;
-    const lines: []const []const u8 = try LineGenerator.getAll(static_allocator);
+    const lines: []const []const u8 = try LineGenerator.getAll(gpa);
     defer {
-        for (0..lines.len) |i| static_allocator.free(lines[i]);
-        static_allocator.free(lines);
+        for (0..lines.len) |i| gpa.free(lines[i]);
+        gpa.free(lines);
     }
 
     // Setup Running
-    const runs: []u64 = try static_allocator.alloc(u64, runCount);
-    defer static_allocator.free(runs);
+    const runs: []u64 = try gpa.alloc(u64, runCount);
+    defer gpa.free(runs);
     var key: []const u8 = undefined;
     var val: i16 = undefined;
     var keysum: usize = 0;
